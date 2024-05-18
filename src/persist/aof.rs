@@ -91,15 +91,24 @@ impl Persist for AOF {
 
         let mut count = 0;
         let max_count = 2 << self.max_record_exponent;
-        let wcmd_receiver = self.shared.wcmd_propagator().new_receiver();
+        let wcmd_receiver = self
+            .shared
+            .wcmd_propagator()
+            .to_aof
+            .as_ref()
+            .unwrap()
+            .1
+            .clone();
+
+        // PERF: 存在性能问题
         match self.append_fsync {
             AppendFSync::Always => loop {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
                     b = wcmd_receiver.recv_async() => {
-                        self.buffer.extend(b?);
+                        self.buffer.extend(b?.to_raw());
                         while let Ok(b) = wcmd_receiver.try_recv() {
-                            self.buffer.extend(b);
+                            self.buffer.extend(b.to_raw());
                         }
 
                         self.file.write_all_buf(&mut self.buffer).await?;
@@ -126,9 +135,9 @@ impl Persist for AOF {
                             self.file.sync_data().await?;
                         }
                         b = wcmd_receiver.recv_async() => {
-                            self.buffer.extend(b?);
+                            self.buffer.extend(b?.to_raw());
                             while let Ok(b) = wcmd_receiver.try_recv() {
-                                self.buffer.extend(b);
+                                self.buffer.extend(b.to_raw());
                             }
                         }
                     }
@@ -143,9 +152,9 @@ impl Persist for AOF {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
                     b = wcmd_receiver.recv_async() => {
-                        self.buffer.extend(b?);
+                        self.buffer.extend(b?.to_raw());
                         while let Ok(b) = wcmd_receiver.try_recv() {
-                            self.buffer.extend(b);
+                            self.buffer.extend(b.to_raw());
                         }
 
                         self.file.write_all_buf(&mut self.buffer).await?;
@@ -160,7 +169,7 @@ impl Persist for AOF {
         }
 
         while let Ok(b) = wcmd_receiver.try_recv() {
-            self.buffer.extend(b);
+            self.buffer.extend(b.to_raw());
         }
         self.file.write_all_buf(&mut self.buffer).await?;
         self.file.sync_data().await?;
@@ -179,7 +188,6 @@ impl Persist for AOF {
         while self.file.read_buf(&mut buf).await? != 0 {}
 
         // 如果AOF文件以REDIS开头，说明是RDB与AOF混合文件，需要先加载RDB
-        // TEST:
         if buf.starts_with(b"REDIS") {
             rdb_load(&mut buf, self.shared.db(), false)?;
         }

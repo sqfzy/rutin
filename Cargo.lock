@@ -1498,7 +1498,6 @@ dependencies = [
  "flume",
  "futures",
  "itoa",
- "num_cpus",
  "once_cell",
  "parking_lot",
  "rand",
@@ -1514,6 +1513,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "try-lock",
 ]
 
 [[package]]

@@ -128,7 +128,6 @@ impl CmdExecutor for Exists {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
         for key in self.keys {
-            println!("{:?}", key);
             if !shared.db().contains_object(&key) {
                 return Err(0.into());
             }

@@ -19,6 +19,7 @@ pub enum Frame<'a> {
 }
 
 impl<'a> Frame<'a> {
+    #[inline]
     pub fn size(&self) -> usize {
         match self {
             Frame::Simple(s) => s.len() + 3,
@@ -45,6 +46,7 @@ impl<'a> Frame<'a> {
         }
     }
 
+    #[inline]
     pub fn to_raw(&self) -> Bytes {
         let mut raw = BytesMut::with_capacity(self.size());
         match self {
@@ -71,7 +73,7 @@ impl<'a> Frame<'a> {
                 raw.put_slice(b"\r\n");
             }
             Frame::Null => {
-                raw.extend_from_slice(b"$-1\r\n");
+                raw.put_slice(b"$-1\r\n");
             }
             Frame::Array(frames) => {
                 raw.put_u8(b'*');

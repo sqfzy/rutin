@@ -1,3 +1,4 @@
+use crate::shared::{db::Db, wcmd_propagator::WCmdPropergator};
 use std::sync::Arc;
 
 pub mod db;
@@ -11,17 +12,26 @@ pub struct Shared {
 #[derive(Debug, Default)]
 pub struct SharedInner {
     db: db::Db,
-    wcmd_propagator: wcmd_propagator::WCmdPropergator,
+    wcmd_propagator: WCmdPropergator,
 }
 
 impl Shared {
+    pub fn new(db: Db, wcmd_propagator: WCmdPropergator) -> Self {
+        Self {
+            inner: Arc::new(SharedInner {
+                db,
+                wcmd_propagator,
+            }),
+        }
+    }
+
     #[inline]
     pub fn db(&self) -> &db::Db {
         &self.inner.db
     }
 
     #[inline]
-    pub fn wcmd_propagator(&self) -> &wcmd_propagator::WCmdPropergator {
+    pub fn wcmd_propagator(&self) -> &WCmdPropergator {
         &self.inner.wcmd_propagator
     }
 }

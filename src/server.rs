@@ -4,7 +4,7 @@ use crate::{
     connection::Connection,
     frame::Frame,
     persist::{rdb::RDB, Persist},
-    shared::Shared,
+    shared::{db::Db, wcmd_propagator::WCmdPropergator, Shared},
     Id, Key,
 };
 use async_shutdown::{DelayShutdownToken, ShutdownManager};
@@ -36,7 +36,7 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
     });
 
     let mut server = Listener {
-        shared: Shared::default(),
+        shared: Shared::new(Db::default(), WCmdPropergator::new(conf.aof.enable)),
         listener,
         limit_connections: Arc::new(Semaphore::new(conf.server.max_connections)),
         shutdown_manager: shutdown_manager.clone(),
