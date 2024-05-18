@@ -1,11 +1,9 @@
 use std::{
     io::{Read, Write},
-    sync::Arc,
     time::Duration,
 };
 
 use crate::{
-    conf::Conf,
     persist::{
         rdb::{rdb_load, rdb_save},
         Persist,
@@ -24,10 +22,7 @@ use tokio::{
 
 pub struct AOF {
     file: File,
-    path: String,
     append_fsync: AppendFSync,
-    max_record_exponent: usize,
-
     shared: Shared,
     buffer: BytesMut,
     socket: String,
@@ -36,25 +31,20 @@ pub struct AOF {
 
 impl AOF {
     pub async fn new(
+        path: &str,
         append_fsync: AppendFSync,
+        server_addr: String,
         shared: Shared,
-        conf: &Arc<Conf>,
         shutdown: ShutdownManager<()>,
     ) -> Result<Self> {
-        let path = conf.aof.file_path.clone();
-        let server_addr = format!("{}:{}", conf.server.addr, conf.server.port);
-
         Ok(AOF {
             file: tokio::fs::OpenOptions::new()
                 .read(true)
                 .append(true)
                 .create(true)
-                .open(path.as_str())
+                .open(path)
                 .await?,
-            path,
             append_fsync,
-            max_record_exponent: conf.aof.max_record_exponent,
-
             buffer: BytesMut::with_capacity(1024),
             socket: server_addr,
             shared,
@@ -62,26 +52,10 @@ impl AOF {
         })
     }
 
-    async fn rewrite(&mut self) -> anyhow::Result<()> {
-        // 创建临时文件，先使用RDB格式保存数据
-        let mut temp_file = tokio::fs::OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(format!("{}.tmp", self.path))
-            .await?;
-        rdb_save(&mut temp_file, self.shared.db(), false).await?;
-
-        // 使用新文件作为AOF文件
-        self.file = temp_file;
-
-        // 将旧AOF文件备份
-        tokio::fs::rename(&self.path, format!("{}.bak", self.path)).await?;
-        // 将新AOF文件重命名为AOF文件
-        tokio::fs::rename(format!("{}.tmp", self.path), &self.path).await?;
-
-        Ok(())
-    }
+    // fn rewrite(&mut self) -> anyhow::Result<()> {
+    //    let buf =  rdb_save(self.shared.db(), false);
+    //
+    // }
 }
 
 impl Persist for AOF {
@@ -90,7 +64,6 @@ impl Persist for AOF {
         let _delay_token = self.shutdown.delay_shutdown_token()?;
 
         let mut count = 0;
-        let max_count = 2 << self.max_record_exponent;
         let wcmd_receiver = self.shared.wcmd_propagator().new_receiver();
         match self.append_fsync {
             AppendFSync::Always => loop {
@@ -108,9 +81,6 @@ impl Persist for AOF {
                 }
 
                 count += 1;
-                if count >= max_count {
-                    self.rewrite().await?;
-                }
             },
             AppendFSync::EverySec => {
                 let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -132,11 +102,6 @@ impl Persist for AOF {
                             }
                         }
                     }
-
-                    count += 1;
-                    if count >= max_count {
-                        self.rewrite().await?;
-                    }
                 }
             }
             AppendFSync::No => loop {
@@ -150,11 +115,6 @@ impl Persist for AOF {
 
                         self.file.write_all_buf(&mut self.buffer).await?;
                     }
-                }
-
-                count += 1;
-                if count >= max_count {
-                    self.rewrite().await?;
                 }
             },
         }

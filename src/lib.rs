@@ -1,3 +1,5 @@
+#![feature(slice_split_once)]
+
 pub mod cli;
 pub mod cmd;
 pub mod conf;

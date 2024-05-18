@@ -10,7 +10,7 @@ use crate::{
     persist::{
         aof::{AppendFSync, AOF},
         rdb::RDB,
-        AsyncPersist, Persist,
+        Persist,
     },
     server::{BgTaskChannel, Handler, HandlerContext, Listener},
     Connection,
@@ -93,6 +93,7 @@ pub struct AOFConf {
     pub use_rdb_preamble: bool,
     pub file_path: String,
     pub append_fsync: AppendFSync,
+    pub max_record_exponent: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +144,7 @@ impl Default for Conf {
                 use_rdb_preamble: false,
                 file_path: "appendonly.aof".to_string(),
                 append_fsync: AppendFSync::EverySec,
+                max_record_exponent: 20,
             },
             memory: MemoryConf {
                 // max_memory: 0,
@@ -211,7 +213,7 @@ impl Conf {
 
             let start = std::time::Instant::now();
             println!("Loading RDB file...");
-            if let Err(e) = rdb.load() {
+            if let Err(e) = rdb.load().await {
                 println!("Failed to load RDB file: {:?}", e);
             } else {
                 println!("RDB file loaded. Time elapsed: {:?}", start.elapsed());
@@ -223,10 +225,9 @@ impl Conf {
         /*********************/
         if conf.aof.enable {
             let mut aof = AOF::new(
-                conf.aof.file_path.as_str(),
                 conf.aof.append_fsync,
-                format!("{}:{}", conf.server.addr.clone(), conf.server.port),
                 shared.clone(),
+                conf,
                 shutdown_manager.clone(),
             )
             .await?;
@@ -237,7 +238,7 @@ impl Conf {
             let start = std::time::Instant::now();
             println!("Loading AOF file...");
             tokio::spawn(async move {
-                if let Err(e) = aof.load_async().await {
+                if let Err(e) = aof.load().await {
                     println!("Failed to load AOF file: {:?}", e);
                 } else {
                     println!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
@@ -245,7 +246,7 @@ impl Conf {
 
                 rx.await.unwrap(); // 等待AOF load结束
 
-                if let Err(e) = aof.save_async().await {
+                if let Err(e) = aof.save().await {
                     println!("Failed to save AOF file: {:?}", e);
                 }
             });

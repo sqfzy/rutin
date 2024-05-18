@@ -3,7 +3,7 @@ use crate::{
     conf::Conf,
     connection::Connection,
     frame::Frame,
-    persist::{rdb::RDB, AsyncPersist},
+    persist::{rdb::RDB, Persist},
     shared::Shared,
     Id, Key,
 };
@@ -135,9 +135,8 @@ impl Listener {
             self.conf.rdb.enable_checksum,
             self.shutdown_manager.clone(),
         );
-        // 650.534586ms
         let start = tokio::time::Instant::now();
-        rdb.save_async().await.ok();
+        rdb.save().await.ok();
         println!("RDB file saved. Time elapsed: {:?}", start.elapsed());
     }
 }

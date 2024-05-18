@@ -4,7 +4,7 @@ use crate::{
         CmdExecutor, CmdType,
     },
     frame::{Bulks, Frame},
-    persist::{rdb::RDB, AsyncPersist},
+    persist::{rdb::RDB, Persist},
     server::Handler,
     shared::Shared,
     util, Id,
@@ -206,7 +206,7 @@ impl CmdExecutor for BgSave {
             handler.shutdown_manager.clone(),
         );
         tokio::spawn(async move {
-            if let Err(e) = rdb.save_async().await {
+            if let Err(e) = rdb.save().await {
                 tracing::error!("save rdb error: {:?}", e);
             } else {
                 tracing::info!("save rdb success");

@@ -10,7 +10,9 @@ use crate::{
 use ahash::{AHashMap, AHashSet};
 use anyhow::bail;
 use async_shutdown::ShutdownManager;
+use backon::{ConstantBuilder, Retryable};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use rayon::prelude::*;
 use skiplist::OrderedSkipList;
 use std::collections::VecDeque;
 use tokio::{
@@ -90,7 +92,9 @@ impl RDB {
 
 impl Persist for RDB {
     async fn save(&mut self) -> anyhow::Result<()> {
-        let mut file = tokio::fs::File::create(&self.path).await?;
+        let mut file = (|| async { tokio::fs::File::create(&self.path).await })
+            .retry(&ConstantBuilder::default())
+            .await?;
 
         if let Ok(fut) = self
             .shutdown_manager
@@ -109,10 +113,12 @@ impl Persist for RDB {
     }
 
     async fn load(&mut self) -> anyhow::Result<()> {
-        let mut file = tokio::fs::File::open(&self.path).await?;
+        let mut file = (|| async { tokio::fs::File::open(&self.path).await })
+            .retry(&ConstantBuilder::default())
+            .await?;
 
         let mut rdb = BytesMut::with_capacity(1024 * 32);
-        while file.read_buf(&mut rdb).await? != 0 {}
+        while file.read(&mut rdb).await? != 0 {}
 
         rdb_load::rdb_load(&mut rdb, self.shared.db(), self.enable_checksum)?;
 
@@ -135,6 +141,7 @@ mod rdb_save {
         buf.put_u32(0);
 
         let max_buf_size = 2 << 28;
+        // TODO: 该size的大小不是经过性能比较测试得出的，之后需要进行性能测试来确定
         for entry in db.entries().iter() {
             let (key, obj) = (entry.key().clone(), entry.value().clone());
             let obj_inner = obj.inner();
@@ -177,7 +184,7 @@ mod rdb_save {
             }
 
             if buf.len() >= max_buf_size {
-                file.write_all_buf(&mut buf.split()).await?;
+                file.write_all_buf(&mut buf).await?;
             }
         }
 
@@ -192,6 +199,125 @@ mod rdb_save {
         file.write_all_buf(&mut buf).await?;
         Ok(())
     }
+
+    // pub fn rdb_save(db: &Db, enable_checksum: bool) -> Bytes {
+    //     let mut buf = BytesMut::with_capacity(1024 * 8);
+    //     buf.extend_from_slice(b"REDIS");
+    //     buf.put_u32(RDB_VERSION);
+    //     buf.put_u8(RDB_OPCODE_SELECTDB);
+    //     buf.put_u32(0);
+    //
+    //     let db_size = db.size();
+    //
+    //     // TODO: 该size的大小不是经过性能比较测试得出的，之后需要进行性能测试来确定
+    //     if db_size > (1024 << 32) {
+    //         // 使用 par_iter 并将并行操作结果收集到一个向量中
+    //         let encoded_entries: Vec<BytesMut> = db
+    //             .entries()
+    //             .par_iter()
+    //             .map(|entry| {
+    //                 let (key, obj) = (entry.key().clone(), entry.value().clone());
+    //
+    //                 let mut entry_buf = BytesMut::with_capacity(1024);
+    //                 let obj_inner = obj.inner();
+    //
+    //                 if let Some(ex) = obj_inner.expire() {
+    //                     let ex = ex.duration_since(*EPOCH);
+    //                     if ex == Duration::from_secs(0) {
+    //                         return entry_buf;
+    //                     }
+    //
+    //                     encode_expire(&mut entry_buf, ex);
+    //                 }
+    //                 match obj_inner.value().clone() {
+    //                     ObjValue::Str(value) => {
+    //                         entry_buf.put_u8(RDB_TYPE_STRING);
+    //                         encode_key(&mut entry_buf, key);
+    //                         encode_str_value(&mut entry_buf, value);
+    //                     }
+    //                     ObjValue::List(value) => {
+    //                         entry_buf.put_u8(RDB_TYPE_LIST);
+    //                         encode_key(&mut entry_buf, key);
+    //                         encode_list_value(&mut entry_buf, value);
+    //                     }
+    //                     ObjValue::Set(value) => {
+    //                         entry_buf.put_u8(RDB_TYPE_SET);
+    //                         encode_key(&mut entry_buf, key);
+    //                         encode_set_value(&mut entry_buf, value);
+    //                     }
+    //                     ObjValue::Hash(value) => {
+    //                         entry_buf.put_u8(RDB_TYPE_HASH);
+    //                         encode_key(&mut entry_buf, key);
+    //                         encode_hash_value(&mut entry_buf, value);
+    //                     }
+    //                     ObjValue::ZSet(value) => {
+    //                         entry_buf.put_u8(RDB_TYPE_ZSET);
+    //                         encode_key(&mut entry_buf, key);
+    //                         encode_zset_value(&mut entry_buf, value)
+    //                     }
+    //                 }
+    //                 entry_buf
+    //             })
+    //             .collect();
+    //
+    //         // 将所有并行处理的结果合并到 buf 中
+    //         for entry_buf in encoded_entries {
+    //             buf.extend_from_slice(&entry_buf);
+    //         }
+    //     } else {
+    //         for entry in db.entries().iter() {
+    //             let (key, obj) = (entry.key().clone(), entry.value().clone());
+    //             let obj_inner = obj.inner();
+    //
+    //             if let Some(ex) = obj_inner.expire() {
+    //                 let ex = ex.duration_since(*EPOCH);
+    //                 if ex == Duration::from_secs(0) {
+    //                     continue;
+    //                 }
+    //
+    //                 encode_expire(&mut buf, ex);
+    //             }
+    //
+    //             match obj_inner.value().clone() {
+    //                 ObjValue::Str(value) => {
+    //                     buf.put_u8(RDB_TYPE_STRING);
+    //                     encode_key(&mut buf, key);
+    //                     encode_str_value(&mut buf, value);
+    //                 }
+    //                 ObjValue::List(value) => {
+    //                     buf.put_u8(RDB_TYPE_LIST);
+    //                     encode_key(&mut buf, key);
+    //                     encode_list_value(&mut buf, value);
+    //                 }
+    //                 ObjValue::Set(value) => {
+    //                     buf.put_u8(RDB_TYPE_SET);
+    //                     encode_key(&mut buf, key);
+    //                     encode_set_value(&mut buf, value);
+    //                 }
+    //                 ObjValue::Hash(value) => {
+    //                     buf.put_u8(RDB_TYPE_HASH);
+    //                     encode_key(&mut buf, key);
+    //                     encode_hash_value(&mut buf, value);
+    //                 }
+    //                 ObjValue::ZSet(value) => {
+    //                     buf.put_u8(RDB_TYPE_ZSET);
+    //                     encode_key(&mut buf, key);
+    //                     encode_zset_value(&mut buf, value)
+    //                 }
+    //             }
+    //         }
+    //     }
+    //
+    //     buf.put_u8(RDB_OPCODE_EOF);
+    //     let checksum = if enable_checksum {
+    //         crc::Crc::<u64>::new(&crc::CRC_64_REDIS).checksum(&buf)
+    //     } else {
+    //         0
+    //     };
+    //     buf.put_u64(checksum);
+    //
+    //     buf.freeze()
+    // }
 
     pub fn encode_expire(buf: &mut BytesMut, expire: Duration) {
         buf.put_u8(RDB_OPCODE_EXPIRETIME_MS);
@@ -328,8 +454,6 @@ mod rdb_load {
             match rdb.get_u8() {
                 RDB_OPCODE_EOF => {
                     trace!("EOF");
-                    // 丢弃EOF后面的checksum
-                    rdb.advance(8);
                     break;
                 }
                 RDB_OPCODE_SELECTDB => {
@@ -363,7 +487,7 @@ mod rdb_load {
                 RDB_OPCODE_EXPIRETIME => {
                     let sec = rdb.get_u32_le();
                     expire = Some(*EPOCH + Duration::from_secs(sec as u64));
-                    trace!("Expiretime: {:?}", expire.unwrap());
+                    // println!("Expiretime: {:?}", expire.unwrap());
                 }
                 RDB_TYPE_STRING => {
                     let key = decode_key(rdb)?;
@@ -850,6 +974,12 @@ mod rdb_test {
 
         let shared = Shared::default();
         let db = shared.db();
+        let mut rdb = RDB::new(
+            shared.clone(),
+            "tests/dump/dump_temp.rdb".into(),
+            true,
+            ShutdownManager::new(),
+        );
 
         let str1 = Object::new_str("hello".into(), None);
         let str2 = Object::new_str("10".into(), None);
@@ -928,12 +1058,6 @@ mod rdb_test {
         db.insert_object("zs3".into(), zs3.clone());
         db.insert_object("zs4".into(), zs4.clone());
 
-        let mut rdb = RDB::new(
-            shared.clone(),
-            "tests/dump/dump_temp.rdb".into(),
-            true,
-            ShutdownManager::new(),
-        );
         rdb.save().await.unwrap();
 
         let shared = Shared::default();
