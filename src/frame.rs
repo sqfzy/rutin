@@ -438,7 +438,7 @@ impl Frame<'static> {
 pub struct Bulks {
     start: usize,
     end: usize,
-    frames: Vec<Frame<'static>>,
+    pub frames: Vec<Frame<'static>>,
 }
 
 impl Default for Bulks {

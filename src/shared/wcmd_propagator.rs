@@ -49,6 +49,7 @@ impl WCmdPropergator {
         }
 
         if let Some(to_aof) = &self.to_aof {
+            // PERF: pipline的性能瓶颈
             to_aof.0.send(wcmd).unwrap();
         }
     }
