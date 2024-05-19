@@ -26,8 +26,8 @@ version = 6                             # RDB版本
 enable_checksum = false                 # 是否开启RDB校验和
 
 [aof]
-enable = true                # 是否开启AOF持久化
+enable = false                # 是否开启AOF持久化
 use_rdb_preamble = true      # 是否在AOF文件开头加入RDB版本信息
 file_path = "appendonly.aof" # AOF文件路径
-append_fsync = "no"          # AOF同步频率。可能为：always | everysec | no
+append_fsync = "everysec"    # AOF同步频率。可能为：always | everysec | no
 max_record_exponent = 20     # AOF文件最大记录数，超过该值则触发重写。假设为n，则最大记录数为2^n

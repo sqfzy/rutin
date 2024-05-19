@@ -5,6 +5,7 @@ use try_lock::TryLock;
 #[derive(Debug, Default)]
 pub struct WCmdPropergator {
     pub to_aof: Option<(Sender<Frame<'static>>, Receiver<Frame<'static>>)>,
+    // PERF: 也许可以改用`bus`库
     to_replica: TryLock<Vec<(Sender<Frame<'static>>, Receiver<Frame<'static>>)>>,
 }
 

@@ -41,7 +41,7 @@ rayon = "1.10.0"
 # tokio-async-drop = "0.1.0"
 console-subscriber = "0.2.0"
 try-lock = "0.2.5"
-# kanal = "0.1.0-pre8"
+kanal = "0.1.0-pre8"
 
 [dev-dependencies]
 assert_cmd = { version = "2.0.14", features = ["color-auto"] }
