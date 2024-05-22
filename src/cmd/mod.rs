@@ -29,10 +29,15 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         }
 
         if Self::CMD_TYPE == CmdType::Write {
-            handler
-                .shared
-                .wcmd_propagator()
-                .propergate(args.into_frame());
+            args.into_frame()
+                .to_raw_in_buf(&mut handler.context.wcmd_buf);
+            if handler.conn.count == 1 {
+                handler
+                    .shared
+                    .wcmd_propagator()
+                    .propergate(handler.context.wcmd_buf.split().freeze())
+                    .await;
+            }
         }
 
         Ok(())

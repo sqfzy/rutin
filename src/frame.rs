@@ -47,6 +47,45 @@ impl<'a> Frame<'a> {
     }
 
     #[inline]
+    pub fn to_raw_in_buf(&self, buf: &mut BytesMut) {
+        match self {
+            Frame::Simple(s) => {
+                buf.put_u8(b'+');
+                buf.put_slice(s.as_bytes());
+                buf.put_slice(b"\r\n");
+            }
+            Frame::Error(e) => {
+                buf.put_u8(b'-');
+                buf.put_slice(e.as_bytes());
+                buf.put_slice(b"\r\n");
+            }
+            Frame::Integer(n) => {
+                buf.put_u8(b':');
+                buf.put_slice(itoa::Buffer::new().format(*n).as_bytes());
+                buf.put_slice(b"\r\n");
+            }
+            Frame::Bulk(b) => {
+                buf.put_u8(b'$');
+                buf.put_slice(itoa::Buffer::new().format(b.len()).as_bytes());
+                buf.put_slice(b"\r\n");
+                buf.put_slice(b);
+                buf.put_slice(b"\r\n");
+            }
+            Frame::Null => {
+                buf.put_slice(b"$-1\r\n");
+            }
+            Frame::Array(frames) => {
+                buf.put_u8(b'*');
+                buf.put_slice(itoa::Buffer::new().format(frames.len()).as_bytes());
+                buf.put_slice(b"\r\n");
+                for frame in frames {
+                    frame.to_raw_in_buf(buf);
+                }
+            }
+        }
+    }
+
+    #[inline]
     pub fn to_raw(&self) -> Bytes {
         let mut raw = BytesMut::with_capacity(self.size());
         match self {
@@ -526,6 +565,7 @@ impl Bulks {
         })
     }
 
+    #[inline]
     pub fn to_raw(self) -> Bytes {
         Frame::Array(self.frames).to_raw()
     }

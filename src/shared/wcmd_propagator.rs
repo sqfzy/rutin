@@ -1,12 +1,12 @@
-use crate::frame::Frame;
+use bytes::Bytes;
 use flume::{Receiver, Sender};
 use try_lock::TryLock;
 
 #[derive(Debug, Default)]
 pub struct WCmdPropergator {
-    pub to_aof: Option<(Sender<Frame<'static>>, Receiver<Frame<'static>>)>,
+    pub to_aof: Option<(Sender<Bytes>, Receiver<Bytes>)>,
     // PERF: 也许可以改用`bus`库
-    to_replica: TryLock<Vec<(Sender<Frame<'static>>, Receiver<Frame<'static>>)>>,
+    to_replica: TryLock<Vec<(Sender<Bytes>, Receiver<Bytes>)>>,
 }
 
 impl WCmdPropergator {
@@ -18,7 +18,7 @@ impl WCmdPropergator {
         }
     }
 
-    pub fn new_receiver(&self) -> Receiver<Frame<'static>> {
+    pub fn new_receiver(&self) -> Receiver<Bytes> {
         let (tx, rx) = flume::unbounded();
         loop {
             if let Some(mut to_replica) = self.to_replica.try_lock() {
@@ -28,7 +28,7 @@ impl WCmdPropergator {
         }
     }
 
-    pub fn delete_receiver(&self, rx: &Receiver<Frame<'static>>) {
+    pub fn delete_receiver(&self, rx: &Receiver<Bytes>) {
         loop {
             if let Some(mut to_replica) = self.to_replica.try_lock() {
                 to_replica.retain(|(_, r)| r.same_channel(rx));
@@ -38,7 +38,7 @@ impl WCmdPropergator {
     }
 
     #[inline]
-    pub fn propergate(&self, wcmd: Frame<'static>) {
+    pub async fn propergate(&self, wcmd: Bytes) {
         loop {
             if let Some(to_replica) = self.to_replica.try_lock() {
                 for (tx, _) in to_replica.iter() {
@@ -49,8 +49,9 @@ impl WCmdPropergator {
         }
 
         if let Some(to_aof) = &self.to_aof {
-            // PERF: pipline的性能瓶颈
-            to_aof.0.send(wcmd).unwrap();
+            // PERF: pipline的性能瓶颈, 多线程写单文件问题
+            // rps=953600.0 (overall: 906282.9) avg_msec=10.405 (overall: 10.951)
+            to_aof.0.send_async(wcmd).await.unwrap();
         }
     }
 }

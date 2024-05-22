@@ -42,8 +42,8 @@ pub async fn server_test() {
     }
 }
 
-pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> anyhow::Result<I> {
-    atoi::atoi(text).ok_or(anyhow!("failed to parse number"))
+pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, &str> {
+    atoi::atoi(text).ok_or("failed to parse number")
 }
 
 pub fn upper_case(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {

@@ -1,31 +1,38 @@
 use crate::frame::Frame;
 use bytes::BytesMut;
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt, BufWriter},
-    net::TcpStream,
+    io::{self, AsyncReadExt, AsyncWriteExt},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
 };
 use tracing::instrument;
 
 #[derive(Debug)]
 pub struct Connection {
-    /// 写缓冲区
-    stream: BufWriter<TcpStream>,
+    reader: OwnedReadHalf,
+    writer: OwnedWriteHalf,
     /// stream读取的数据会先写入buf，然后再从buf中读取数据。
     /// buf读取数据的行为：使用游标从buf中读取数据时，如果游标到达末尾，则从stream中读取数据到buf，再次尝试。
     /// 从buf中读数据时，有两种错误情况：
     /// 1. 读取时发现内容错误，证明frame格式错误。
     /// 2. 读取时发现游标到达末尾，但stream中也没有数据，证明frame不完整
-    buffer: BytesMut,
+    read_buf: BytesMut,
+    write_buf: BytesMut,
 
     /// 支持批处理
-    count: usize,
+    pub count: usize,
 }
 
 impl Connection {
     pub fn new(socket: TcpStream) -> Self {
+        let (r, w) = socket.into_split();
         Self {
-            stream: BufWriter::new(socket),
-            buffer: BytesMut::with_capacity(4 * 1024),
+            reader: r,
+            writer: w,
+            read_buf: BytesMut::with_capacity(4 * 1024),
+            write_buf: BytesMut::with_capacity(1024),
             count: 0,
             // authed: AtomicCell::new(false),
         }
@@ -33,7 +40,7 @@ impl Connection {
 
     #[inline]
     pub async fn shutdown(&mut self) -> io::Result<()> {
-        self.stream.shutdown().await
+        self.writer.shutdown().await
     }
 
     // 尝试读取多个frame，直到buffer和stream都为空
@@ -41,22 +48,17 @@ impl Connection {
     #[instrument(level = "trace", skip(self), ret, err)]
     pub async fn read_frames<'a>(&mut self) -> anyhow::Result<Option<Vec<Frame<'static>>>> {
         // 如果buffer为空，则尝试从stream中读入数据到buffer
-        if self.buffer.is_empty() && self.stream.read_buf(&mut self.buffer).await? == 0 {
+        if self.read_buf.is_empty() && self.reader.read_buf(&mut self.read_buf).await? == 0 {
             return Ok(None);
         }
 
         let mut frames = Vec::with_capacity(32);
         loop {
-            frames.push(Frame::parse_frame(&mut self.stream, &mut self.buffer).await?);
+            frames.push(Frame::parse_frame(&mut self.reader, &mut self.read_buf).await?);
             self.count += 1;
 
-            if self.buffer.is_empty()
-                && self
-                    .stream
-                    .get_ref()
-                    .try_read_buf(&mut self.buffer)
-                    .unwrap_or(0)
-                    == 0
+            if self.read_buf.is_empty()
+                && self.reader.try_read_buf(&mut self.read_buf).unwrap_or(0) == 0
             {
                 break;
             }
@@ -68,14 +70,15 @@ impl Connection {
     #[inline]
     #[instrument(level = "trace", skip(self), err)]
     pub async fn write_frame(&mut self, frame: &Frame<'static>) -> io::Result<()> {
-        self.stream.write_all(&frame.to_raw()).await?;
+        frame.to_raw_in_buf(&mut self.write_buf);
 
         if self.count >= 1 {
             self.count -= 1;
         }
 
         if self.count == 0 {
-            self.stream.flush().await?;
+            self.writer.write_buf(&mut self.write_buf).await?;
+            self.writer.flush().await?;
         }
 
         Ok(())

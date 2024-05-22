@@ -106,9 +106,9 @@ impl Persist for AOF {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
                     b = wcmd_receiver.recv_async() => {
-                        self.buffer.extend(b?.to_raw());
+                        self.buffer.extend(b?);
                         while let Ok(b) = wcmd_receiver.try_recv() {
-                            self.buffer.extend(b.to_raw());
+                            self.buffer.extend(b);
                         }
 
                         self.file.write_all_buf(&mut self.buffer).await?;
@@ -135,9 +135,9 @@ impl Persist for AOF {
                             self.file.sync_data().await?;
                         }
                         b = wcmd_receiver.recv_async() => {
-                            self.buffer.extend(b?.to_raw());
+                            self.buffer.extend(b?);
                             while let Ok(b) = wcmd_receiver.try_recv() {
-                                self.buffer.extend(b.to_raw());
+                                self.buffer.extend(b);
                             }
                         }
                     }
@@ -152,9 +152,9 @@ impl Persist for AOF {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
                     b = wcmd_receiver.recv_async() => {
-                        self.buffer.extend(b?.to_raw());
+                        self.buffer.extend(b?);
                         while let Ok(b) = wcmd_receiver.try_recv() {
-                            self.buffer.extend(b.to_raw());
+                            self.buffer.extend(b);
                         }
 
                         self.file.write_all_buf(&mut self.buffer).await?;
@@ -169,7 +169,7 @@ impl Persist for AOF {
         }
 
         while let Ok(b) = wcmd_receiver.try_recv() {
-            self.buffer.extend(b.to_raw());
+            self.buffer.extend(b);
         }
         self.file.write_all_buf(&mut self.buffer).await?;
         self.file.sync_data().await?;

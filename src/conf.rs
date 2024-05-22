@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fs::File, io::BufReader, path::Path, time::Duration};
 
 /// 1. 首先配置结构体从默认值开始构造
 /// 2. 如果提供了配置文件，读取配置文件并更新
@@ -18,8 +18,10 @@ use crate::{
 use clap::Parser;
 use crossbeam::atomic::AtomicCell;
 use rand::Rng;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
 use serde::Deserialize;
 use tokio::time::Instant;
+use tokio_rustls::rustls;
 
 #[derive(Debug, Deserialize)]
 pub struct Conf {
@@ -29,6 +31,7 @@ pub struct Conf {
     pub rdb: RDBConf,
     pub aof: AOFConf,
     pub memory: MemoryConf,
+    pub tls: Option<TLSConf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +107,14 @@ pub struct MemoryConf {
     // pub max_memory_samples: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename = "tls")]
+pub struct TLSConf {
+    pub port: u16,
+    pub cert_file: String,
+    pub key_file: String,
+}
+
 impl Default for Conf {
     fn default() -> Self {
         let run_id: String = rand::thread_rng()
@@ -151,6 +162,7 @@ impl Default for Conf {
                 // max_memory_policy: "noeviction".to_string(),
                 // max_memory_samples: 5,
             },
+            tls: None,
         }
     }
 }
@@ -314,5 +326,26 @@ impl Conf {
         });
 
         Ok(())
+    }
+
+    pub fn load_cert_and_key(
+        &self,
+    ) -> Option<(Vec<CertificateDer<'static>>, PrivatePkcs1KeyDer<'static>)> {
+        if self.tls.is_none() {
+            return None;
+        }
+        let cert = rustls_pemfile::certs(&mut BufReader::new(
+            File::open(&self.tls.as_ref().unwrap().cert_file).unwrap(),
+        ))
+        .map(|cert| cert.unwrap())
+        .collect();
+        let key = rustls_pemfile::rsa_private_keys(&mut BufReader::new(
+            File::open(&self.tls.as_ref().unwrap().key_file).unwrap(),
+        ))
+        .next()
+        .unwrap()
+        .unwrap();
+
+        Some((cert, key))
     }
 }

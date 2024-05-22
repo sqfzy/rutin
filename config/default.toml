@@ -65,3 +65,9 @@ append_fsync = "everysec"    # AOF同步频率。可能为：always | everysec |
 # The default is:
 #
 # maxmemory-policy noeviction
+
+[tls]
+port = 6379
+
+cert_file = "rutin.crt"
+key_file = "rutin.key"

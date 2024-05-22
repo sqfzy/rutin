@@ -9,10 +9,13 @@ use crate::{
 };
 use async_shutdown::{DelayShutdownToken, ShutdownManager};
 use backon::{ExponentialBuilder, Retryable};
+use bytes::BytesMut;
 use crossbeam::atomic::AtomicCell;
 use flume::{Receiver, Sender};
 use std::sync::Arc;
 use tokio::{io, net::TcpListener, sync::Semaphore};
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, error, instrument};
 
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
@@ -215,6 +218,7 @@ pub struct HandlerContext {
     pub subscribed_channels: Option<Vec<Key>>,
     // 是否开启缓存追踪
     pub client_track: Option<BgTaskSender>,
+    pub wcmd_buf: BytesMut,
 }
 
 impl HandlerContext {
@@ -223,6 +227,7 @@ impl HandlerContext {
             client_id,
             subscribed_channels: None,
             client_track: None,
+            wcmd_buf: BytesMut::with_capacity(64),
         }
     }
 }
