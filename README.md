@@ -1,4 +1,4 @@
-Rutin是使用rust构建的redis-like数据库。该项目仍处于早期阶段，但单机功能的框架已经大体确立（日后会追加多机功能，包括主从复制，哨兵机制等）。目前，数据库支持客户端缓存功能，TLS连接，部分Key，String，List操作，以及RDB与AOF持久化操作。
+Rutin是使用rust构建的redis-like数据库。该项目仍处于早期阶段，但单机功能的框架已经大体确立（日后会追加多机功能，包括主从复制，哨兵机制等）。目前，数据库支持客户端缓存功能，TLS连接，部分Key，String，List操作，Subcribe/Publish功能，以及RDB与AOF持久化操作。
 
 
 
