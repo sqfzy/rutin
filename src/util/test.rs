@@ -27,6 +27,7 @@ pub async fn create_server() -> Listener {
     Listener {
         shared: Shared::default(),
         listener,
+        tls_acceptor: None,
         limit_connections: Arc::new(Semaphore::new(1000)),
         delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
         shutdown_manager,

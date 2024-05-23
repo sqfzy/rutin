@@ -1,7 +1,7 @@
 use crate::{
     cmd::*,
     conf::Conf,
-    connection::Connection,
+    connection::{Connection, ConnectionInner},
     frame::Frame,
     persist::{rdb::RDB, Persist},
     shared::{db::Db, wcmd_propagator::WCmdPropergator, Shared},
@@ -12,10 +12,9 @@ use backon::{ExponentialBuilder, Retryable};
 use bytes::BytesMut;
 use crossbeam::atomic::AtomicCell;
 use flume::{Receiver, Sender};
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{io, net::TcpListener, sync::Semaphore};
 use tokio_rustls::TlsAcceptor;
-use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, error, instrument};
 
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
@@ -38,9 +37,18 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
         }
     });
 
+    // 如果配置文件中开启了TLS，则创建TlsAcceptor
+    let tls_acceptor = if let Some(tls_conf) = conf.get_tls_config() {
+        let tls_acceptor = TlsAcceptor::from(Arc::new(tls_conf));
+        Some(tls_acceptor)
+    } else {
+        None
+    };
+
     let mut server = Listener {
         shared: Shared::new(Db::default(), WCmdPropergator::new(conf.aof.enable)),
         listener,
+        tls_acceptor,
         limit_connections: Arc::new(Semaphore::new(conf.server.max_connections)),
         shutdown_manager: shutdown_manager.clone(),
         delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
@@ -63,6 +71,7 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
 pub struct Listener {
     pub shared: Shared,
     pub listener: TcpListener,
+    pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
     pub shutdown_manager: ShutdownManager<()>,
     pub delay_token: DelayShutdownToken<()>,
@@ -90,7 +99,7 @@ impl Listener {
                 .await
                 .unwrap();
 
-            let (socket, peer_addr) = (|| async { self.listener.accept().await })
+            let (socket, peer_addr) = (|| async { self.accept().await })
                 .retry(&ExponentialBuilder::default().with_jitter())
                 .await?;
 
@@ -108,7 +117,7 @@ impl Listener {
 
             let mut handler = Handler {
                 shared,
-                conn: Connection::new(socket),
+                conn: Connection::from(socket),
                 shutdown_manager: self.shutdown_manager.clone(),
                 bg_task_channel,
                 conf: self.conf.clone(),
@@ -129,6 +138,19 @@ impl Listener {
                 drop(permit);
             });
         }
+    }
+
+    pub async fn accept(&self) -> io::Result<(ConnectionInner, SocketAddr)> {
+        let (stream, peer_addr) = self.listener.accept().await?;
+        let inner = match &self.tls_acceptor {
+            Some(tls_acceptor) => {
+                let stream = tls_acceptor.accept(stream).await?;
+                ConnectionInner::TlsStream(stream)
+            }
+            None => ConnectionInner::TcpStream(stream),
+        };
+
+        Ok((inner, peer_addr))
     }
 
     pub async fn clean(&mut self) {

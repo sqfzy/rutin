@@ -1,38 +1,51 @@
 use crate::frame::Frame;
 use bytes::BytesMut;
+use futures::{pin_mut, task::noop_waker_ref};
+use std::task::{Context, Poll};
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
-    net::{
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpStream,
-    },
+    io::{self, AsyncRead, AsyncReadExt, AsyncWriteExt, ReadBuf},
+    net::TcpStream,
 };
+use tokio_rustls::server::TlsStream;
 use tracing::instrument;
 
 #[derive(Debug)]
 pub struct Connection {
-    reader: OwnedReadHalf,
-    writer: OwnedWriteHalf,
+    inner: ConnectionInner,
     /// stream读取的数据会先写入buf，然后再从buf中读取数据。
     /// buf读取数据的行为：使用游标从buf中读取数据时，如果游标到达末尾，则从stream中读取数据到buf，再次尝试。
     /// 从buf中读数据时，有两种错误情况：
     /// 1. 读取时发现内容错误，证明frame格式错误。
     /// 2. 读取时发现游标到达末尾，但stream中也没有数据，证明frame不完整
-    read_buf: BytesMut,
-    write_buf: BytesMut,
+    reader_buf: BytesMut,
+    writer_buf: BytesMut,
 
     /// 支持批处理
     pub count: usize,
 }
 
+#[derive(Debug)]
+pub enum ConnectionInner {
+    TlsStream(TlsStream<TcpStream>),
+    TcpStream(TcpStream),
+}
+
 impl Connection {
     pub fn new(socket: TcpStream) -> Self {
-        let (r, w) = socket.into_split();
         Self {
-            reader: r,
-            writer: w,
-            read_buf: BytesMut::with_capacity(4 * 1024),
-            write_buf: BytesMut::with_capacity(1024),
+            inner: ConnectionInner::TcpStream(socket),
+            reader_buf: BytesMut::with_capacity(1024),
+            writer_buf: BytesMut::with_capacity(1024),
+            count: 0,
+            // authed: AtomicCell::new(false),
+        }
+    }
+
+    pub fn new_with_tls(socket: TlsStream<TcpStream>) -> Self {
+        Self {
+            inner: ConnectionInner::TlsStream(socket),
+            reader_buf: BytesMut::with_capacity(1024),
+            writer_buf: BytesMut::with_capacity(1024),
             count: 0,
             // authed: AtomicCell::new(false),
         }
@@ -40,48 +53,121 @@ impl Connection {
 
     #[inline]
     pub async fn shutdown(&mut self) -> io::Result<()> {
-        self.writer.shutdown().await
+        match self.inner {
+            ConnectionInner::TcpStream(ref mut stream) => stream.shutdown().await,
+            ConnectionInner::TlsStream(ref mut stream) => stream.shutdown().await,
+        }
+    }
+
+    #[inline]
+    pub async fn flush(&mut self) -> io::Result<()> {
+        match self.inner {
+            ConnectionInner::TcpStream(ref mut stream) => stream.flush().await,
+            ConnectionInner::TlsStream(ref mut stream) => stream.flush().await,
+        }
     }
 
     // 尝试读取多个frame，直到buffer和stream都为空
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
     pub async fn read_frames<'a>(&mut self) -> anyhow::Result<Option<Vec<Frame<'static>>>> {
-        // 如果buffer为空，则尝试从stream中读入数据到buffer
-        if self.read_buf.is_empty() && self.reader.read_buf(&mut self.read_buf).await? == 0 {
-            return Ok(None);
-        }
+        match &mut self.inner {
+            ConnectionInner::TcpStream(stream) => {
+                // 如果buffer为空，则尝试从stream中读入数据到buffer
+                if self.reader_buf.is_empty() && stream.read_buf(&mut self.reader_buf).await? == 0 {
+                    return Ok(None);
+                }
 
-        let mut frames = Vec::with_capacity(32);
-        loop {
-            frames.push(Frame::parse_frame(&mut self.reader, &mut self.read_buf).await?);
-            self.count += 1;
+                let mut frames = Vec::with_capacity(32);
+                loop {
+                    frames.push(Frame::parse_frame(stream, &mut self.reader_buf).await?);
+                    self.count += 1;
 
-            if self.read_buf.is_empty()
-                && self.reader.try_read_buf(&mut self.read_buf).unwrap_or(0) == 0
-            {
-                break;
+                    if self.reader_buf.is_empty()
+                        && stream.try_read_buf(&mut self.reader_buf).unwrap_or(0) == 0
+                    {
+                        break;
+                    }
+                }
+
+                Ok(Some(frames))
+            }
+            ConnectionInner::TlsStream(stream) => {
+                // 如果buffer为空，则尝试从stream中读入数据到buffer
+                if self.reader_buf.is_empty() && stream.read_buf(&mut self.reader_buf).await? == 0 {
+                    return Ok(None);
+                }
+
+                let mut frames = Vec::with_capacity(32);
+                loop {
+                    let s = &mut *stream;
+                    frames.push(Frame::parse_frame(s, &mut self.reader_buf).await?);
+                    self.count += 1;
+
+                    let waker = noop_waker_ref();
+                    let mut cx = Context::from_waker(waker);
+
+                    pin_mut!(s);
+                    if self.reader_buf.is_empty() {
+                        let mut buf = [0u8; 128];
+                        match s.poll_read(&mut cx, &mut ReadBuf::new(&mut buf)) {
+                            Poll::Ready(Ok(())) => {}
+                            Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                                break;
+                            }
+                            Poll::Ready(Err(e)) => return Err(e.into()),
+                            Poll::Pending => break,
+                        }
+                    }
+                }
+
+                Ok(Some(frames))
             }
         }
-
-        Ok(Some(frames))
     }
 
     #[inline]
     #[instrument(level = "trace", skip(self), err)]
     pub async fn write_frame(&mut self, frame: &Frame<'static>) -> io::Result<()> {
-        frame.to_raw_in_buf(&mut self.write_buf);
+        match &mut self.inner {
+            ConnectionInner::TcpStream(stream) => {
+                frame.to_raw_in_buf(&mut self.writer_buf);
 
-        if self.count >= 1 {
-            self.count -= 1;
-        }
+                if self.count >= 1 {
+                    self.count -= 1;
+                }
 
-        if self.count == 0 {
-            self.writer.write_buf(&mut self.write_buf).await?;
-            self.writer.flush().await?;
-        }
+                if self.count == 0 {
+                    stream.write_buf(&mut self.writer_buf).await?;
+                    self.flush().await?;
+                }
+            }
+            ConnectionInner::TlsStream(stream) => {
+                frame.to_raw_in_buf(&mut self.writer_buf);
+
+                if self.count >= 1 {
+                    self.count -= 1;
+                }
+
+                if self.count == 0 {
+                    stream.write_buf(&mut self.writer_buf).await?;
+                    self.flush().await?;
+                }
+            }
+        };
 
         Ok(())
+    }
+}
+
+impl From<ConnectionInner> for Connection {
+    fn from(inner: ConnectionInner) -> Self {
+        Self {
+            inner,
+            reader_buf: BytesMut::with_capacity(1024),
+            writer_buf: BytesMut::with_capacity(1024),
+            count: 0,
+        }
     }
 }
 

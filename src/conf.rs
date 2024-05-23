@@ -1,5 +1,3 @@
-use std::{fs::File, io::BufReader, path::Path, time::Duration};
-
 /// 1. 首先配置结构体从默认值开始构造
 /// 2. 如果提供了配置文件，读取配置文件并更新
 /// 3. 如果命令行参数有 --server.addr 之类的配置项，merge 该配置
@@ -18,8 +16,8 @@ use crate::{
 use clap::Parser;
 use crossbeam::atomic::AtomicCell;
 use rand::Rng;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer};
 use serde::Deserialize;
+use std::{fs::File, io::BufReader, time::Duration};
 use tokio::time::Instant;
 use tokio_rustls::rustls;
 
@@ -328,24 +326,25 @@ impl Conf {
         Ok(())
     }
 
-    pub fn load_cert_and_key(
-        &self,
-    ) -> Option<(Vec<CertificateDer<'static>>, PrivatePkcs1KeyDer<'static>)> {
-        if self.tls.is_none() {
-            return None;
-        }
-        let cert = rustls_pemfile::certs(&mut BufReader::new(
-            File::open(&self.tls.as_ref().unwrap().cert_file).unwrap(),
-        ))
-        .map(|cert| cert.unwrap())
-        .collect();
-        let key = rustls_pemfile::rsa_private_keys(&mut BufReader::new(
-            File::open(&self.tls.as_ref().unwrap().key_file).unwrap(),
+    pub fn get_tls_config(&self) -> Option<rustls::ServerConfig> {
+        let tls = self.tls.as_ref()?;
+
+        let cert = rustls_pemfile::certs(&mut BufReader::new(File::open(&tls.cert_file).unwrap()))
+            .map(|cert| cert.unwrap())
+            .collect();
+
+        let key = rustls_pemfile::pkcs8_private_keys(&mut BufReader::new(
+            File::open(&tls.key_file).unwrap(),
         ))
         .next()
         .unwrap()
         .unwrap();
 
-        Some((cert, key))
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(cert, rustls::pki_types::PrivateKeyDer::Pkcs8(key))
+            .unwrap();
+
+        Some(config)
     }
 }

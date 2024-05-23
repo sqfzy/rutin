@@ -69,5 +69,5 @@ append_fsync = "everysec"    # AOF同步频率。可能为：always | everysec |
 [tls]
 port = 6379
 
-cert_file = "rutin.crt"
-key_file = "rutin.key"
+cert_file = "ca/rutin.crt"
+key_file = "ca/rutin.key"
