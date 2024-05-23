@@ -240,6 +240,7 @@ pub struct HandlerContext {
     pub subscribed_channels: Option<Vec<Key>>,
     // 是否开启缓存追踪
     pub client_track: Option<BgTaskSender>,
+    // 用于缓存需要传播的写命令
     pub wcmd_buf: BytesMut,
 }
 
