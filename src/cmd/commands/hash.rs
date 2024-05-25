@@ -22,7 +22,7 @@ pub struct HDel {
 impl CmdExecutor for HDel {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut count = 0;
 
         shared.db().update_object(&self.key, |obj| {
@@ -62,7 +62,7 @@ pub struct HExists {
 impl CmdExecutor for HExists {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut exists = false;
 
         shared.db().visit_object(&self.key, |obj| {
@@ -98,7 +98,7 @@ pub struct HGet {
 impl CmdExecutor for HGet {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut value = None;
 
         shared.db().visit_object(&self.key, |obj| {
@@ -133,7 +133,7 @@ pub struct HSet {
 impl CmdExecutor for HSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut count = 0;
 
         shared

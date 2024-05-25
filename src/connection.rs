@@ -70,7 +70,7 @@ impl Connection {
     // 尝试读取多个frame，直到buffer和stream都为空
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frames<'a>(&mut self) -> anyhow::Result<Option<Vec<Frame<'static>>>> {
+    pub async fn read_frames<'a>(&mut self) -> anyhow::Result<Option<Vec<Frame>>> {
         match &mut self.inner {
             ConnectionInner::TcpStream(stream) => {
                 // 如果buffer为空，则尝试从stream中读入数据到buffer
@@ -128,7 +128,7 @@ impl Connection {
 
     #[inline]
     #[instrument(level = "trace", skip(self), err)]
-    pub async fn write_frame(&mut self, frame: &Frame<'static>) -> io::Result<()> {
+    pub async fn write_frame(&mut self, frame: &Frame) -> io::Result<()> {
         match &mut self.inner {
             ConnectionInner::TcpStream(stream) => {
                 frame.to_raw_in_buf(&mut self.writer_buf);

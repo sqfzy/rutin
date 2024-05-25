@@ -51,7 +51,7 @@ pub struct Del {
 impl CmdExecutor for Del {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut count = 0;
         for key in self.keys {
             if shared.db().remove_object(&key).is_some() {
@@ -86,7 +86,7 @@ pub struct Dump {
 impl CmdExecutor for Dump {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut buf = BytesMut::with_capacity(1024);
         shared.db().visit_object(&self.key, |obj| {
             match obj.typ() {
@@ -126,7 +126,7 @@ pub struct Exists {
 impl CmdExecutor for Exists {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         for key in self.keys {
             if !shared.db().contains_object(&key) {
                 return Err(0.into());
@@ -162,7 +162,7 @@ pub struct Expire {
 impl CmdExecutor for Expire {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut res = None;
 
         let new_ex = Instant::now() + self.seconds;
@@ -247,7 +247,7 @@ pub struct ExpireAt {
 impl CmdExecutor for ExpireAt {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut res = None;
         shared.db().update_object(&self.key, |obj| {
             let ex = obj.expire();
@@ -335,7 +335,7 @@ pub struct ExpireTime {
 impl CmdExecutor for ExpireTime {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut ex = None;
         shared
             .db()
@@ -378,7 +378,7 @@ pub struct Keys {
 impl CmdExecutor for Keys {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
             .map_err(|_| "ERR invalid pattern is given")?;
 
@@ -430,7 +430,7 @@ pub struct NBKeys {
 impl CmdExecutor for NBKeys {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
             .map_err(|_| "ERR invalid pattern is given")?;
 
@@ -474,7 +474,7 @@ impl CmdExecutor for NBKeys {
 
         Ok(None)
     }
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         Ok(None)
     }
 
@@ -509,7 +509,7 @@ pub struct Persist {
 impl CmdExecutor for Persist {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         shared
             .db()
             .update_object(&self.key, |obj| {
@@ -550,7 +550,7 @@ pub struct Pttl {
 impl CmdExecutor for Pttl {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut ex = None;
 
         shared
@@ -594,7 +594,7 @@ pub struct Ttl {
 impl CmdExecutor for Ttl {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut ex = None;
 
         shared
@@ -636,7 +636,7 @@ pub struct Type {
 impl CmdExecutor for Type {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut typ = "";
 
         shared.db().visit_object(&self.key, |obj| {

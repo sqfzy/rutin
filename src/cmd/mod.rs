@@ -43,11 +43,11 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         Ok(())
     }
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
         self._execute(&handler.shared).await
     }
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError>;
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError>;
 
     fn parse(args: &mut Bulks) -> Result<Self, CmdError>;
 }
@@ -61,7 +61,7 @@ pub enum CmdType {
 
 #[inline]
 #[instrument(level = "debug", skip(handler), err)]
-pub async fn dispatch(cmd_frame: Frame<'static>, handler: &mut Handler) -> anyhow::Result<()> {
+pub async fn dispatch(cmd_frame: Frame, handler: &mut Handler) -> anyhow::Result<()> {
     // 处理错误，如果是ServerErr则向上传递，否则返回客户端响应
     if let Err(e) = _dispatch(cmd_frame, handler).await {
         let frame = e.try_into()?; // 尝试将错误转为Frame
@@ -73,7 +73,7 @@ pub async fn dispatch(cmd_frame: Frame<'static>, handler: &mut Handler) -> anyho
 
 #[inline]
 #[instrument(level = "debug", skip(handler), err)]
-pub async fn _dispatch(cmd_frame: Frame<'static>, handler: &mut Handler) -> Result<(), CmdError> {
+pub async fn _dispatch(cmd_frame: Frame, handler: &mut Handler) -> Result<(), CmdError> {
     let mut cmd = cmd_frame.into_bulks().map_err(|_| Err::Syntax)?;
     let (cmd_name, len) = get_cmd_name_uppercase(&mut cmd)?;
 

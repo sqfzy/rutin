@@ -10,9 +10,9 @@ pub struct Event(EventInner);
 
 #[derive(Default, Debug, Clone)]
 struct EventInner {
-    track: Option<Vec<Sender<Frame<'static>>>>,
-    update: Option<Vec<Sender<Frame<'static>>>>,
-    remove: Option<Vec<Sender<Frame<'static>>>>,
+    track: Option<Vec<Sender<Frame>>>,
+    update: Option<Vec<Sender<Frame>>>,
+    remove: Option<Vec<Sender<Frame>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ pub enum EventType {
 }
 
 impl Event {
-    pub(super) fn add_event(&mut self, sender: Sender<Frame<'static>>, event: EventType) {
+    pub(super) fn add_event(&mut self, sender: Sender<Frame>, event: EventType) {
         match event {
             EventType::Track => self.add_track_event(sender),
             EventType::Update => self.add_update_event(sender),
@@ -42,7 +42,7 @@ impl Event {
     }
 
     #[inline]
-    fn add_track_event(&mut self, sender: Sender<Frame<'static>>) {
+    fn add_track_event(&mut self, sender: Sender<Frame>) {
         match &mut self.0.track {
             Some(events) => events.push(sender),
             None => self.0.track = Some(vec![sender]),
@@ -50,7 +50,7 @@ impl Event {
     }
 
     #[inline]
-    fn add_update_event(&mut self, sender: Sender<Frame<'static>>) {
+    fn add_update_event(&mut self, sender: Sender<Frame>) {
         match &mut self.0.update {
             Some(events) => events.push(sender),
             None => self.0.update = Some(vec![sender]),
@@ -58,7 +58,7 @@ impl Event {
     }
 
     #[inline]
-    fn add_remove_event(&mut self, sender: Sender<Frame<'static>>) {
+    fn add_remove_event(&mut self, sender: Sender<Frame>) {
         match &mut self.0.remove {
             Some(events) => events.push(sender),
             None => self.0.remove = Some(vec![sender]),

@@ -8,17 +8,17 @@ use tokio::io::{self, AsyncReadExt};
 use tokio_util::bytes::BufMut;
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub enum Frame<'a> {
-    Simple(Cow<'a, str>), // +<str>\r\n
-    Error(Cow<'a, str>),  // -<err>\r\n
-    Integer(Int),         // :<num>\r\n
-    Bulk(Bytes),          // $<len>\r\n<bytes>\r\n
+pub enum Frame {
+    Simple(Cow<'static, str>), // +<str>\r\n
+    Error(Cow<'static, str>),  // -<err>\r\n
+    Integer(Int),              // :<num>\r\n
+    Bulk(Bytes),               // $<len>\r\n<bytes>\r\n
     #[default]
-    Null,   // $-1\r\n
-    Array(Vec<Frame<'a>>), // *<len>\r\n<Frame>...
+    Null,        // $-1\r\n
+    Array(Vec<Frame>),         // *<len>\r\n<Frame>...
 }
 
-impl<'a> Frame<'a> {
+impl Frame {
     #[inline]
     pub fn size(&self) -> usize {
         match self {
@@ -130,10 +130,7 @@ impl<'a> Frame<'a> {
     // 解析一个reader中的数据为一个frame，frame应当是完整且格式正确的
     #[inline]
     #[async_recursion::async_recursion]
-    pub async fn parse_frame<R>(
-        reader: &mut R,
-        buf: &mut BytesMut,
-    ) -> Result<Frame<'static>, FrameError>
+    pub async fn parse_frame<R>(reader: &mut R, buf: &mut BytesMut) -> Result<Frame, FrameError>
     where
         R: AsyncReadExt + Unpin + Send,
     {
@@ -154,31 +151,23 @@ impl<'a> Frame<'a> {
             }
             b'+' => {
                 let line = Frame::parse_line(reader, buf).await?.to_vec();
-                let res = Frame::new_simple_owned(String::from_utf8(line).map_err(|_| {
+                Frame::new_simple_owned(String::from_utf8(line).map_err(|_| {
                     // 不是合法的utf8字符串
                     FrameError::InvalidFormat {
                         msg: "Invalid simple frame format, not utf8".to_string(),
                     }
-                })?);
-
-                res
+                })?)
             }
             b'-' => {
                 let line = Frame::parse_line(reader, buf).await?.to_vec();
-                let res = Frame::new_error_owned(String::from_utf8(line).map_err(|_| {
+                Frame::new_error_owned(String::from_utf8(line).map_err(|_| {
                     // 不是合法的utf8字符串
                     FrameError::InvalidFormat {
                         msg: "Invalid error frame format, not utf8".to_string(),
                     }
-                })?);
-
-                res
+                })?)
             }
-            b':' => {
-                let res = Frame::Integer(Frame::parse_decimal(reader, buf).await?);
-
-                res
-            }
+            b':' => Frame::Integer(Frame::parse_decimal(reader, buf).await?),
             b'$' => {
                 let len = Frame::parse_decimal(reader, buf).await?;
 
@@ -271,14 +260,14 @@ impl<'a> Frame<'a> {
 }
 
 /// Simple变体的new and get方法
-impl<'a> Frame<'a> {
+impl Frame {
     #[inline]
     pub fn new_simple_owned(str: String) -> Self {
         Frame::Simple(Cow::Owned(str))
     }
 
     #[inline]
-    pub fn new_simple_borrowed(str: &'a str) -> Self {
+    pub fn new_simple_borrowed(str: &'static str) -> Self {
         Frame::Simple(Cow::Borrowed(str))
     }
 
@@ -311,14 +300,14 @@ impl<'a> Frame<'a> {
 }
 
 /// Error变体的new and get方法
-impl<'a> Frame<'a> {
+impl Frame {
     #[inline]
     pub fn new_error_owned(str: String) -> Self {
         Frame::Error(Cow::Owned(str))
     }
 
     #[inline]
-    pub fn new_error_borrowed(str: &'a str) -> Self {
+    pub fn new_error_borrowed(str: &'static str) -> Self {
         Frame::Error(Cow::Borrowed(str))
     }
 
@@ -347,7 +336,7 @@ impl<'a> Frame<'a> {
     }
 }
 
-impl Frame<'_> {
+impl Frame {
     #[inline]
     pub fn new_integer(num: Int) -> Self {
         Frame::Integer(num)
@@ -362,7 +351,7 @@ impl Frame<'_> {
     }
 }
 
-impl Frame<'_> {
+impl Frame {
     #[inline]
     pub fn new_null() -> Self {
         Frame::Null
@@ -370,7 +359,7 @@ impl Frame<'_> {
 }
 
 /// Bulk变体的new and get方法
-impl<'a> Frame<'a> {
+impl Frame {
     #[inline]
     pub fn new_bulk_owned(bytes: Bytes) -> Self {
         Frame::Bulk(bytes)
@@ -404,13 +393,13 @@ impl<'a> Frame<'a> {
 }
 
 /// Array变体的new and get方法
-impl<'a: 'b, 'b> Frame<'a> {
+impl Frame {
     #[inline]
-    pub fn new_array(frames: Vec<Frame<'a>>) -> Self {
+    pub fn new_array(frames: Vec<Frame>) -> Self {
         Frame::Array(frames)
     }
 
-    pub fn new_bulks(bytes: &[Bytes]) -> Frame<'static> {
+    pub fn new_bulks(bytes: &[Bytes]) -> Frame {
         Frame::Array(
             bytes
                 .iter()
@@ -419,7 +408,7 @@ impl<'a: 'b, 'b> Frame<'a> {
         )
     }
 
-    pub fn new_bulks_by_copying(bytes: &[&[u8]]) -> Frame<'static> {
+    pub fn new_bulks_by_copying(bytes: &[&[u8]]) -> Frame {
         Frame::Array(
             bytes
                 .iter()
@@ -428,7 +417,7 @@ impl<'a: 'b, 'b> Frame<'a> {
         )
     }
 
-    pub fn new_bulks_from_static(bytes: &'static [&'static [u8]]) -> Frame<'static> {
+    pub fn new_bulks_from_static(bytes: &'static [&'static [u8]]) -> Frame {
         Frame::Array(
             bytes
                 .iter()
@@ -437,7 +426,7 @@ impl<'a: 'b, 'b> Frame<'a> {
         )
     }
 
-    pub fn on_array(&self) -> Result<&Vec<Frame<'b>>, FrameError> {
+    pub fn on_array(&self) -> Result<&Vec<Frame>, FrameError> {
         match self {
             Frame::Array(frames) => Ok(frames),
             _ => Err(FrameError::NotArray),
@@ -445,14 +434,14 @@ impl<'a: 'b, 'b> Frame<'a> {
     }
 
     // 不能返回Frame<'b>，因为&'a mut T的生命周期对于T是不变的
-    pub fn on_array_mut(&mut self) -> Result<&mut Vec<Frame<'a>>, FrameError> {
+    pub fn on_array_mut(&mut self) -> Result<&mut Vec<Frame>, FrameError> {
         match self {
             Frame::Array(frames) => Ok(frames),
             _ => Err(FrameError::NotArray),
         }
     }
 
-    pub fn into_array(self) -> Result<Vec<Frame<'b>>, FrameError> {
+    pub fn into_array(self) -> Result<Vec<Frame>, FrameError> {
         match self {
             Frame::Array(frames) => Ok(frames.clone()),
             _ => Err(FrameError::NotArray),
@@ -460,7 +449,7 @@ impl<'a: 'b, 'b> Frame<'a> {
     }
 }
 
-impl Frame<'static> {
+impl Frame {
     pub fn into_bulks(self) -> Result<Bulks, FrameError> {
         match self {
             Frame::Array(frames) => Ok(Bulks {
@@ -477,7 +466,7 @@ impl Frame<'static> {
 pub struct Bulks {
     start: usize,
     end: usize,
-    pub frames: Vec<Frame<'static>>,
+    pub frames: Vec<Frame>,
 }
 
 impl Default for Bulks {
@@ -570,7 +559,7 @@ impl Bulks {
         Frame::Array(self.frames).to_raw()
     }
 
-    pub fn into_frame(self) -> Frame<'static> {
+    pub fn into_frame(self) -> Frame {
         Frame::Array(self.frames)
     }
 }
@@ -592,8 +581,8 @@ impl Iterator for Bulks {
     }
 }
 
-impl From<Vec<Frame<'static>>> for Bulks {
-    fn from(value: Vec<Frame<'static>>) -> Self {
+impl From<Vec<Frame>> for Bulks {
+    fn from(value: Vec<Frame>) -> Self {
         Self {
             start: 0,
             end: value.len() - 1,
@@ -654,23 +643,7 @@ pub enum FrameError {
     InvalidFormat { msg: String },
 }
 
-// impl std::error::Error for FrameError {}
-//
-// impl Display for FrameError {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             FrameError::NotSimple => write!(f, "Not simple frame"),
-//             FrameError::NotError => write!(f, "Not error frame"),
-//             FrameError::NotInteger => write!(f, "Not integer frame"),
-//             FrameError::NotBulk => write!(f, "Not bulk frame"),
-//             FrameError::NotNull => write!(f, "Not null frame"),
-//             FrameError::NotArray => write!(f, "Not array frame"),
-//             FrameError::Unowned => write!(f, "Unowned frame"),
-//         }
-//     }
-// }
-
-impl TryFrom<CmdError> for Frame<'static> {
+impl TryFrom<CmdError> for Frame {
     type Error = anyhow::Error;
 
     fn try_from(cmd_err: CmdError) -> Result<Self, anyhow::Error> {

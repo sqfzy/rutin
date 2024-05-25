@@ -25,7 +25,7 @@ pub struct Publish {
 impl CmdExecutor for Publish {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         // 获取正在监听的订阅者
         let listeners = shared
             .db()
@@ -74,7 +74,7 @@ pub struct Subscribe {
 impl CmdExecutor for Subscribe {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
         let Handler {
             shared,
             conn,
@@ -112,7 +112,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         Ok(None)
     }
 
@@ -140,7 +140,7 @@ pub struct Unsubscribe {
 impl CmdExecutor for Unsubscribe {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
         let Handler {
             shared,
             conn,
@@ -185,7 +185,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         Ok(None)
     }
 

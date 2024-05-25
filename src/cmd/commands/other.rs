@@ -21,12 +21,12 @@ use bytes::Bytes;
 //     const CMD_TYPE: CmdType = CmdType::Other;
 //
 //     // TODO: 返回命令字典，以便支持客户端的命令补全
-// async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError>{
+// async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError>{
 //
 //         Ok(None)
 //     }
 //
-//     fn parse(cmd_frame: Frame<'static>) -> Result<Self, CmdError> {
+//     fn parse(cmd_frame: Frame) -> Result<Self, CmdError> {
 //
 //         Ok(_Command)
 //     }
@@ -44,7 +44,7 @@ pub struct Ping {
 impl CmdExecutor for Ping {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let res = match self.msg {
             Some(msg) => Frame::new_simple_owned(String::from_utf8_lossy(&msg).to_string()),
             None => Frame::new_simple_borrowed("PONG"),
@@ -75,7 +75,7 @@ pub struct Echo {
 impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         Ok(Some(Frame::new_bulk_owned(self.msg)))
     }
 
@@ -197,7 +197,7 @@ pub struct BgSave;
 impl CmdExecutor for BgSave {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
         let rdb_conf = &handler.conf.rdb;
         let mut rdb = RDB::new(
             handler.shared.clone(),
@@ -218,7 +218,7 @@ impl CmdExecutor for BgSave {
         )))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         Ok(None)
     }
 
@@ -300,7 +300,7 @@ pub struct ClientTracking {
 impl CmdExecutor for ClientTracking {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
@@ -321,7 +321,7 @@ impl CmdExecutor for ClientTracking {
         Ok(Some(Frame::new_simple_borrowed("OK")))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         Ok(None)
     }
 

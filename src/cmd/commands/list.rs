@@ -31,7 +31,7 @@ pub struct BLMove {
 impl CmdExecutor for BLMove {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let db = shared.db();
 
         let mut elem = None;
@@ -115,7 +115,7 @@ pub struct BLPop {
 impl CmdExecutor for BLPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let db = shared.db();
 
         match first_round(&self.keys, shared).await {
@@ -179,7 +179,7 @@ pub struct LPos {
 impl CmdExecutor for LPos {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         // 找到一个匹配元素，则rank-1(或+1)，当rank为0时，则表明开始收入
         // 一共要收入count个，但最长只能找max_len个元素
         // 如果count == 1，返回Integer
@@ -298,7 +298,7 @@ pub struct LLen {
 impl CmdExecutor for LLen {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut res = None;
         shared
             .db()
@@ -337,7 +337,7 @@ pub struct LPop {
 impl CmdExecutor for LPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut res = None;
         shared.db().update_object(&self.key, |obj| {
             let list = obj.on_list_mut()?;
@@ -402,7 +402,7 @@ pub struct LPush {
 impl CmdExecutor for LPush {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut len = 0;
         shared
             .db()
@@ -446,7 +446,7 @@ pub struct NBLPop {
 impl CmdExecutor for NBLPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
         let Handler { shared, .. } = handler;
 
         match first_round(&self.keys, shared).await {
@@ -497,7 +497,7 @@ impl CmdExecutor for NBLPop {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
         Ok(None)
     }
 
@@ -546,7 +546,7 @@ impl TryFrom<&[u8]> for Where {
     }
 }
 
-async fn first_round(keys: &[Key], shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+async fn first_round(keys: &[Key], shared: &Shared) -> Result<Option<Frame>, CmdError> {
     let mut res = None;
     // 先尝试一轮pop
     for key in keys.iter() {
@@ -576,10 +576,10 @@ async fn first_round(keys: &[Key], shared: &Shared) -> Result<Option<Frame<'stat
 
 async fn pop_timeout_at(
     shared: &Shared,
-    key_tx: Sender<Frame<'static>>,
-    key_rx: Receiver<Frame<'static>>,
+    key_tx: Sender<Frame>,
+    key_rx: Receiver<Frame>,
     deadline: Option<Instant>,
-) -> Result<Frame<'static>, CmdError> {
+) -> Result<Frame, CmdError> {
     let db = shared.db();
     let mut res = None;
 

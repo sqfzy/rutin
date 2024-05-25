@@ -33,7 +33,7 @@ pub struct Db {
 
     // Key代表频道名，每个频道名映射着一组Sender，通过这些Sender可以发送消息给订阅频道
     // 的客户端
-    pub_sub: DashMap<Key, Vec<Sender<Frame<'static>>>, RandomState>,
+    pub_sub: DashMap<Key, Vec<Sender<Frame>>, RandomState>,
 
     // 记录已经连接的客户端，并且映射到该连接的`BgTaskSender`，使用该sender可以向该连接
     // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
@@ -73,7 +73,7 @@ impl Db {
     }
 
     #[instrument(level = "debug", skip(self, sender))]
-    pub fn add_event(&self, key: Key, sender: Sender<Frame<'static>>, event: EventType) {
+    pub fn add_event(&self, key: Key, sender: Sender<Frame>, event: EventType) {
         match self.entries.entry(key) {
             Entry::Occupied(mut e) => {
                 let obj = e.get_mut();
@@ -465,13 +465,13 @@ impl Db {
 impl Db {
     // 获取该频道的所有监听者
     #[instrument(level = "debug", skip(self))]
-    pub fn get_channel_all_listener(&self, topic: &[u8]) -> Option<Vec<Sender<Frame<'static>>>> {
+    pub fn get_channel_all_listener(&self, topic: &[u8]) -> Option<Vec<Sender<Frame>>> {
         self.pub_sub.get(topic).map(|listener| listener.clone())
     }
 
     // 向频道添加一个监听者
     #[instrument(level = "debug", skip(self, listener))]
-    pub fn add_channel_listener(&self, topic: Key, listener: Sender<Frame<'static>>) {
+    pub fn add_channel_listener(&self, topic: Key, listener: Sender<Frame>) {
         self.pub_sub.entry(topic).or_default().push(listener);
     }
 
@@ -480,8 +480,8 @@ impl Db {
     pub fn remove_channel_listener(
         &self,
         topic: &[u8],
-        listener: &Sender<Frame<'static>>,
-    ) -> Option<Sender<Frame<'static>>> {
+        listener: &Sender<Frame>,
+    ) -> Option<Sender<Frame>> {
         if let Some(mut pubs) = self.pub_sub.get_mut(topic) {
             // 如果找到匹配的listener，则移除
             if let Some(index) = pubs.iter().position(|l| l.same_channel(listener)) {

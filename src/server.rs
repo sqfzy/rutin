@@ -205,12 +205,12 @@ impl Handler {
     }
 }
 
-pub type BgTaskSender = Sender<Frame<'static>>;
+pub type BgTaskSender = Sender<Frame>;
 
 #[derive(Debug, Clone)]
 pub struct BgTaskChannel {
     tx: BgTaskSender,
-    rx: Receiver<Frame<'static>>,
+    rx: Receiver<Frame>,
 }
 
 impl BgTaskChannel {
@@ -222,7 +222,7 @@ impl BgTaskChannel {
         &self.tx
     }
 
-    pub async fn recv_from_bg_task(&self) -> Frame<'static> {
+    pub async fn recv_from_bg_task(&self) -> Frame {
         self.rx.recv_async().await.unwrap()
     }
 }

@@ -28,7 +28,7 @@ pub struct Append {
 impl CmdExecutor for Append {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut length = None;
 
         shared
@@ -67,7 +67,7 @@ pub struct Decr {
 impl CmdExecutor for Decr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -101,7 +101,7 @@ pub struct DecrBy {
 impl CmdExecutor for DecrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -137,7 +137,7 @@ pub struct Get {
 impl CmdExecutor for Get {
     const CMD_TYPE: crate::cmd::CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut str = "".into();
 
         shared.db().visit_object(&self.key, |obj| {
@@ -173,7 +173,7 @@ pub struct GetRange {
 impl CmdExecutor for GetRange {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut res = "".into();
 
         shared.db().visit_object(&self.key, |obj| {
@@ -218,7 +218,7 @@ pub struct GetSet {
 impl CmdExecutor for GetSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut old = "".into();
 
         shared.db().update_object(&self.key, |obj| {
@@ -254,7 +254,7 @@ pub struct Incr {
 impl CmdExecutor for Incr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut new_i = 0;
 
         shared.db().update_object(&self.key, |obj| {
@@ -290,7 +290,7 @@ pub struct IncrBy {
 impl CmdExecutor for IncrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -326,7 +326,7 @@ pub struct MGet {
 impl CmdExecutor for MGet {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut res = Vec::with_capacity(self.keys.len());
         for key in self.keys.iter() {
             let mut str = "".into();
@@ -365,7 +365,7 @@ pub struct MSet {
 impl CmdExecutor for MSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         for (key, value) in self.pairs {
             shared
                 .db()
@@ -403,7 +403,7 @@ pub struct MSetNx {
 impl CmdExecutor for MSetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         for (key, _) in &self.pairs {
             if shared.db().contains_object(key) {
                 return Err(0.into());
@@ -461,7 +461,7 @@ enum SetOpt {
 impl CmdExecutor for Set {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         // 1. 是否要求键存在？
         // 2. 满足命令对键的要求后，更新值
         // 3. 是否需要更新expire?
@@ -724,7 +724,7 @@ pub struct SetEx {
 impl CmdExecutor for SetEx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         shared.db().insert_object(
             self.key,
             Object::new_str(self.value.into(), Some(Instant::now() + self.expire)),
@@ -760,7 +760,7 @@ pub struct SetNx {
 impl CmdExecutor for SetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         if shared.db().contains_object(&self.key) {
             return Err(0.into());
         }
@@ -796,7 +796,7 @@ pub struct StrLen {
 impl CmdExecutor for StrLen {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame<'static>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
         let mut len = 0;
         shared.db().visit_object(&self.key, |obj| {
             len = obj.on_str()?.len();
