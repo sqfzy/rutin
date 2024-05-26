@@ -19,7 +19,7 @@ use tracing::{debug, error, instrument};
 
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
 // 需要检查是否已经存在相同的ID
-pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(0);
+pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(1);
 
 pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
     let shutdown_manager = ShutdownManager::new();
@@ -234,6 +234,7 @@ impl Default for BgTaskChannel {
     }
 }
 
+#[derive(Default)]
 pub struct HandlerContext {
     pub client_id: Id,
     // 客户端订阅的频道

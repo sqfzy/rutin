@@ -10,6 +10,7 @@ pub mod persist;
 pub mod shared;
 // mod persist;
 // pub mod replicaof;
+pub mod script;
 mod server;
 pub mod util;
 
