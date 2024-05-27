@@ -3,6 +3,7 @@ use crate::{
         error::{CmdError, Err},
         CmdExecutor, CmdType,
     },
+    connection::AsyncStream,
     frame::{Bulks, Frame},
     persist::{rdb::RDB, Persist},
     server::Handler,
@@ -197,7 +198,10 @@ pub struct BgSave;
 impl CmdExecutor for BgSave {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Frame>, CmdError> {
         let rdb_conf = &handler.conf.rdb;
         let mut rdb = RDB::new(
             handler.shared.clone(),
@@ -300,7 +304,10 @@ pub struct ClientTracking {
 impl CmdExecutor for ClientTracking {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Frame>, CmdError> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
@@ -358,14 +365,13 @@ impl CmdExecutor for ClientTracking {
 #[cfg(test)]
 mod cmd_other_tests {
     use super::*;
-    use crate::util::{create_handler, create_server, test_init};
+    use crate::util::test_init;
 
     #[tokio::test]
     async fn client_tracking_test() {
         test_init();
 
-        let mut server = create_server().await;
-        let mut handler = create_handler(&mut server).await;
+        let mut handler = Handler::default();
 
         let tracking = ClientTracking::parse(&mut Bulks::from(["ON"].as_ref())).unwrap();
         tracking.execute(&mut handler).await.unwrap();

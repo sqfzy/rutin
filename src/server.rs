@@ -1,20 +1,23 @@
 use crate::{
-    cmd::*,
+    cmd::dispatch,
     conf::Conf,
-    connection::{Connection, ConnectionInner},
+    connection::{AsyncStream, Connection},
     frame::Frame,
     persist::{rdb::RDB, Persist},
     shared::{db::Db, wcmd_propagator::WCmdPropergator, Shared},
     Id, Key,
 };
 use async_shutdown::{DelayShutdownToken, ShutdownManager};
-use backon::{ExponentialBuilder, Retryable};
 use bytes::BytesMut;
 use crossbeam::atomic::AtomicCell;
 use flume::{Receiver, Sender};
-use std::{net::SocketAddr, sync::Arc};
-use tokio::{io, net::TcpListener, sync::Semaphore};
-use tokio_rustls::TlsAcceptor;
+use std::sync::Arc;
+use tokio::{
+    io,
+    net::{TcpListener, TcpStream},
+    sync::Semaphore,
+};
+use tokio_rustls::{server::TlsStream, TlsAcceptor};
 use tracing::{debug, error, instrument};
 
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
@@ -99,58 +102,51 @@ impl Listener {
                 .await
                 .unwrap();
 
-            let (socket, peer_addr) = (|| async { self.accept().await })
-                .retry(&ExponentialBuilder::default().with_jitter())
-                .await?;
+            let (stream, _) = self.listener.accept().await?;
 
             let shared = self.shared.clone();
-            let bg_task_channel = BgTaskChannel::default();
-
-            // 获取一个有效的客户端ID
-            let id_may_occupied = CLIENT_ID_COUNT.fetch_add(1);
-            let client_id = shared
-                .db()
-                .record_client_id(id_may_occupied, bg_task_channel.new_sender());
-            if id_may_occupied != client_id {
-                CLIENT_ID_COUNT.store(client_id);
-            }
-
-            let mut handler = Handler {
-                shared,
-                conn: Connection::from(socket),
-                shutdown_manager: self.shutdown_manager.clone(),
-                bg_task_channel,
-                conf: self.conf.clone(),
-                context: HandlerContext::new(CLIENT_ID_COUNT.fetch_add(1)),
-            };
+            let conf = self.conf.clone();
+            let shutdown_manager = self.shutdown_manager.clone();
 
             let delay_token = self.delay_token.clone();
-            tokio::spawn(async move {
-                if let Err(err) = handler.run(&format!("client {peer_addr}")).await {
-                    error!(cause = ?err, "connection error");
+            match &self.tls_acceptor {
+                None => {
+                    let mut handler = Handler::new(shared, stream, conf, shutdown_manager);
+
+                    tokio::spawn(async move {
+                        if let Err(err) = handler.run().await {
+                            error!(cause = ?err, "connection error");
+                        }
+
+                        // move delay_token 并且在handler结束时释放，对于run()函数中可能会长时间阻塞本协程的，
+                        // 应该考虑使用wrap_cancel()；对于持续阻塞的操作，必须使用wrap_cancel()，否则无法正常
+                        // 关闭服务
+                        drop(delay_token);
+                        #[cfg(not(feature = "debug"))]
+                        drop(permit);
+                    });
                 }
+                // 如果开启了TLS，则使用TlsStream
+                Some(tls_acceptor) => {
+                    let mut handler = Handler::new(
+                        shared,
+                        tls_acceptor.accept(stream).await?,
+                        conf,
+                        shutdown_manager,
+                    );
 
-                // move delay_token 并且在handler结束时释放，对于run()函数中可能会长时间阻塞本协程的，
-                // 应该考虑使用wrap_cancel()；对于持续阻塞的操作，必须使用wrap_cancel()，否则无法正常
-                // 关闭服务
-                drop(delay_token);
-                #[cfg(not(feature = "debug"))]
-                drop(permit);
-            });
+                    tokio::spawn(async move {
+                        if let Err(err) = handler.run().await {
+                            error!(cause = ?err, "connection error");
+                        }
+
+                        drop(delay_token);
+                        #[cfg(not(feature = "debug"))]
+                        drop(permit);
+                    });
+                }
+            };
         }
-    }
-
-    pub async fn accept(&self) -> io::Result<(ConnectionInner, SocketAddr)> {
-        let (stream, peer_addr) = self.listener.accept().await?;
-        let inner = match &self.tls_acceptor {
-            Some(tls_acceptor) => {
-                let stream = tls_acceptor.accept(stream).await?;
-                ConnectionInner::TlsStream(stream)
-            }
-            None => ConnectionInner::TcpStream(stream),
-        };
-
-        Ok((inner, peer_addr))
     }
 
     pub async fn clean(&mut self) {
@@ -166,18 +162,46 @@ impl Listener {
     }
 }
 
-pub struct Handler {
+pub struct Handler<S: AsyncStream> {
     pub shared: Shared,
-    pub conn: Connection,
+    pub conn: Connection<S>,
     pub shutdown_manager: ShutdownManager<()>,
     pub bg_task_channel: BgTaskChannel,
     pub conf: Arc<Conf>,
     pub context: HandlerContext,
 }
 
-impl Handler {
+impl<S: AsyncStream> Handler<S> {
+    pub fn new(
+        shared: Shared,
+        stream: S,
+        conf: Arc<Conf>,
+        shutdown_manager: ShutdownManager<()>,
+    ) -> Self {
+        let bg_task_channel = BgTaskChannel::default();
+
+        // 获取一个有效的客户端ID
+        let id_may_occupied = CLIENT_ID_COUNT.fetch_add(1);
+        let client_id = shared
+            .db()
+            .record_client_id(id_may_occupied, bg_task_channel.new_sender());
+        if id_may_occupied != client_id {
+            CLIENT_ID_COUNT.store(client_id);
+        }
+        let client_id = CLIENT_ID_COUNT.fetch_add(1);
+
+        Self {
+            shared,
+            conn: Connection::from(stream),
+            shutdown_manager,
+            bg_task_channel,
+            conf,
+            context: HandlerContext::new(client_id),
+        }
+    }
+
     #[instrument(level = "debug", skip(self), fields(client_id = %self.context.client_id), err)]
-    pub async fn run(&mut self, peer: &str) -> anyhow::Result<()> {
+    pub async fn run(&mut self) -> anyhow::Result<()> {
         loop {
             tokio::select! {
                 // 等待shutdown信号

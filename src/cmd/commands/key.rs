@@ -3,13 +3,14 @@ use crate::{
         error::{CmdError, Err},
         CmdExecutor, CmdType,
     },
+    connection::AsyncStream,
     frame::{Bulks, Frame},
     persist::rdb::{
         encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
     },
     server::Handler,
     shared::{db::ObjValueType, Shared},
-    util::{self, atoi},
+    util::atoi,
     Id, Int, Key, EPOCH,
 };
 use bytes::{Bytes, BytesMut};
@@ -424,21 +425,24 @@ impl CmdExecutor for Keys {
 #[derive(Debug)]
 pub struct NBKeys {
     pattern: Bytes,
-    redirect: Option<Id>,
+    redirect: Id, // 0表示不重定向
 }
 
 impl CmdExecutor for NBKeys {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Frame>, CmdError> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
             .map_err(|_| "ERR invalid pattern is given")?;
 
         let shared = handler.shared.clone();
-        let bg_sender = if let Some(redirect) = self.redirect {
+        let bg_sender = if self.redirect != 0 {
             shared
                 .db()
-                .get_client_bg_sender(redirect)
+                .get_client_bg_sender(self.redirect)
                 .ok_or("ERR The client ID you want redirect to does not exist")?
         } else {
             handler.bg_task_channel.new_sender()
@@ -479,19 +483,13 @@ impl CmdExecutor for NBKeys {
     }
 
     fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
-        if args.len() != 1 && args.len() != 2 {
+        if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
 
-        let redirect = if let Some(redirect) = args.pop_front() {
-            Some(util::atoi::<Id>(&redirect)?)
-        } else {
-            None
-        };
-
         Ok(NBKeys {
             pattern: args.pop_front().unwrap(),
-            redirect,
+            redirect: atoi::atoi::<Id>(&args.pop_front().unwrap()).ok_or(Err::A2IParse)?,
         })
     }
 }

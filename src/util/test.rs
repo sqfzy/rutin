@@ -2,6 +2,7 @@ use crate::{
     conf::Conf,
     server::{BgTaskChannel, Handler, HandlerContext, Listener},
     shared::Shared,
+    util::fake_cs::FakeStream,
     Connection, Int,
 };
 use async_shutdown::ShutdownManager;
@@ -15,54 +16,56 @@ pub fn test_init() {
         .init();
 }
 
-pub async fn create_server() -> Listener {
-    let random_port = rand::random::<u16>() % 10000 + rand::random::<u16>() % 10000;
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{:?}", random_port))
-        .await
-        .unwrap();
-    let mut conf = Conf::default();
-    conf.server.port = random_port;
-
-    let shutdown_manager = ShutdownManager::new();
-    Listener {
-        shared: Shared::default(),
-        listener,
-        tls_acceptor: None,
-        limit_connections: Arc::new(Semaphore::new(1000)),
-        delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
-        shutdown_manager,
-        conf: Arc::new(conf),
-    }
-}
-
-pub async fn create_handler(server: &mut Listener) -> Handler {
-    let port = server.conf.server.port;
-    tokio::spawn(async move {
-        loop {
-            if TcpStream::connect(format!("127.0.0.1:{:?}", port))
-                .await
-                .is_ok()
-            {
-                break;
-            }
-            sleep(Duration::from_millis(500)).await;
-        }
-    });
-
-    let shared = server.shared.clone();
-    let conn = Connection::new(server.listener.accept().await.unwrap().0);
-    let shutdown_manager = server.shutdown_manager.clone();
-    let conf = server.conf.clone();
-
-    Handler {
-        shared,
-        conn,
-        shutdown_manager,
-        bg_task_channel: BgTaskChannel::default(),
-        conf,
-        context: HandlerContext::new(rand::random::<u128>()),
-    }
-}
+// pub async fn create_server() -> Listener {
+//     let random_port = rand::random::<u16>() % 10000 + rand::random::<u16>() % 10000;
+//     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{:?}", random_port))
+//         .await
+//         .unwrap();
+//     let mut conf = Conf::default();
+//     conf.server.port = random_port;
+//
+//     let shutdown_manager = ShutdownManager::new();
+//     Listener {
+//         shared: Shared::default(),
+//         listener,
+//         tls_acceptor: None,
+//         limit_connections: Arc::new(Semaphore::new(1000)),
+//         delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
+//         shutdown_manager,
+//         conf: Arc::new(conf),
+//     }
+// }
+//
+// pub async fn create_handler(server: &mut Listener) -> Handler<FakeStream> {
+//     let port = server.conf.server.port;
+//     tokio::spawn(async move {
+//         loop {
+//             if TcpStream::connect(format!("127.0.0.1:{:?}", port))
+//                 .await
+//                 .is_ok()
+//             {
+//                 break;
+//             }
+//             sleep(Duration::from_millis(500)).await;
+//         }
+//     });
+//
+//     let shared = server.shared.clone();
+//     let conn = Connection::from(server.listener.accept().await.unwrap().0);
+//     let shutdown_manager = server.shutdown_manager.clone();
+//     let conf = server.conf.clone();
+//
+//     // Handler {
+//     //     shared,
+//     //     conn,
+//     //     shutdown_manager,
+//     //     bg_task_channel: BgTaskChannel::default(),
+//     //     conf,
+//     //     context: HandlerContext::new(rand::random::<u128>()),
+//     // }
+//     // TODO:
+//     todo!()
+// }
 
 pub fn to_valid_range(start: Int, end: Int, len: usize) -> Option<(usize, usize)> {
     if start == 0 || end == 0 {

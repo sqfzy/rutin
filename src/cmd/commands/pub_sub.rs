@@ -3,6 +3,7 @@ use crate::{
         error::{CmdError, Err},
         CmdExecutor, CmdType, ServerErrSnafu,
     },
+    connection::AsyncStream,
     frame::{Bulks, Frame},
     server::Handler,
     shared::Shared,
@@ -74,7 +75,10 @@ pub struct Subscribe {
 impl CmdExecutor for Subscribe {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Frame>, CmdError> {
         let Handler {
             shared,
             conn,
@@ -140,7 +144,10 @@ pub struct Unsubscribe {
 impl CmdExecutor for Unsubscribe {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Frame>, CmdError> {
         let Handler {
             shared,
             conn,
@@ -203,14 +210,13 @@ impl CmdExecutor for Unsubscribe {
 #[cfg(test)]
 mod cmd_pub_sub_tests {
     use super::*;
-    use crate::util::{create_handler, create_server, test_init};
+    use crate::util::test_init;
 
     #[tokio::test]
     async fn sub_pub_unsub_test() {
         test_init();
 
-        let mut server = create_server().await;
-        let mut handler = create_handler(&mut server).await;
+        let mut handler = Handler::default();
 
         // 订阅channel1和channel2
         let subscribe =

@@ -1,4 +1,5 @@
 #![feature(slice_split_once)]
+#![feature(lazy_cell)]
 
 pub mod cli;
 pub mod cmd;

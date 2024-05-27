@@ -265,7 +265,7 @@ impl Conf {
 
             let mut handler = Handler {
                 shared: shared.clone(),
-                conn: Connection::new(socket),
+                conn: Connection::from(socket),
                 shutdown_manager: shutdown_manager.clone(),
                 bg_task_channel: BgTaskChannel::default(),
                 conf: conf.clone(),

@@ -1,12 +1,13 @@
 use crate::{
     cmd::{error::Err, CmdError, CmdExecutor, CmdType},
+    connection::AsyncStream,
     frame::{Bulks, Frame},
     server::Handler,
     shared::{
         db::{EventType, ObjValueType},
         Shared,
     },
-    util::{self, atoi},
+    util::atoi,
     Id, Int, Key,
 };
 use bytes::Bytes;
@@ -440,13 +441,16 @@ impl CmdExecutor for LPush {
 pub struct NBLPop {
     keys: Vec<Key>,
     timeout: u64,
-    redirect: Option<Id>,
+    redirect: Id, // 0表示不重定向
 }
 
 impl CmdExecutor for NBLPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn execute(self, handler: &mut Handler) -> Result<Option<Frame>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Frame>, CmdError> {
         let Handler { shared, .. } = handler;
 
         match first_round(&self.keys, shared).await {
@@ -477,14 +481,15 @@ impl CmdExecutor for NBLPop {
         };
 
         let shared = handler.shared.clone();
-        let bg_sender = if let Some(redirect) = self.redirect {
+        let bg_sender = if self.redirect != 0 {
             shared
                 .db()
-                .get_client_bg_sender(redirect)
+                .get_client_bg_sender(self.redirect)
                 .ok_or("ERR The client ID you want redirect to does not exist")?
         } else {
             handler.bg_task_channel.new_sender()
         };
+
         tokio::spawn(async move {
             let res = match pop_timeout_at(&shared, key_tx, key_rx, deadline).await {
                 Ok(res) => res,
@@ -502,16 +507,12 @@ impl CmdExecutor for NBLPop {
     }
 
     fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
-        if args.len() < 2 {
+        if args.len() < 3 {
             return Err(Err::WrongArgNum.into());
         }
 
+        let redirect = atoi::atoi::<Id>(&args.pop_back().unwrap()).ok_or(Err::A2IParse)?;
         let timeout = atoi::atoi::<u64>(&args.pop_back().unwrap()).ok_or(Err::A2IParse)?;
-        let redirect = if let Some(redirect) = args.pop_front() {
-            Some(util::atoi::<Id>(&redirect)?)
-        } else {
-            None
-        };
 
         Ok(Self {
             keys: args.iter().cloned().collect(),
@@ -650,11 +651,7 @@ async fn pop_timeout_at(
 #[cfg(test)]
 mod cmd_list_tests {
     use super::*;
-    use crate::{
-        cmd::Ping,
-        shared::db::db_tests::get_event,
-        util::{create_handler, create_server, test_init},
-    };
+    use crate::{cmd::Ping, shared::db::db_tests::get_event, util::test_init};
     use tokio::time::sleep;
 
     #[tokio::test]
@@ -741,8 +738,7 @@ mod cmd_list_tests {
     async fn blpop_test() {
         test_init();
 
-        let mut server = create_server().await;
-        let handler = create_handler(&mut server).await;
+        let handler = Handler::default();
 
         /***************/
         /* 非阻塞测试 */
@@ -780,7 +776,7 @@ mod cmd_list_tests {
         /************************/
         /* 无超时时间，阻塞测试 */
         /************************/
-        let handler2 = create_handler(&mut server).await;
+        let handler2 = Handler::default();
         tokio::spawn(async move {
             let blpop = BLPop::parse(&mut Bulks::from(["l3", "0"].as_ref())).unwrap();
             assert_eq!(
@@ -799,7 +795,7 @@ mod cmd_list_tests {
         /************************/
         /* 有超时时间，阻塞测试 */
         /************************/
-        let handler3 = create_handler(&mut server).await;
+        let handler3 = Handler::default();
         tokio::spawn(async move {
             let blpop = BLPop::parse(&mut Bulks::from(["l4", "2"].as_ref())).unwrap();
             assert_eq!(
@@ -829,8 +825,7 @@ mod cmd_list_tests {
     async fn nblpop_test() {
         test_init();
 
-        let mut server = create_server().await;
-        let mut handler = create_handler(&mut server).await;
+        let mut handler = Handler::default();
 
         /************/
         /* 普通测试 */
@@ -854,7 +849,7 @@ mod cmd_list_tests {
         /**************/
         /* 有超时时间 */
         /**************/
-        let nblpop = NBLPop::parse(&mut Bulks::from(["list3", "2"].as_ref())).unwrap();
+        let nblpop = NBLPop::parse(&mut Bulks::from(["list3", "2", "0"].as_ref())).unwrap();
         nblpop.execute(&mut handler).await.unwrap();
         println!("{:?}", get_event(handler.shared.db(), b"list3").unwrap());
 
@@ -879,7 +874,7 @@ mod cmd_list_tests {
         /************************/
         /* 有超时时间，超时测试 */
         /************************/
-        let nblpop = NBLPop::parse(&mut Bulks::from(["whatever", "1"].as_ref())).unwrap();
+        let nblpop = NBLPop::parse(&mut Bulks::from(["whatever", "1", "0"].as_ref())).unwrap();
         nblpop.execute(&mut handler).await.unwrap();
         assert_eq!(
             Frame::new_null(),
@@ -889,7 +884,7 @@ mod cmd_list_tests {
         /**************/
         /* 无超时时间 */
         /**************/
-        let nblpop = NBLPop::parse(&mut Bulks::from(["list3", "0"].as_ref())).unwrap();
+        let nblpop = NBLPop::parse(&mut Bulks::from(["list3", "0", "0"].as_ref())).unwrap();
         nblpop.execute(&mut handler).await.unwrap();
 
         let ping = Ping::parse(&mut Bulks::default()).unwrap();

@@ -4,7 +4,7 @@ use anyhow::bail;
 use bytes::{Buf, Bytes, BytesMut};
 use snafu::Snafu;
 use std::{borrow::Cow, iter::Iterator};
-use tokio::io::{self, AsyncReadExt};
+use tokio::io::AsyncReadExt;
 use tokio_util::bytes::BufMut;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -130,20 +130,32 @@ impl Frame {
     // 解析一个reader中的数据为一个frame，frame应当是完整且格式正确的
     #[inline]
     #[async_recursion::async_recursion]
-    pub async fn parse_frame<R>(reader: &mut R, buf: &mut BytesMut) -> Result<Frame, FrameError>
+    pub async fn parse_frame<R>(
+        reader: &mut R,
+        buf: &mut BytesMut,
+    ) -> Result<Option<Frame>, FrameError>
     where
         R: AsyncReadExt + Unpin + Send,
     {
-        let res = match Frame::parse_u8(reader, buf)
-            .await
-            .map_err(|_| FrameError::InCompleteFrame)?
+        if buf.is_empty()
+            && reader
+                .read_buf(buf)
+                .await
+                .map_err(|e| FrameError::Other { msg: e.to_string() })?
+                == 0
         {
+            return Ok(None);
+        }
+
+        let res = match buf.get_u8() {
             b'*' => {
                 let len = Frame::parse_decimal(reader, buf).await? as usize;
 
                 let mut frames = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let frame = Frame::parse_frame(reader, buf).await?;
+                    let frame = Frame::parse_frame(reader, buf)
+                        .await?
+                        .ok_or(FrameError::InCompleteFrame)?;
                     frames.push(frame);
                 }
 
@@ -174,7 +186,7 @@ impl Frame {
                 if len == -1 {
                     let res = Frame::Null;
 
-                    return Ok(res);
+                    return Ok(Some(res));
                 }
 
                 let len: usize = if let Ok(len) = len.try_into() {
@@ -205,19 +217,7 @@ impl Frame {
             }
         };
 
-        Ok(res)
-    }
-
-    #[inline]
-    async fn parse_u8<R: AsyncReadExt + Unpin>(
-        reader: &mut R,
-        buf: &mut BytesMut,
-    ) -> io::Result<u8> {
-        if buf.is_empty() {
-            reader.read_buf(buf).await?;
-        }
-
-        Ok(buf.get_u8())
+        Ok(Some(res))
     }
 
     #[inline]
@@ -640,7 +640,20 @@ pub enum FrameError {
     NotArray,
     Unowned,
     InCompleteFrame,
-    InvalidFormat { msg: String },
+    #[snafu(display("Invalid frame: {}", msg))]
+    InvalidFormat {
+        msg: String,
+    },
+    #[snafu(display("Invalid frame: {}", msg))]
+    Other {
+        msg: String,
+    },
+}
+
+impl From<FrameError> for tokio::io::Error {
+    fn from(val: FrameError) -> Self {
+        tokio::io::Error::new(tokio::io::ErrorKind::InvalidData, val)
+    }
 }
 
 impl TryFrom<CmdError> for Frame {
