@@ -112,9 +112,9 @@ impl AsyncWrite for FakeStream {
         mut self: std::pin::Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        let (tx, rx) = (self.peer.0.clone(), self.peer.1.clone());
-        let _ = std::mem::replace(&mut self.local.0, tx);
-        let _ = std::mem::replace(&mut self.local.1, rx);
+        let channel = flume::bounded(0);
+        self.local = channel.clone();
+        self.peer = channel;
         std::task::Poll::Ready(Ok(()))
     }
 }

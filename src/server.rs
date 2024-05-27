@@ -12,12 +12,8 @@ use bytes::BytesMut;
 use crossbeam::atomic::AtomicCell;
 use flume::{Receiver, Sender};
 use std::sync::Arc;
-use tokio::{
-    io,
-    net::{TcpListener, TcpStream},
-    sync::Semaphore,
-};
-use tokio_rustls::{server::TlsStream, TlsAcceptor};
+use tokio::{io, net::TcpListener, sync::Semaphore};
+use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, instrument};
 
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
