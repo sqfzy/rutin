@@ -1,0 +1,8 @@
+/target
+
+dump.rdb
+appendonly.aof
+appendonly.aof.bak
+flamegraph.svg
+perf.data
+perf.data.old

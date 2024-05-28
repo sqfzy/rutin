@@ -1,0 +1,3 @@
+mod lua;
+
+struct Script {}
