@@ -299,9 +299,9 @@ async fn enable_aof(
     conf: Arc<Conf>,
     shutdown_manager: ShutdownManager<()>,
 ) -> anyhow::Result<()> {
-    let mut aof = AOF::new(shared, conf, shutdown_manager).await?;
+    let mut aof = AOF::new(shared.clone(), conf.clone(), shutdown_manager.clone()).await?;
 
-    let (mut handler, client) = Handler::new_fake();
+    let (mut handler, client) = Handler::new_fake_with(shared, conf, shutdown_manager);
 
     tokio::spawn(async move {
         let start = std::time::Instant::now();
@@ -362,6 +362,37 @@ mod conf_tests {
         let conf = Arc::new(conf);
         let shared = Shared::new(Db::default(), &conf);
         let shutdown = ShutdownManager::new();
+        // 启用AOF，开始AOF save，将AOF文件中的命令加载到内存中
+        enable_aof(shared.clone(), conf.clone(), shutdown.clone())
+            .await
+            .unwrap();
+
+        let db = shared.db();
+        // 断言AOF文件中的内容已经加载到内存中
+        assert_eq!(
+            get_object(db, b"key:000000000015")
+                .unwrap()
+                .on_str()
+                .unwrap()
+                .to_vec(),
+            b"VXK"
+        );
+        assert_eq!(
+            get_object(db, b"key:000000000003")
+                .unwrap()
+                .on_str()
+                .unwrap()
+                .to_vec(),
+            b"VXK"
+        );
+        assert_eq!(
+            get_object(db, b"key:000000000025")
+                .unwrap()
+                .on_str()
+                .unwrap()
+                .to_vec(),
+            b"VXK"
+        );
 
         let (mut handler, _) =
             Handler::new_fake_with(shared.clone(), conf.clone(), shutdown.clone());
@@ -375,9 +406,9 @@ mod conf_tests {
         drop(file);
 
         let frames = vec![
-            Frame::new_bulks_from_static(&[b"SET", b"key1", b"VXK"]),
-            Frame::new_bulks_from_static(&[b"SET", b"key2", b"VXK"]),
-            Frame::new_bulks_from_static(&[b"SET", b"key3", b"VXK"]),
+            Frame::new_bulks_from_static(&[b"SET", b"key:000000000015", b"VXK"]),
+            Frame::new_bulks_from_static(&[b"SET", b"key:000000000003", b"VXK"]),
+            Frame::new_bulks_from_static(&[b"SET", b"key:000000000025", b"VXK"]),
         ];
 
         // 执行SET命令, handler会将命令写入AOF文件
@@ -385,29 +416,7 @@ mod conf_tests {
             dispatch(f, &mut handler).await.unwrap();
         }
 
-        let conf = conf.clone();
-        let shared = Shared::new(Db::default(), &conf);
-        let shutdown = ShutdownManager::new();
-        // 启用AOF，开始AOF save，将AOF文件中的命令加载到内存中
-        enable_aof(shared.clone(), conf, shutdown.clone())
-            .await
-            .unwrap();
-
-        let db = shared.db();
-        // 断言AOF文件中的内容已经加载到内存中
-        assert_eq!(
-            get_object(db, b"key1").unwrap().on_str().unwrap().to_vec(),
-            b"VXK"
-        );
-        assert_eq!(
-            get_object(db, b"key2").unwrap().on_str().unwrap().to_vec(),
-            b"VXK"
-        );
-        assert_eq!(
-            get_object(db, b"key3").unwrap().on_str().unwrap().to_vec(),
-            b"VXK"
-        );
-
+        tokio::time::sleep(Duration::from_millis(300)).await;
         shutdown.trigger_shutdown(()).unwrap();
     }
 }

@@ -42,11 +42,14 @@ impl WCmdPropergator {
     #[inline]
     pub async fn propergate(&self, wcmd: Frame, handler: &mut Handler<impl AsyncStream>) {
         let mut wcmd_buf = None;
-        let should_propergate = handler.conn.count() == 1;
+        let should_propergate = handler.conn.count() <= 1;
 
-        println!("debug8");
         loop {
             if let Some(to_replica) = self.to_replica.try_lock() {
+                if to_replica.is_empty() {
+                    break;
+                }
+
                 if wcmd_buf.is_none() {
                     wcmd.to_raw_in_buf(&mut handler.context.wcmd_buf);
                     wcmd_buf = Some(handler.context.wcmd_buf.split().freeze());
@@ -62,19 +65,15 @@ impl WCmdPropergator {
                 break;
             }
         }
-        println!("debug9");
 
-        println!("debug0: {:?}", self.to_aof);
         // 是否需要传播，是否需要to_raw
         if let Some(to_aof) = &self.to_aof {
             if wcmd_buf.is_none() {
-                println!("debug1");
                 wcmd.to_raw_in_buf(&mut handler.context.wcmd_buf);
                 wcmd_buf = Some(handler.context.wcmd_buf.split().freeze());
             }
 
             if !should_propergate {
-                println!("debug2");
                 return;
             }
 

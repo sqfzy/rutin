@@ -180,7 +180,6 @@ impl AOF {
             rdb_load(&mut buf, self.shared.db(), false)?;
         }
 
-        client.write_buf(&mut buf).await?;
         client.flush().await?;
 
         debug_assert!(buf.is_empty());
