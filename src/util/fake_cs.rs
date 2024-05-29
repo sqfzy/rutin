@@ -25,6 +25,16 @@ impl Handler<FakeStream> {
             Shared::default(),
             Arc::new(Conf::default()),
             ShutdownManager::default(),
+            None,
+        )
+    }
+
+    pub fn with_capacity(capacity: usize) -> (Self, Connection<FakeStream>) {
+        Self::new_fake_with(
+            Shared::default(),
+            Arc::new(Conf::default()),
+            ShutdownManager::default(),
+            Some(capacity),
         )
     }
 
@@ -32,9 +42,14 @@ impl Handler<FakeStream> {
         shared: Shared,
         conf: Arc<Conf>,
         shutdown_manager: ShutdownManager<()>,
+        capacity: Option<usize>,
     ) -> (Self, Connection<FakeStream>) {
-        let (server_tx, client_rx) = flume::unbounded();
-        let (client_tx, server_rx) = flume::unbounded();
+        let ((server_tx, client_rx), (client_tx, server_rx)) = if let Some(capacity) = capacity {
+            (flume::bounded(capacity), flume::bounded(capacity))
+        } else {
+            (flume::unbounded(), flume::unbounded())
+        };
+
         (
             Self {
                 shared,

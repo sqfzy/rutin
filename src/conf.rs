@@ -301,7 +301,7 @@ async fn enable_aof(
 ) -> anyhow::Result<()> {
     let mut aof = AOF::new(shared.clone(), conf.clone(), shutdown_manager.clone()).await?;
 
-    let (mut handler, client) = Handler::new_fake_with(shared, conf, shutdown_manager);
+    let (mut handler, client) = Handler::new_fake_with(shared, conf, shutdown_manager, None);
 
     tokio::spawn(async move {
         let start = std::time::Instant::now();
@@ -395,7 +395,7 @@ mod conf_tests {
         );
 
         let (mut handler, _) =
-            Handler::new_fake_with(shared.clone(), conf.clone(), shutdown.clone());
+            Handler::new_fake_with(shared.clone(), conf.clone(), shutdown.clone(), None);
 
         let file = tokio::fs::OpenOptions::new()
             .write(true)

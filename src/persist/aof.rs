@@ -103,7 +103,6 @@ impl AOF {
                             self.buffer.extend(b);
                         }
 
-                        println!("write to aof file: {:?}", self.buffer);
                         self.file.write_all_buf(&mut self.buffer).await?;
                         self.file.sync_data().await?;
                     }
@@ -180,6 +179,7 @@ impl AOF {
             rdb_load(&mut buf, self.shared.db(), false)?;
         }
 
+        client.write_buf(&mut buf).await?;
         client.flush().await?;
 
         debug_assert!(buf.is_empty());
