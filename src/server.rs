@@ -2,7 +2,7 @@ use crate::{
     cmd::dispatch,
     conf::Conf,
     connection::{AsyncStream, Connection},
-    frame::Frame,
+    frame::{Frame, FrameError},
     persist::rdb::RDB,
     shared::{db::Db, Shared},
     Id, Key,
@@ -208,7 +208,9 @@ impl<S: AsyncStream> Handler<S> {
                 frames =  self.conn.read_frames() => {
                     if let Some(frames) = frames? {
                         for f in frames.into_iter() {
-                            dispatch(f, self).await?;
+                           if let Some(respond) = dispatch(f, self).await? {
+                                 self.conn.write_frame(&respond).await?;
+                           }
                         }
                     }else {
                         return Ok(());
@@ -273,5 +275,40 @@ impl HandlerContext {
             client_track: None,
             wcmd_buf: BytesMut::with_capacity(64),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ServerError(String);
+
+impl std::fmt::Display for ServerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "server error: {}", self.0)
+    }
+}
+
+impl std::error::Error for ServerError {}
+
+impl From<String> for ServerError {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for ServerError {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<FrameError> for ServerError {
+    fn from(e: FrameError) -> Self {
+        Self(e.to_string())
+    }
+}
+
+impl From<io::Error> for ServerError {
+    fn from(e: io::Error) -> Self {
+        Self(e.to_string())
     }
 }

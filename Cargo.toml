@@ -49,6 +49,8 @@ rustls = "0.23.7"
 mlua = { version = "0.9.8", features = ["lua54", "vendored"] }
 either = "1.12.0"
 pin-project = "1.1.5"
+yoke = { version = "0.7.4", features = ["derive"] }
+owning_ref = "0.4.1"
 
 [dev-dependencies]
 assert_cmd = { version = "2.0.14", features = ["color-auto"] }

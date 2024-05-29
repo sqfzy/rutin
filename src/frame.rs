@@ -1,6 +1,5 @@
 #![allow(dead_code)]
-use crate::{cmd::CmdError, util, Int};
-use anyhow::bail;
+use crate::{cmd::CmdError, server::ServerError, util, Int};
 use bytes::{Buf, Bytes, BytesMut};
 use snafu::Snafu;
 use std::{borrow::Cow, iter::Iterator};
@@ -659,13 +658,11 @@ impl From<FrameError> for tokio::io::Error {
 }
 
 impl TryFrom<CmdError> for Frame {
-    type Error = anyhow::Error;
+    type Error = ServerError;
 
-    fn try_from(cmd_err: CmdError) -> Result<Self, anyhow::Error> {
+    fn try_from(cmd_err: CmdError) -> Result<Self, ServerError> {
         let frame = match cmd_err {
-            CmdError::ServerErr { source, loc } => {
-                bail!(format!("{}: {}", loc, source))
-            }
+            CmdError::IoErr { source, loc } => return Err(format!("{}: {}", loc, source).into()),
             // 命令执行失败，向客户端返回错误码
             CmdError::ErrorCode { code } => Frame::new_integer(code),
             // 命令执行失败，向客户端返回空值

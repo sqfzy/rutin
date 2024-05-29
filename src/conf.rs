@@ -318,11 +318,11 @@ async fn enable_aof(
     });
 
     loop {
-        // 处理AOF client请求，返回响应
+        // 处理AOF client请求，但是不返回响应
         let frames = handler.conn.read_frames().await?;
         if let Some(frames) = frames {
             for f in frames.into_iter() {
-                dispatch(f, &mut handler).await?;
+                let _ = dispatch(f, &mut handler).await?;
             }
         } else {
             // AOF client已经关闭连接
@@ -353,7 +353,7 @@ mod conf_tests {
                 enable: true,
                 use_rdb_preamble: false,
                 file_path: test_file_path.to_string(),
-                append_fsync: AppendFSync::EverySec,
+                append_fsync: AppendFSync::Always,
                 max_record_exponent: 20,
             },
             ..Default::default()
@@ -385,10 +385,15 @@ mod conf_tests {
             dispatch(f, &mut handler).await.unwrap();
         }
 
+        let conf = conf.clone();
+        let shared = Shared::new(Db::default(), &conf);
+        let shutdown = ShutdownManager::new();
         // 启用AOF，开始AOF save，将AOF文件中的命令加载到内存中
-        enable_aof(shared, conf, shutdown.clone()).await.unwrap();
+        enable_aof(shared.clone(), conf, shutdown.clone())
+            .await
+            .unwrap();
 
-        let db = handler.shared.db();
+        let db = shared.db();
         // 断言AOF文件中的内容已经加载到内存中
         assert_eq!(
             get_object(db, b"key1").unwrap().on_str().unwrap().to_vec(),

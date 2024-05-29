@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, ServerErrSnafu,
+        CmdExecutor, CmdType, IoErrSnafu,
     },
     connection::AsyncStream,
     frame::{Bulks, Frame},
@@ -110,7 +110,7 @@ impl CmdExecutor for Subscribe {
                 Frame::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await
-            .context(ServerErrSnafu)?;
+            .context(IoErrSnafu)?;
         }
 
         Ok(None)
@@ -166,7 +166,7 @@ impl CmdExecutor for Unsubscribe {
                     Frame::new_integer(0),
                 ]))
                 .await
-                .context(ServerErrSnafu)?;
+                .context(IoErrSnafu)?;
             }
             return Ok(None);
         };
@@ -186,7 +186,7 @@ impl CmdExecutor for Unsubscribe {
                 Frame::new_integer(subscribed_channels.len() as Int),
             ]))
             .await
-            .context(ServerErrSnafu)?;
+            .context(IoErrSnafu)?;
         }
 
         Ok(None)

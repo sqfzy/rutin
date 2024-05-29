@@ -12,39 +12,60 @@ use flume::{
 };
 use futures::Future;
 use pin_project::{pin_project, pinned_drop};
-use std::{
-    borrow::Cow,
-    task::{Context, Poll},
-};
+use std::task::{Context, Poll};
 use std::{pin::Pin, sync::Arc};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use yoke::{Yoke, Yokeable};
 
-impl Handler<FakeStream> {
-    pub fn new_fake() -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(
+impl<'a> Handler<FakeStream<'a>> {
+    pub fn new_fake(
+        channel1: (&'a Sender<BytesMut>, &'a Receiver<BytesMut>),
+        channel2: (&'a Sender<BytesMut>, &'a Receiver<BytesMut>),
+    ) -> (Self, Connection<FakeStream<'a>>) {
+        (
+            Self {
+                shared: Shared::default(),
+                conn: Connection::from(FakeStream::new(channel1.0, channel2.1)),
+                shutdown_manager: ShutdownManager::default(),
+                bg_task_channel: Default::default(),
+                conf: Arc::new(Conf::default()),
+                context: HandlerContext::default(),
+            },
+            Connection::from(FakeStream::new(channel2.0, channel1.1)),
+        )
+    }
+
+    pub fn new_fake_static() -> (Self, Connection<FakeStream<'static>>) {
+        Self::new_fake_with_static(
             Shared::default(),
             Arc::new(Conf::default()),
             ShutdownManager::default(),
         )
     }
 
-    pub fn new_fake_with(
+    pub fn new_fake_with_static(
         shared: Shared,
         conf: Arc<Conf>,
         shutdown_manager: ShutdownManager<()>,
-    ) -> (Self, Connection<FakeStream>) {
+    ) -> (Self, Connection<FakeStream<'static>>) {
         let (server_tx, client_rx) = flume::unbounded();
         let (client_tx, server_rx) = flume::unbounded();
         (
             Self {
                 shared,
-                conn: Connection::from(FakeStream::new(server_tx, server_rx)),
+                conn: Connection::from(FakeStream::new(
+                    Box::leak(Box::new(server_tx)),
+                    Box::leak(Box::new(server_rx)),
+                )),
                 shutdown_manager,
                 bg_task_channel: Default::default(),
                 conf,
                 context: HandlerContext::default(),
             },
-            Connection::from(FakeStream::new(client_tx, client_rx)),
+            Connection::from(FakeStream::new(
+                Box::leak(Box::new(client_tx)),
+                Box::leak(Box::new(client_rx)),
+            )),
         )
     }
 }
@@ -57,33 +78,39 @@ enum State<'a> {
     Remain(BytesMut),
 }
 
+#[derive(Yokeable)]
+struct FakeWriter(Sender<BytesMut>);
+
+#[derive(Yokeable)]
+struct FakeReader(Receiver<BytesMut>);
+
 #[pin_project(PinnedDrop)]
-pub struct FakeStream {
-    tx: Cow<'static, Sender<BytesMut>>,
-    rx: Cow<'static, Receiver<BytesMut>>,
+pub struct FakeStream<'a> {
+    tx: &'a Sender<BytesMut>,
+    rx: &'a Receiver<BytesMut>,
     #[pin]
-    state: State<'static>,
+    state: State<'a>,
+}
+
+impl<'a> FakeStream<'a> {
+    pub fn new(tx: &'a Sender<BytesMut>, rx: &'a Receiver<BytesMut>) -> Self {
+        Self {
+            tx,
+            rx,
+            state: State::Start,
+        }
+    }
 }
 
 #[pinned_drop]
-impl PinnedDrop for FakeStream {
+impl PinnedDrop for FakeStream<'_> {
     fn drop(self: Pin<&mut Self>) {
         let this = self.project();
         let _ = this.tx.send(BytesMut::new()); // 发送空数据，代表连接关闭
     }
 }
 
-impl FakeStream {
-    fn new(tx: Sender<BytesMut>, rx: Receiver<BytesMut>) -> Self {
-        Self {
-            tx: Cow::Owned(tx),
-            rx: Cow::Owned(rx),
-            state: State::Start,
-        }
-    }
-}
-
-impl AsyncRead for FakeStream {
+impl AsyncRead for FakeStream<'_> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -95,12 +122,7 @@ impl AsyncRead for FakeStream {
             match this.state.as_mut().project() {
                 StateProj::Start => {
                     let future = this.rx.recv_async();
-                    this.state.set(unsafe {
-                        State::Recv(std::mem::transmute::<
-                            flume::r#async::RecvFut<'_, bytes::BytesMut>,
-                            flume::r#async::RecvFut<'_, bytes::BytesMut>,
-                        >(future))
-                    });
+                    this.state.set(State::Recv(future));
                 }
                 StateProj::Recv(fut) => match fut.poll(cx) {
                     Poll::Ready(Ok(mut data)) => {
@@ -141,7 +163,7 @@ impl AsyncRead for FakeStream {
     }
 }
 
-impl AsyncWrite for FakeStream {
+impl AsyncWrite for FakeStream<'_> {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -158,12 +180,7 @@ impl AsyncWrite for FakeStream {
             match this.state.as_mut().project() {
                 StateProj::Start => {
                     let future = this.tx.send_async(BytesMut::from(buf));
-                    this.state.set(unsafe {
-                        State::Send(std::mem::transmute::<
-                            flume::r#async::SendFut<'_, bytes::BytesMut>,
-                            flume::r#async::SendFut<'_, bytes::BytesMut>,
-                        >(future))
-                    });
+                    this.state.set(State::Send(future));
                 }
                 StateProj::Send(fut) => match fut.poll(cx) {
                     Poll::Ready(Ok(_)) => {
@@ -210,10 +227,10 @@ mod fake_cs_tests {
 
         let (server_tx, client_rx) = flume::bounded(1);
         let (client_tx, server_rx) = flume::unbounded();
-        let mut server = FakeStream::new(server_tx, server_rx);
+        let mut server = FakeStream::new(&server_tx, &server_rx);
 
         let handle = tokio::spawn(async move {
-            let mut client = FakeStream::new(client_tx, client_rx);
+            let mut client = FakeStream::new(&client_tx, &client_rx);
 
             tokio::time::sleep(Duration::from_millis(100)).await;
             client.write_all(&data).await.unwrap(); // 写入数据，解除server.read_u8()的阻塞
@@ -245,7 +262,7 @@ mod fake_cs_tests {
 
         crate::util::test_init();
 
-        let (mut handler, mut client) = Handler::new_fake();
+        let (mut handler, mut client) = Handler::new_fake_static();
 
         tokio::spawn(async move {
             // 测试简单字符串

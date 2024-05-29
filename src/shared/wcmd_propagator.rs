@@ -2,6 +2,8 @@ use bytes::Bytes;
 use flume::{Receiver, Sender};
 use try_lock::TryLock;
 
+use crate::{connection::AsyncStream, frame::Frame, server::Handler};
+
 #[derive(Debug, Default)]
 pub struct WCmdPropergator {
     pub to_aof: Option<(Sender<Bytes>, Receiver<Bytes>)>,
@@ -38,20 +40,45 @@ impl WCmdPropergator {
     }
 
     #[inline]
-    pub async fn propergate(&self, wcmd: Bytes) {
+    pub async fn propergate(&self, wcmd: Frame, handler: &mut Handler<impl AsyncStream>) {
+        let mut wcmd_buf = None;
+        let should_propergate = handler.conn.count() == 1;
+
+        println!("debug8");
         loop {
             if let Some(to_replica) = self.to_replica.try_lock() {
+                if wcmd_buf.is_none() {
+                    wcmd.to_raw_in_buf(&mut handler.context.wcmd_buf);
+                    wcmd_buf = Some(handler.context.wcmd_buf.split().freeze());
+                }
+
+                if !should_propergate {
+                    return;
+                }
+
                 for (tx, _) in to_replica.iter() {
-                    tx.send(wcmd.clone()).unwrap();
+                    tx.send(wcmd_buf.as_ref().unwrap().clone()).unwrap();
                 }
                 break;
             }
         }
+        println!("debug9");
 
+        println!("debug0: {:?}", self.to_aof);
+        // 是否需要传播，是否需要to_raw
         if let Some(to_aof) = &self.to_aof {
-            // PERF: pipline的性能瓶颈, 多线程写单文件问题
-            // rps=953600.0 (overall: 906282.9) avg_msec=10.405 (overall: 10.951)
-            to_aof.0.send_async(wcmd).await.unwrap();
+            if wcmd_buf.is_none() {
+                println!("debug1");
+                wcmd.to_raw_in_buf(&mut handler.context.wcmd_buf);
+                wcmd_buf = Some(handler.context.wcmd_buf.split().freeze());
+            }
+
+            if !should_propergate {
+                println!("debug2");
+                return;
+            }
+
+            to_aof.0.send_async(wcmd_buf.unwrap()).await.unwrap();
         }
     }
 }

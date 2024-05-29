@@ -103,6 +103,7 @@ impl AOF {
                             self.buffer.extend(b);
                         }
 
+                        println!("write to aof file: {:?}", self.buffer);
                         self.file.write_all_buf(&mut self.buffer).await?;
                         self.file.sync_data().await?;
                     }
@@ -169,7 +170,7 @@ impl AOF {
         Ok(())
     }
 
-    pub async fn load<'a>(&mut self, mut client: Connection<FakeStream<'a>>) -> anyhow::Result<()> {
+    pub async fn load(&mut self, mut client: Connection<FakeStream>) -> anyhow::Result<()> {
         // 读取AOF文件内容并发送给AOF server
         let mut buf = BytesMut::with_capacity(self.file.metadata().await?.size() as usize);
         while self.file.read_buf(&mut buf).await? != 0 {}

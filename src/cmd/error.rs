@@ -6,7 +6,7 @@ use snafu::{Location, Snafu};
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum CmdError {
-    ServerErr {
+    IoErr {
         source: tokio::io::Error,
         #[snafu(implicit)]
         loc: Location,
