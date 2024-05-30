@@ -10,9 +10,9 @@ pub struct Event(EventInner);
 
 #[derive(Default, Debug, Clone)]
 struct EventInner {
-    track: Option<Vec<Sender<Frame>>>,
-    update: Option<Vec<Sender<Frame>>>,
-    remove: Option<Vec<Sender<Frame>>>,
+    track: Vec<Sender<Frame>>,
+    update: Vec<Sender<Frame>>,
+    remove: Vec<Sender<Frame>>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,12 +25,13 @@ pub enum EventType {
 impl Event {
     pub(super) fn add_event(&mut self, sender: Sender<Frame>, event: EventType) {
         match event {
-            EventType::Track => self.add_track_event(sender),
-            EventType::Update => self.add_update_event(sender),
-            EventType::Remove => self.add_remove_event(sender),
+            EventType::Track => self.0.track.push(sender),
+            EventType::Update => self.0.update.push(sender),
+            EventType::Remove => self.0.remove.push(sender),
         }
     }
 
+    #[instrument(level = "debug")]
     pub(super) fn trigger_events(&mut self, key: &Key, event: &[EventType]) {
         for e in event {
             match e {
@@ -42,41 +43,15 @@ impl Event {
     }
 
     #[inline]
-    fn add_track_event(&mut self, sender: Sender<Frame>) {
-        match &mut self.0.track {
-            Some(events) => events.push(sender),
-            None => self.0.track = Some(vec![sender]),
-        }
-    }
-
-    #[inline]
-    fn add_update_event(&mut self, sender: Sender<Frame>) {
-        match &mut self.0.update {
-            Some(events) => events.push(sender),
-            None => self.0.update = Some(vec![sender]),
-        }
-    }
-
-    #[inline]
-    fn add_remove_event(&mut self, sender: Sender<Frame>) {
-        match &mut self.0.remove {
-            Some(events) => events.push(sender),
-            None => self.0.remove = Some(vec![sender]),
-        }
-    }
-
-    #[inline]
-    #[instrument(level = "debug")]
     fn trigger_track_event(&mut self, key: &Key) {
-        let events = if let Some(events) = &mut self.0.track {
-            events
-        } else {
+        let events = &mut self.0.track;
+        if events.is_empty() {
             return;
-        };
+        }
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
-            let res = e.send(Frame::new_bulks(&["Invalidated".into(), key.clone()]));
+            let res = e.send(Frame::new_bulk_owned(key.clone()));
 
             // 发送失败，证明连接已经断开，移除监听事件
             if res.is_err() {
@@ -88,13 +63,11 @@ impl Event {
     }
 
     #[inline]
-    #[instrument(level = "debug")]
     fn trigger_update_event(&mut self, key: &Key) {
-        let events = if let Some(events) = &mut self.0.update {
-            events
-        } else {
+        let events = &mut self.0.update;
+        if events.is_empty() {
             return;
-        };
+        }
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
@@ -108,13 +81,11 @@ impl Event {
     }
 
     #[inline]
-    #[instrument(level = "debug")]
     fn trigger_remove_event(&mut self, key: &Key) {
-        let events = if let Some(events) = &mut self.0.remove {
-            events
-        } else {
+        let events = &mut self.0.remove;
+        if events.is_empty() {
             return;
-        };
+        }
 
         let mut i = 0;
         while let Some(e) = events.get(i) {

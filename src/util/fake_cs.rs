@@ -12,10 +12,7 @@ use flume::{
 };
 use futures::Future;
 use pin_project::{pin_project, pinned_drop};
-use std::{
-    borrow::Cow,
-    task::{Context, Poll},
-};
+use std::task::{Context, Poll};
 use std::{pin::Pin, sync::Arc};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -74,8 +71,8 @@ enum State<'a> {
 
 #[pin_project(PinnedDrop)]
 pub struct FakeStream {
-    tx: Cow<'static, Sender<BytesMut>>,
-    rx: Cow<'static, Receiver<BytesMut>>,
+    tx: Sender<BytesMut>,
+    rx: Receiver<BytesMut>,
     #[pin]
     state: State<'static>,
 }
@@ -91,8 +88,8 @@ impl PinnedDrop for FakeStream {
 impl FakeStream {
     fn new(tx: Sender<BytesMut>, rx: Receiver<BytesMut>) -> Self {
         Self {
-            tx: Cow::Owned(tx),
-            rx: Cow::Owned(rx),
+            tx,
+            rx,
             state: State::Start,
         }
     }
