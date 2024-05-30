@@ -4,7 +4,6 @@ use crate::{
     shared::Shared,
     Connection,
 };
-use async_shutdown::ShutdownManager;
 use bytes::BytesMut;
 use flume::{
     r#async::{RecvFut, SendFut},
@@ -18,27 +17,16 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 impl Handler<FakeStream> {
     pub fn new_fake() -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(
-            Shared::default(),
-            Arc::new(Conf::default()),
-            ShutdownManager::default(),
-            None,
-        )
+        Self::new_fake_with(Shared::default(), Arc::new(Conf::default()), None)
     }
 
     pub fn with_capacity(capacity: usize) -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(
-            Shared::default(),
-            Arc::new(Conf::default()),
-            ShutdownManager::default(),
-            Some(capacity),
-        )
+        Self::new_fake_with(Shared::default(), Arc::new(Conf::default()), Some(capacity))
     }
 
     pub fn new_fake_with(
         shared: Shared,
         conf: Arc<Conf>,
-        shutdown_manager: ShutdownManager<()>,
         capacity: Option<usize>,
     ) -> (Self, Connection<FakeStream>) {
         let ((server_tx, client_rx), (client_tx, server_rx)) = if let Some(capacity) = capacity {
@@ -51,7 +39,6 @@ impl Handler<FakeStream> {
             Self {
                 shared,
                 conn: Connection::from(FakeStream::new(server_tx, server_rx)),
-                shutdown_manager,
                 bg_task_channel: Default::default(),
                 conf,
                 context: HandlerContext::default(),

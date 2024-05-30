@@ -45,11 +45,10 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
     };
 
     let mut server = Listener {
-        shared: Shared::new(Db::default(), &conf),
+        shared: Shared::new(Db::default(), &conf, shutdown_manager.clone()),
         listener,
         tls_acceptor,
         limit_connections: Arc::new(Semaphore::new(conf.server.max_connections)),
-        shutdown_manager: shutdown_manager.clone(),
         delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
         conf,
     };
@@ -72,7 +71,6 @@ pub struct Listener {
     pub listener: TcpListener,
     pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
-    pub shutdown_manager: ShutdownManager<()>,
     pub delay_token: DelayShutdownToken<()>,
     pub conf: Arc<Conf>,
 }
@@ -102,12 +100,11 @@ impl Listener {
 
             let shared = self.shared.clone();
             let conf = self.conf.clone();
-            let shutdown_manager = self.shutdown_manager.clone();
 
             let delay_token = self.delay_token.clone();
             match &self.tls_acceptor {
                 None => {
-                    let mut handler = Handler::new(shared, stream, conf, shutdown_manager);
+                    let mut handler = Handler::new(shared, stream, conf);
 
                     tokio::spawn(async move {
                         if let Err(err) = handler.run().await {
@@ -124,12 +121,8 @@ impl Listener {
                 }
                 // 如果开启了TLS，则使用TlsStream
                 Some(tls_acceptor) => {
-                    let mut handler = Handler::new(
-                        shared,
-                        tls_acceptor.accept(stream).await?,
-                        conf,
-                        shutdown_manager,
-                    );
+                    let mut handler =
+                        Handler::new(shared, tls_acceptor.accept(stream).await?, conf);
 
                     tokio::spawn(async move {
                         if let Err(err) = handler.run().await {
@@ -150,7 +143,7 @@ impl Listener {
             self.shared.clone(),
             self.conf.rdb.file_path.clone(),
             self.conf.rdb.enable_checksum,
-            self.shutdown_manager.clone(),
+            self.shared.shutdown().clone(),
         );
         let start = tokio::time::Instant::now();
         rdb.save().await.ok();
@@ -161,19 +154,13 @@ impl Listener {
 pub struct Handler<S: AsyncStream> {
     pub shared: Shared,
     pub conn: Connection<S>,
-    pub shutdown_manager: ShutdownManager<()>,
     pub bg_task_channel: BgTaskChannel,
     pub conf: Arc<Conf>,
     pub context: HandlerContext,
 }
 
 impl<S: AsyncStream> Handler<S> {
-    pub fn new(
-        shared: Shared,
-        stream: S,
-        conf: Arc<Conf>,
-        shutdown_manager: ShutdownManager<()>,
-    ) -> Self {
+    pub fn new(shared: Shared, stream: S, conf: Arc<Conf>) -> Self {
         let bg_task_channel = BgTaskChannel::default();
 
         // 获取一个有效的客户端ID
@@ -189,7 +176,6 @@ impl<S: AsyncStream> Handler<S> {
         Self {
             shared,
             conn: Connection::from(stream),
-            shutdown_manager,
             bg_task_channel,
             conf,
             context: HandlerContext::new(client_id),
@@ -201,7 +187,7 @@ impl<S: AsyncStream> Handler<S> {
         loop {
             tokio::select! {
                 // 等待shutdown信号
-                _signal = self.shutdown_manager.wait_shutdown_triggered() => {
+                _signal = self.shared.shutdown().wait_shutdown_triggered() => {
                     return Ok(());
                 }
                 // 等待客户端请求

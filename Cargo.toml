@@ -28,7 +28,7 @@ flume = { version = "0.11.0", features = ["async", "spin"] }
 parking_lot = "0.12.1"
 ahash = "0.8.11"
 strum = { version = "0.26", features = ["derive"] }
-# num_cpus = "1.16.0"
+num_cpus = "1.16.0"
 regex = "1.10.4"
 # monoio = "0.2.3"
 # lockfree-object-pool = "0.1.5"
@@ -51,6 +51,7 @@ either = "1.12.0"
 pin-project = "1.1.5"
 yoke = { version = "0.7.4", features = ["derive"] }
 owning_ref = "0.4.1"
+polonius-the-crab = "0.4.1"
 
 [dev-dependencies]
 assert_cmd = { version = "2.0.14", features = ["color-auto"] }

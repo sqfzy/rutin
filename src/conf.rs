@@ -18,7 +18,7 @@ use crossbeam::atomic::AtomicCell;
 use rand::Rng;
 use serde::Deserialize;
 use std::{fs::File, io::BufReader, sync::Arc, time::Duration};
-use tokio::time::Instant;
+use tokio::{runtime::Handle, time::Instant};
 use tokio_rustls::rustls;
 
 #[derive(Debug, Deserialize)]
@@ -202,12 +202,8 @@ impl Conf {
     }
 
     pub async fn prepare(listener: &mut Listener) -> anyhow::Result<()> {
-        let Listener {
-            shared,
-            shutdown_manager,
-            conf,
-            ..
-        } = listener;
+        let Listener { shared, conf, .. } = listener;
+        let shutdown = shared.shutdown();
 
         /*********************/
         /* 是否开启RDB持久化 */
@@ -217,7 +213,7 @@ impl Conf {
                 shared.clone(),
                 conf.rdb.file_path.clone(),
                 conf.rdb.enable_checksum,
-                shutdown_manager.clone(),
+                shutdown.clone(),
             );
 
             let start = std::time::Instant::now();
@@ -233,7 +229,7 @@ impl Conf {
         /* 是否开启AOF持久化 */
         /*********************/
         if conf.aof.enable {
-            enable_aof(shared.clone(), conf.clone(), shutdown_manager.clone()).await?;
+            enable_aof(shared.clone(), conf.clone(), shutdown.clone()).await?;
         }
 
         /**********************/
@@ -301,20 +297,22 @@ async fn enable_aof(
 ) -> anyhow::Result<()> {
     let mut aof = AOF::new(shared.clone(), conf.clone(), shutdown_manager.clone()).await?;
 
-    let (mut handler, client) = Handler::new_fake_with(shared, conf, shutdown_manager, None);
+    let (mut handler, client) = Handler::new_fake_with(shared, conf, None);
 
-    tokio::spawn(async move {
-        let start = std::time::Instant::now();
-        println!("Loading AOF file...");
-        if let Err(e) = aof.load(client).await {
-            println!("Failed to load AOF file: {:?}", e);
-        } else {
-            println!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
-        }
+    std::thread::spawn(move || {
+        Handle::current().block_on(async move {
+            let start = std::time::Instant::now();
+            println!("Loading AOF file...");
+            if let Err(e) = aof.load(client).await {
+                println!("Failed to load AOF file: {:?}", e);
+            } else {
+                println!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
+            }
 
-        if let Err(e) = aof.save().await {
-            println!("Failed to save AOF file: {:?}", e);
-        }
+            if let Err(e) = aof.save().await {
+                println!("Failed to save AOF file: {:?}", e);
+            }
+        });
     });
 
     loop {
@@ -360,8 +358,8 @@ mod conf_tests {
         };
 
         let conf = Arc::new(conf);
-        let shared = Shared::new(Db::default(), &conf);
         let shutdown = ShutdownManager::new();
+        let shared = Shared::new(Db::default(), &conf, shutdown.clone());
         // 启用AOF，开始AOF save，将AOF文件中的命令加载到内存中
         enable_aof(shared.clone(), conf.clone(), shutdown.clone())
             .await
@@ -394,8 +392,7 @@ mod conf_tests {
             b"VXK"
         );
 
-        let (mut handler, _) =
-            Handler::new_fake_with(shared.clone(), conf.clone(), shutdown.clone(), None);
+        let (mut handler, _) = Handler::new_fake_with(shared.clone(), conf.clone(), None);
 
         let file = tokio::fs::OpenOptions::new()
             .write(true)

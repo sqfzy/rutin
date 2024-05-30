@@ -203,11 +203,13 @@ impl CmdExecutor for BgSave {
         handler: &mut Handler<impl AsyncStream>,
     ) -> Result<Option<Frame>, CmdError> {
         let rdb_conf = &handler.conf.rdb;
+        let shared = &handler.shared;
+
         let mut rdb = RDB::new(
-            handler.shared.clone(),
+            shared.clone(),
             rdb_conf.file_path.clone(),
             rdb_conf.enable_checksum,
-            handler.shutdown_manager.clone(),
+            shared.shutdown().clone(),
         );
         tokio::spawn(async move {
             if let Err(e) = rdb.save().await {

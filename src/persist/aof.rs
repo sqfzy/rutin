@@ -8,6 +8,7 @@ use crate::{
 use anyhow::Result;
 use async_shutdown::ShutdownManager;
 use bytes::BytesMut;
+use futures::executor::block_on;
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
 use tokio::{
