@@ -56,7 +56,6 @@ pub enum CmdType {
 }
 
 #[inline]
-#[instrument(level = "debug", skip(handler), err)]
 pub async fn dispatch(
     cmd_frame: Frame,
     handler: &mut Handler<impl AsyncStream>,

@@ -236,13 +236,11 @@ impl Conf {
         /* 开启过期键定时检查 */
         /**********************/
         let period = Duration::from_secs(conf.server.expire_check_interval_secs);
-        tokio::spawn({
+        std::thread::spawn({
             let shared = shared.clone();
-
-            async move {
-                let mut interval = tokio::time::interval(period);
+            move || {
+                std::thread::sleep(period);
                 loop {
-                    interval.tick().await;
                     let shared = shared.clone();
 
                     let now = Instant::now();
@@ -299,8 +297,9 @@ async fn enable_aof(
 
     let (mut handler, client) = Handler::new_fake_with(shared, conf, None);
 
+    let handle = Handle::current();
     std::thread::spawn(move || {
-        Handle::current().block_on(async move {
+        handle.block_on(async move {
             let start = std::time::Instant::now();
             println!("Loading AOF file...");
             if let Err(e) = aof.load(client).await {

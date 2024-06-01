@@ -1,3 +1,1 @@
 mod lua;
-
-struct Script {}

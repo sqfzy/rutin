@@ -1,8 +1,8 @@
 use crate::{
     conf::Conf,
+    connection::FakeStream,
     persist::rdb::{rdb_load, rdb_save},
     shared::Shared,
-    util::FakeStream,
     Connection,
 };
 use anyhow::Result;
