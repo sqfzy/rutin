@@ -1,3 +1,16 @@
+use crate::{
+    cmd::{dispatch, CmdError},
+    conf::Conf,
+    connection::{AsyncStream, FakeStream, ShutdownSignal},
+    frame::Frame,
+    server::{Handler, ServerError},
+    shared::Shared,
+    Key,
+};
+use ahash::RandomState;
+use bytes::{Bytes, BytesMut};
+use dashmap::{mapref::entry::Entry, DashMap, DashSet};
+use mlua::{prelude::*, StdLib};
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -5,18 +18,6 @@ use std::{
     },
     time::Duration,
 };
-
-use crate::{
-    cmd::dispatch,
-    conf::Conf,
-    connection::{AsyncStream, FakeStream, ShutdownSignal},
-    frame::Frame,
-    server::Handler,
-    shared::Shared,
-    Key,
-};
-use bytes::{Bytes, BytesMut};
-use mlua::{prelude::*, StdLib};
 use tracing::debug;
 use try_lock::{Locked, TryLock};
 
@@ -32,8 +33,11 @@ struct LuaScript {
     index: AtomicUsize,
     // ShutdownSignal用于通知Handler伪客户端已经传输消息完毕
     luas: Vec<TryLock<(Lua, Handler<FakeStream>, ShutdownSignal)>>,
-    // lua_scripts: DashMap<String>,
+    lua_scripts: DashMap<Bytes, Bytes, RandomState>, // sha1hex -> script
 }
+
+// TODO: 创建脚本
+// 删除脚本
 
 impl LuaScript {
     pub fn new(shared: Shared, conf: Arc<Conf>) -> Self {
@@ -43,6 +47,7 @@ impl LuaScript {
             max: num_cpus::get(),
             index: AtomicUsize::new(0),
             luas: Vec::new(),
+            lua_scripts: DashMap::with_hasher(RandomState::default()),
         }
     }
 
@@ -123,7 +128,8 @@ impl LuaScript {
 
                 // 每个Lua环境都拥有一个自己的伪客户端
                 client.write_frame_blocking(&cmd).unwrap();
-                Ok(())
+                let res = client.read_frame_blocking().unwrap().unwrap();
+                Ok(res)
             })?;
             redis.set("call", call)?;
 
@@ -151,59 +157,98 @@ impl LuaScript {
         Ok(l_and_h)
     }
 
-    pub async fn exec(
+    // TODO:
+    pub async fn eval(
         &mut self,
-        script: impl AsRef<[u8]>,
-        handler: &mut Handler<impl AsyncStream>,
+        script: Bytes,
         keys: Vec<Key>,
         argv: Vec<Bytes>,
-    ) -> anyhow::Result<Frame> {
-        let mut responds = vec![];
-        let mut lock = self.get_lua_and_handler()?;
-        let lua = &mut lock.0;
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Frame, ServerError> {
+        let res = async {
+            let mut responds = vec![];
+            let mut lock = self.get_lua_and_handler()?;
+            let lua = &mut lock.0;
 
-        {
-            let global = lua.globals();
+            {
+                let global = lua.globals();
 
-            // 传入KEYS和ARGV
-            let lua_keys = global.get::<_, LuaTable>("KEYS")?;
-            for (i, key) in keys.into_iter().enumerate() {
-                // PERF: 会clone key
-                lua_keys.set(i + 1, key.as_ref())?;
+                // 传入KEYS和ARGV
+                let lua_keys = global.get::<_, LuaTable>("KEYS")?;
+                for (i, key) in keys.into_iter().enumerate() {
+                    // PERF: 会clone key
+                    lua_keys.set(i + 1, key.as_ref())?;
+                }
+
+                let lua_argv = global.get::<_, LuaTable>("ARGV")?;
+                for (i, arg) in argv.into_iter().enumerate() {
+                    // PERF: 会clone arg
+                    lua_argv.set(i + 1, arg.as_ref())?;
+                }
+
+                // TODO: eval() -> call()
+                let res = lua.load(script.as_ref()).eval()?; // 执行脚本，若脚本有错误则不会执行命令
+
+                // 清理Lua环境
+                lua_keys.clear()?;
+                lua_argv.clear()?;
+                lua.gc_collect()?;
+
+                return Ok(res);
             }
 
-            let lua_argv = global.get::<_, LuaTable>("ARGV")?;
-            for (i, arg) in argv.into_iter().enumerate() {
-                // PERF: 会clone arg
-                lua_argv.set(i + 1, arg.as_ref())?;
-            }
+            // 通知Handler伪客户端已经传输消息完毕
+            let shutdown_signal = &lock.2;
+            shutdown_signal.shutdown();
 
-            lua.load(script.as_ref()).exec()?; // 执行脚本，若脚本有错误则不会执行命令
-
-            // 清理Lua环境
-            lua_keys.clear()?;
-            lua_argv.clear()?;
-            lua.gc_collect()?;
-        }
-
-        // 通知Handler伪客户端已经传输消息完毕
-        let shutdown_signal = &lock.2;
-        shutdown_signal.shutdown();
-
-        let fake_handler = &mut lock.1;
-        while let Some(frames) = fake_handler.conn.read_frames().await? {
-            handler.conn.set_count(frames.len());
-            for f in frames.into_iter() {
-                if let Some(respond) = dispatch(f, fake_handler).await? {
-                    responds.push(respond);
+            let fake_handler = &mut lock.1;
+            while let Some(frames) = fake_handler.conn.read_frames().await? {
+                handler.conn.set_count(frames.len());
+                for f in frames.into_iter() {
+                    if let Some(respond) = dispatch(f, fake_handler).await? {
+                        responds.push(respond);
+                    }
                 }
             }
-        }
 
-        Ok(Frame::Array(responds))
+            Ok::<_, anyhow::Error>(Frame::Array(responds))
+        }
+        .await;
+
+        res.map_err(|e| ServerError::from(e.to_string()))
     }
 
-    pub fn eval_sha() {}
+    pub fn register_script(&self, script_name: Bytes, script: Bytes) -> Result<(), CmdError> {
+        match self.lua_scripts.entry(script_name) {
+            Entry::Vacant(entry) => {
+                entry.insert(script);
+                Ok(())
+            }
+            Entry::Occupied(_) => Err("script already exists".into()),
+        }
+    }
+
+    pub fn remove_script(&self, script_name: Bytes) -> Result<(), CmdError> {
+        match self.lua_scripts.remove(&script_name) {
+            Some(_) => Ok(()),
+            None => Err("script not found".into()),
+        }
+    }
+
+    pub async fn eval_script(
+        &mut self,
+        script_name: Bytes,
+        keys: Vec<Key>,
+        argv: Vec<Bytes>,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Frame, ServerError> {
+        let script = match self.lua_scripts.get(&script_name) {
+            Some(script) => script.clone(),
+            None => return Err("script not found".into()),
+        };
+
+        self.eval(script, keys, argv, handler).await
+    }
 }
 
 #[tokio::test]
@@ -214,25 +259,31 @@ async fn test() {
     let (mut handler, _) = Handler::new_fake();
 
     lua_script
-        .exec(r#"print("exec")"#, &mut handler, vec![], vec![])
+        .eval(r#"print("exec")"#.into(), vec![], vec![], &mut handler)
         .await
         .unwrap();
 
     let res = lua_script
-        .exec(r#"redis.call({"ping"})"#, &mut handler, vec![], vec![])
+        .eval(
+            r#"redis.call({"ping"})"#.into(),
+            vec![],
+            vec![],
+            &mut handler,
+        )
         .await
         .unwrap();
     assert_eq!(res, Frame::Array(vec![Frame::new_simple_borrowed("PONG")]));
 
     let res = lua_script
-        .exec(
+        .eval(
             r#"
                 redis.call({"set", "key", "value"})
                 redis.call({"get", "key"})
-            "#,
-            &mut handler,
-            vec![Key::from("value")],
+            "#
+            .into(),
             vec![],
+            vec![],
+            &mut handler,
         )
         .await
         .unwrap();
@@ -243,4 +294,26 @@ async fn test() {
             Frame::new_bulk_from_static(b"value")
         ])
     );
+
+    let script = r#"return redis.call({"ping"})"#;
+
+    // 创建脚本
+    lua_script
+        .register_script("f1".into(), script.into())
+        .unwrap();
+
+    // 执行保存的脚本
+    let res = lua_script
+        .eval_script("f1".into(), vec![], vec![], &mut handler)
+        .await
+        .unwrap();
+    assert_eq!(res, Frame::Array(vec![Frame::new_simple_borrowed("PONG")]));
+
+    // 删除脚本
+    lua_script.remove_script("f1".into()).unwrap();
+
+    lua_script
+        .eval_script("f1".into(), vec![], vec![], &mut handler)
+        .await
+        .unwrap_err();
 }

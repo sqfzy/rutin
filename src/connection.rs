@@ -164,6 +164,23 @@ impl Connection<FakeStream> {
 
         Ok(())
     }
+
+    pub fn read_frame_blocking(&mut self) -> io::Result<Option<Frame>> {
+        let mut buf = BytesMut::new();
+        let data = self
+            .stream
+            .rx
+            .recv()
+            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
+
+        if data.is_empty() {
+            return Ok(None);
+        }
+
+        buf.extend_from_slice(&data);
+
+        Ok(Some(Frame::from_raw(&mut buf)?))
+    }
 }
 
 pub struct ShutdownSignal(Sender<BytesMut>);

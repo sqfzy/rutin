@@ -1,8 +1,9 @@
 #![allow(dead_code)]
 use crate::{cmd::CmdError, server::ServerError, util, Int};
 use bytes::{Buf, Bytes, BytesMut};
+use mlua::{prelude, FromLuaMulti, IntoLua, Value};
 use snafu::Snafu;
-use std::{borrow::Cow, iter::Iterator};
+use std::{borrow::Cow, io::Cursor, iter::Iterator};
 use tokio::io::AsyncReadExt;
 use tokio_util::bytes::BufMut;
 
@@ -260,6 +261,75 @@ impl Frame {
         Ok(Some(res))
     }
 
+    pub fn from_raw(raw: &mut BytesMut) -> Result<Frame, FrameError> {
+        let res = match raw.get_u8() {
+            b'*' => {
+                let len = Frame::parse_decimal_blocking(raw)? as usize;
+
+                let mut frames = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let frame = Frame::from_raw(raw)?;
+                    frames.push(frame);
+                }
+
+                Frame::Array(frames)
+            }
+            b'+' => {
+                let line = Frame::parse_line_blocking(raw)?.to_vec();
+                Frame::new_simple_owned(String::from_utf8(line).map_err(|_| {
+                    // 不是合法的utf8字符串
+                    FrameError::InvalidFormat {
+                        msg: "Invalid simple frame format, not utf8".to_string(),
+                    }
+                })?)
+            }
+            b'-' => {
+                let line = Frame::parse_line_blocking(raw)?.to_vec();
+                Frame::new_error_owned(String::from_utf8(line).map_err(|_| {
+                    // 不是合法的utf8字符串
+                    FrameError::InvalidFormat {
+                        msg: "Invalid error frame format, not utf8".to_string(),
+                    }
+                })?)
+            }
+            b':' => Frame::Integer(Frame::parse_decimal_blocking(raw)?),
+            b'$' => {
+                let len = Frame::parse_decimal_blocking(raw)?;
+
+                if len == -1 {
+                    let res = Frame::Null;
+
+                    return Ok(res);
+                }
+
+                let len: usize = if let Ok(len) = len.try_into() {
+                    len
+                } else {
+                    // 读取的len为负数，说明frame格式错误
+                    return Err(FrameError::InvalidFormat {
+                        msg: "Invalid bulk frame format, len is negative".to_string(),
+                    });
+                };
+
+                if raw.remaining() < len + 2 {
+                    return Err(FrameError::InCompleteFrame);
+                }
+
+                let res = raw.split_to(len);
+                raw.advance(2);
+
+                Frame::new_bulk_owned(res.freeze())
+            }
+            prefix => {
+                return Err(FrameError::InvalidFormat {
+                    msg: format!("Invalid frame prefix: {}", prefix),
+                });
+            }
+        };
+
+        Ok(res)
+    }
+
     #[inline]
     async fn parse_line<R: AsyncReadExt + Unpin>(
         reader: &mut R,
@@ -288,11 +358,33 @@ impl Frame {
     }
 
     #[inline]
+    fn parse_line_blocking(buf: &mut BytesMut) -> Result<BytesMut, FrameError> {
+        loop {
+            if let Some(i) = buf.iter().position(|&b| b == b'\n') {
+                if i > 0 && buf[i - 1] == b'\r' {
+                    let line = buf.split_to(i - 1);
+                    buf.advance(2);
+
+                    return Ok(line);
+                }
+            }
+        }
+    }
+
+    #[inline]
     async fn parse_decimal<R: AsyncReadExt + Unpin>(
         reader: &mut R,
         buf: &mut BytesMut,
     ) -> Result<Int, FrameError> {
         let line = Frame::parse_line(reader, buf).await?;
+        util::atoi(line.as_ref()).map_err(|_| FrameError::InvalidFormat {
+            msg: "Invalid integer format".to_string(),
+        })
+    }
+
+    #[inline]
+    fn parse_decimal_blocking(buf: &mut BytesMut) -> Result<Int, FrameError> {
+        let line = Frame::parse_line_blocking(buf)?;
         util::atoi(line.as_ref()).map_err(|_| FrameError::InvalidFormat {
             msg: "Invalid integer format".to_string(),
         })
@@ -670,6 +762,68 @@ impl From<&[&'static str]> for Bulks {
     }
 }
 
+impl IntoLua<'_> for Frame {
+    fn into_lua(
+        self,
+        lua: &'_ mlua::prelude::Lua,
+    ) -> mlua::prelude::LuaResult<mlua::prelude::LuaValue<'_>> {
+        match self {
+            Frame::Simple(s) => Ok(Value::String(lua.create_string(s.as_ref())?)),
+            Frame::Error(e) => Err(mlua::Error::RuntimeError(e.into_owned())),
+            Frame::Integer(n) => Ok(Value::Integer(n)),
+            Frame::Bulk(b) => {
+                if b.is_empty() {
+                    Ok(Value::Boolean(false))
+                } else {
+                    Ok(Value::String(lua.create_string(b)?))
+                }
+            }
+
+            Frame::Null => Ok(Value::Nil),
+            Frame::Array(frames) => {
+                let table = lua.create_table()?;
+                for (i, frame) in frames.into_iter().enumerate() {
+                    table.set(i + 1, frame.into_lua(lua)?)?;
+                }
+                Ok(Value::Table(table))
+            }
+        }
+    }
+}
+
+impl FromLuaMulti<'_> for Frame {
+    fn from_lua_multi<'lua>(
+        mut values: mlua::prelude::LuaMultiValue<'lua>,
+        lua: &'lua mlua::prelude::Lua,
+    ) -> mlua::prelude::LuaResult<Self> {
+        // TODO:
+        todo!()
+        //     let value = values.remove(0);
+        //     match value {
+        //         Value::String(s) => Ok(Frame::new_simple_owned(s.to_str()?.to_string())),
+        //         Value::Integer(n) => Ok(Frame::Integer(n)),
+        //         Value::Nil => Ok(Frame::Null),
+        //         Value::Table(t) => {
+        //             let mut frames = Vec::new();
+        //             for i in 1.. {
+        //                 let value = t.get(i)?;
+        //                 if value.is_nil() {
+        //                     break;
+        //                 }
+        //                 frames.push(value.to_lua(lua)?);
+        //             }
+        //
+        //             Ok(Frame::Array(frames))
+        //         }
+        //         _ => Err(mlua::Error::FromLuaConversionError {
+        //             from: value.type_name(),
+        //             to: "Frame",
+        //             message: Some("invalid frame type".to_string()),
+        //         }),
+        //     }
+    }
+}
+
 #[derive(Debug, Snafu)]
 pub enum FrameError {
     NotSimple,
@@ -716,8 +870,10 @@ impl TryFrom<CmdError> for Frame {
 
 #[cfg(test)]
 mod frame_tests {
+    use super::*;
+
     #[test]
-    fn test_size() {
+    fn size_test() {
         use crate::frame::Frame;
         let frame1 = Frame::new_simple_borrowed("OK"); // +OK\r\n
         assert_eq!(frame1.size(), 5);
