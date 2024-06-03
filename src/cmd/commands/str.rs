@@ -138,6 +138,7 @@ pub struct Get {
 impl CmdExecutor for Get {
     const CMD_TYPE: crate::cmd::CmdType = CmdType::Read;
 
+    #[inline]
     async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut str = "".into();
 
@@ -462,6 +463,7 @@ enum SetOpt {
 impl CmdExecutor for Set {
     const CMD_TYPE: CmdType = CmdType::Write;
 
+    #[inline]
     async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         // 1. 是否要求键存在？
         // 2. 满足命令对键的要求后，更新值

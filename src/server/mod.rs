@@ -23,6 +23,7 @@ use tracing::error;
 // 需要检查是否已经存在相同的ID
 pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(1);
 
+#[inline]
 pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
     let shutdown_manager = ShutdownManager::new();
 

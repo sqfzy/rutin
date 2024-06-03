@@ -1,7 +1,6 @@
 mod commands;
 mod error;
 
-pub use commands::*;
 pub use error::*;
 
 use crate::{
@@ -11,15 +10,16 @@ use crate::{
     shared::Shared,
 };
 use bytes::{Bytes, BytesMut};
+use commands::*;
 use either::Either;
-use std::{env::args, marker::PhantomData};
-// use commands::*;
+use std::marker::PhantomData;
 use tracing::instrument;
 
 #[allow(async_fn_in_trait)]
 pub trait CmdExecutor: Sized + std::fmt::Debug {
     const CMD_TYPE: CmdType;
 
+    #[inline]
     async fn apply(
         mut args: CmdUnparsed<Mutable>,
         handler: &mut Handler<impl AsyncStream>,
@@ -41,6 +41,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         Ok(res)
     }
 
+    #[inline]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -203,6 +204,7 @@ impl CmdUnparsed<Mutable> {
         }
     }
 
+    #[inline]
     pub fn next_mut(&mut self) -> Option<&mut BytesMut> {
         if self.start > self.end {
             return None;
@@ -377,9 +379,9 @@ impl Iterator for CmdUnparsed<UnMutable> {
     }
 }
 
-impl Into<RESP3> for CmdUnparsed<UnMutable> {
-    fn into(self) -> RESP3 {
-        RESP3::Array(self.inner)
+impl From<CmdUnparsed<UnMutable>> for RESP3 {
+    fn from(val: CmdUnparsed<UnMutable>) -> Self {
+        RESP3::Array(val.inner)
     }
 }
 

@@ -20,6 +20,7 @@ pub struct Handler<S: AsyncStream> {
 }
 
 impl<S: AsyncStream> Handler<S> {
+    #[inline]
     pub fn new(shared: Shared, stream: S, conf: Arc<Conf>) -> Self {
         let bg_task_channel = BgTaskChannel::default();
 
@@ -42,6 +43,7 @@ impl<S: AsyncStream> Handler<S> {
         }
     }
 
+    #[inline]
     #[instrument(level = "debug", skip(self), fields(client_id = %self.context.client_id), err)]
     pub async fn run(&mut self) -> anyhow::Result<()> {
         loop {

@@ -368,6 +368,7 @@ impl RESP3 {
 // 解码
 impl RESP3 {
     #[allow(clippy::multiple_bound_locations)]
+    #[inline]
     #[async_recursion::async_recursion]
     pub async fn decode_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
@@ -579,6 +580,7 @@ impl RESP3 {
         Ok(Some(res))
     }
 
+    #[inline]
     async fn decode_line_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
@@ -602,6 +604,7 @@ impl RESP3 {
         }
     }
 
+    #[inline]
     async fn decode_decimal_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
@@ -612,6 +615,7 @@ impl RESP3 {
         Ok(decimal)
     }
 
+    #[inline]
     async fn decode_length_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
@@ -622,6 +626,7 @@ impl RESP3 {
         Ok(len)
     }
 
+    #[inline]
     async fn decode_string_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,

@@ -18,6 +18,7 @@ pub struct Listener {
 }
 
 impl Listener {
+    #[inline]
     pub async fn run(&mut self) -> Result<(), io::Error> {
         println!(
             "server is running on {}:{}...",
