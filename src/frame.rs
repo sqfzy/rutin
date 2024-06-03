@@ -211,16 +211,17 @@ impl RESP3 {
         }
     }
 
-    pub fn as_map(&self) -> Option<&Either<Vec<(RESP3, RESP3)>, AHashMap<RESP3, RESP3>>> {
+    #[allow(clippy::type_complexity)]
+    pub fn as_map(&self) -> Option<Either<&Vec<(RESP3, RESP3)>, &AHashMap<RESP3, RESP3>>> {
         match self {
-            RESP3::Map(map) => Some(map),
+            RESP3::Map(map) => Some(map.as_ref()),
             _ => None,
         }
     }
 
-    pub fn as_set(&self) -> Option<&Either<Vec<RESP3>, AHashSet<RESP3>>> {
+    pub fn as_set(&self) -> Option<Either<&Vec<RESP3>, &AHashSet<RESP3>>> {
         match self {
-            RESP3::Set(set) => Some(set),
+            RESP3::Set(set) => Some(set.as_ref()),
             _ => None,
         }
     }
