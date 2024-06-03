@@ -190,9 +190,11 @@ impl<S> CmdUnparsed<S> {
 impl CmdUnparsed<Mutable> {
     pub fn freeze(mut self) -> CmdUnparsed<UnMutable> {
         for i in 0..self.inner.len() {
-            if let RESP3::Bulk(Either::Right(b)) = &mut self.inner[i] {
-                let b = b.split().freeze();
-                self.inner[i] = RESP3::Bulk(Either::Left(b));
+            if let RESP3::Bulk(either) = &mut self.inner[i] {
+                if let Either::Right(b) = either {
+                    let b = b.split().freeze();
+                    *either = Either::Left(b);
+                }
             }
         }
 
@@ -242,10 +244,10 @@ impl CmdUnparsed<Mutable> {
 
         self.end -= 1;
         match &mut self.inner[self.end + 1] {
-            RESP3::Bulk(b) => match b {
+            RESP3::Bulk(either) => match either {
                 Either::Right(b) => {
                     let b = b.split().freeze();
-                    self.inner[self.end + 1] = RESP3::Bulk(Either::Left(b.clone()));
+                    *either = Either::Left(b.clone());
                     Some(b)
                 }
                 Either::Left(_) => unreachable!(),
@@ -253,27 +255,12 @@ impl CmdUnparsed<Mutable> {
             _ => None,
         }
     }
-
-    // pub fn iter(&mut self) -> impl Iterator<Item = Bytes> + '_ {
-    //     self.inner[self.start..=self.end]
-    //         .iter_mut()
-    //         .filter_map(|frame| match frame {
-    //             RESP3::Bulk(b) => match b {
-    //                 Either::Right(b) => {
-    //                     let b = b.split().freeze();
-    //                     *frame = RESP3::Bulk(Either::Left(b.clone()));
-    //                     Some(b)
-    //                 }
-    //                 Either::Left(_) => unreachable!(),
-    //             },
-    //             _ => None,
-    //         })
-    // }
 }
 
 impl Iterator for CmdUnparsed<Mutable> {
     type Item = Bytes;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.start > self.end {
             return None;
@@ -281,10 +268,10 @@ impl Iterator for CmdUnparsed<Mutable> {
 
         self.start += 1;
         match &mut self.inner[self.start - 1] {
-            RESP3::Bulk(b) => match b {
+            RESP3::Bulk(either) => match either {
                 Either::Right(b) => {
                     let b = b.split().freeze();
-                    self.inner[self.start - 1] = RESP3::Bulk(Either::Left(b.clone()));
+                    *either = Either::Left(b.clone());
                     Some(b)
                 }
                 Either::Left(_) => unreachable!(),
@@ -297,6 +284,7 @@ impl Iterator for CmdUnparsed<Mutable> {
 impl TryFrom<RESP3> for CmdUnparsed<Mutable> {
     type Error = CmdError;
 
+    #[inline]
     fn try_from(value: RESP3) -> Result<Self, Self::Error> {
         match value {
             RESP3::Array(arr) => Ok(Self {
@@ -331,18 +319,6 @@ impl From<&[&'static str]> for CmdUnparsed<Mutable> {
 }
 
 impl CmdUnparsed<UnMutable> {
-    pub fn iter(&self) -> impl Iterator<Item = &Bytes> {
-        self.inner[self.start..=self.end]
-            .iter()
-            .filter_map(|frame| match frame {
-                RESP3::Bulk(b) => match b {
-                    Either::Left(b) => Some(b),
-                    Either::Right(_) => unreachable!(),
-                },
-                _ => None,
-            })
-    }
-
     pub fn next_back(&mut self) -> Option<Bytes> {
         if self.start > self.end {
             return None;
