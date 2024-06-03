@@ -3,16 +3,16 @@
 use flume::Sender;
 use tracing::instrument;
 
-use crate::{frame::Frame, Key};
+use crate::{frame::RESP3, Key};
 
 #[derive(Default, Debug, Clone)]
 pub struct Event(EventInner);
 
 #[derive(Default, Debug, Clone)]
 struct EventInner {
-    track: Vec<Sender<Frame>>,
-    update: Vec<Sender<Frame>>,
-    remove: Vec<Sender<Frame>>,
+    track: Vec<Sender<RESP3>>,
+    update: Vec<Sender<RESP3>>,
+    remove: Vec<Sender<RESP3>>,
 }
 
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ pub enum EventType {
 }
 
 impl Event {
-    pub(super) fn add_event(&mut self, sender: Sender<Frame>, event: EventType) {
+    pub(super) fn add_event(&mut self, sender: Sender<RESP3>, event: EventType) {
         match event {
             EventType::Track => self.0.track.push(sender),
             EventType::Update => self.0.update.push(sender),
@@ -51,7 +51,7 @@ impl Event {
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
-            let res = e.send(Frame::new_bulk_owned(key.clone()));
+            let res = e.send(RESP3::Bulk(key.clone()));
 
             // 发送失败，证明连接已经断开，移除监听事件
             if res.is_err() {
@@ -71,7 +71,7 @@ impl Event {
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
-            let _ = e.send(Frame::new_bulk_owned(key.clone()));
+            let _ = e.send(RESP3::Bulk(key.clone()));
 
             // 该事件是一次性事件，无论是否有接收者，都需要移除该事件
             events.swap_remove(i);
@@ -89,7 +89,7 @@ impl Event {
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
-            let _ = e.send(Frame::new_bulk_owned(key.clone()));
+            let _ = e.send(RESP3::Bulk(key.clone()));
 
             // 该事件是一次性事件，无论是否有接收者，都需要移除该事件
             events.swap_remove(i);

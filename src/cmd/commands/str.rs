@@ -1,9 +1,9 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType,
+        CmdExecutor, CmdUnparsed, CmdType,
     },
-    frame::{Bulks, Frame},
+    frame::RESP3,
     shared::{
         db::{ObjValueType, Object},
         Shared,
@@ -28,7 +28,7 @@ pub struct Append {
 impl CmdExecutor for Append {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut length = None;
 
         shared
@@ -37,20 +37,20 @@ impl CmdExecutor for Append {
                 let str = obj.on_str_mut()?;
                 str.append(self.value);
 
-                length = Some(Frame::new_integer(str.len() as Int));
+                length = Some(RESP3::Integer(str.len() as Int));
                 Ok(())
             })?;
 
         Ok(length)
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
         Ok(Append {
-            key: args.pop_front().unwrap(),
-            value: args.pop_front().unwrap(),
+            key: args.next().unwrap(),
+            value: args.next().unwrap(),
         })
     }
 }
@@ -67,7 +67,7 @@ pub struct Decr {
 impl CmdExecutor for Decr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -75,15 +75,15 @@ impl CmdExecutor for Decr {
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_integer(new_i)))
+        Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
         Ok(Decr {
-            key: args.pop_front().unwrap(),
+            key: args.next().unwrap(),
         })
     }
 }
@@ -101,7 +101,7 @@ pub struct DecrBy {
 impl CmdExecutor for DecrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -109,17 +109,17 @@ impl CmdExecutor for DecrBy {
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_integer(new_i)))
+        Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(DecrBy {
-            key: args.pop_front().unwrap(),
-            decrement: atoi(&args.pop_front().unwrap())
+            key: args.next().unwrap(),
+            decrement: atoi(&args.next().unwrap())
                 .map_err(|_| CmdError::from("ERR decrement is not an integer"))?,
         })
     }
@@ -137,7 +137,7 @@ pub struct Get {
 impl CmdExecutor for Get {
     const CMD_TYPE: crate::cmd::CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut str = "".into();
 
         shared.db().visit_object(&self.key, |obj| {
@@ -145,16 +145,16 @@ impl CmdExecutor for Get {
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_bulk_owned(str)))
+        Ok(Some(RESP3::Bulk(str)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(Get {
-            key: args.pop_front().unwrap(),
+            key: args.next().unwrap(),
         })
     }
 }
@@ -173,7 +173,7 @@ pub struct GetRange {
 impl CmdExecutor for GetRange {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut res = "".into();
 
         shared.db().visit_object(&self.key, |obj| {
@@ -184,19 +184,19 @@ impl CmdExecutor for GetRange {
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_bulk_owned(res)))
+        Ok(Some(RESP3::Bulk(res)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
 
-        let key = args.pop_front().unwrap();
-        let start = atoi(&args.pop_front().unwrap()).map_err(|_| {
+        let key = args.next().unwrap();
+        let start = atoi(&args.next().unwrap()).map_err(|_| {
             CmdError::from("ERR index parameter is not a positive integer or out of range")
         })?;
-        let end = atoi(&args.pop_front().unwrap()).map_err(|_| {
+        let end = atoi(&args.next().unwrap()).map_err(|_| {
             CmdError::from("ERR index parameter is not a positive integer or out of range")
         })?;
 
@@ -218,7 +218,7 @@ pub struct GetSet {
 impl CmdExecutor for GetSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut old = "".into();
 
         shared.db().update_object(&self.key, |obj| {
@@ -227,17 +227,17 @@ impl CmdExecutor for GetSet {
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_bulk_owned(old)))
+        Ok(Some(RESP3::Bulk(old)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(GetSet {
-            key: args.pop_front().unwrap(),
-            new_value: args.pop_front().unwrap(),
+            key: args.next().unwrap(),
+            new_value: args.next().unwrap(),
         })
     }
 }
@@ -254,7 +254,7 @@ pub struct Incr {
 impl CmdExecutor for Incr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
 
         shared.db().update_object(&self.key, |obj| {
@@ -263,16 +263,16 @@ impl CmdExecutor for Incr {
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_integer(new_i)))
+        Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(Incr {
-            key: args.pop_front().unwrap(),
+            key: args.next().unwrap(),
         })
     }
 }
@@ -290,7 +290,7 @@ pub struct IncrBy {
 impl CmdExecutor for IncrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -298,17 +298,17 @@ impl CmdExecutor for IncrBy {
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_integer(new_i)))
+        Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(IncrBy {
-            key: args.pop_front().unwrap(),
-            increment: atoi(&args.pop_front().unwrap())
+            key: args.next().unwrap(),
+            increment: atoi(&args.next().unwrap())
                 .map_err(|_| CmdError::from("ERR increment is not an integer"))?,
         })
     }
@@ -326,7 +326,7 @@ pub struct MGet {
 impl CmdExecutor for MGet {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut res = Vec::with_capacity(self.keys.len());
         for key in self.keys.iter() {
             let mut str = "".into();
@@ -336,13 +336,13 @@ impl CmdExecutor for MGet {
                 Ok(())
             })?;
 
-            res.push(Frame::new_bulk_owned(str));
+            res.push(RESP3::Bulk(str));
         }
 
-        Ok(Some(Frame::new_array(res)))
+        Ok(Some(RESP3::new_array(res)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -365,24 +365,24 @@ pub struct MSet {
 impl CmdExecutor for MSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         for (key, value) in self.pairs {
             shared
                 .db()
                 .insert_object(key, Object::new_str(value.into(), None));
         }
 
-        Ok(Some(Frame::new_simple_borrowed("OK")))
+        Ok(Some(RESP3::new_simple_borrowed("OK")))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 || args.len() % 2 != 0 {
             return Err(Err::WrongArgNum.into());
         }
 
         let mut pairs = Vec::with_capacity((args.len() - 1) / 2);
 
-        while let (Some(key), Some(value)) = (args.pop_front(), args.pop_front()) {
+        while let (Some(key), Some(value)) = (args.next(), args.next()) {
             pairs.push((key, value));
         }
 
@@ -403,7 +403,7 @@ pub struct MSetNx {
 impl CmdExecutor for MSetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         for (key, _) in &self.pairs {
             if shared.db().contains_object(key) {
                 return Err(0.into());
@@ -416,17 +416,17 @@ impl CmdExecutor for MSetNx {
                 .insert_object(key, Object::new_str(value.into(), None));
         }
 
-        Ok(Some(Frame::new_integer(1)))
+        Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 || args.len() % 2 != 0 {
             return Err(Err::WrongArgNum.into());
         }
 
         let mut pairs = Vec::with_capacity((args.len() - 1) / 2);
 
-        while let (Some(key), Some(value)) = (args.pop_front(), args.pop_front()) {
+        while let (Some(key), Some(value)) = (args.next(), args.next()) {
             pairs.push((key, value));
         }
 
@@ -461,7 +461,7 @@ enum SetOpt {
 impl CmdExecutor for Set {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         // 1. 是否要求键存在？
         // 2. 满足命令对键的要求后，更新值
         // 3. 是否需要更新expire?
@@ -538,23 +538,23 @@ impl CmdExecutor for Set {
         }
 
         if let Some(old_value) = old_value {
-            Ok(Some(Frame::new_bulk_owned(old_value)))
+            Ok(Some(RESP3::Bulk(old_value)))
         } else {
-            Ok(Some(Frame::new_simple_borrowed("OK")))
+            Ok(Some(RESP3::new_simple_borrowed("OK")))
         }
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
         let mut buf = [0; 7];
 
-        let key = args.pop_front().unwrap();
-        let value = args.pop_front().unwrap();
+        let key = args.next().unwrap();
+        let value = args.next().unwrap();
 
-        let mut pop_front = args.pop_front();
-        let opt = match pop_front.as_ref() {
+        let mut next = args.next();
+        let opt = match next.as_ref() {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -572,11 +572,11 @@ impl CmdExecutor for Set {
 
                 match &buf[..len] {
                     b"NX" => {
-                        pop_front = args.pop_front();
+                        next = args.next();
                         Some(SetOpt::NX)
                     }
                     b"XX" => {
-                        pop_front = args.pop_front();
+                        next = args.next();
                         Some(SetOpt::XX)
                     }
                     // 该参数不是设置选项的参数
@@ -585,7 +585,7 @@ impl CmdExecutor for Set {
             }
         };
 
-        let get = match pop_front.as_ref() {
+        let get = match next.as_ref() {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -603,7 +603,7 @@ impl CmdExecutor for Set {
 
                 match &buf[..len] {
                     b"GET" => {
-                        pop_front = args.pop_front();
+                        next = args.next();
                         true
                     }
                     // 该参数不是设置GET的参数
@@ -613,7 +613,7 @@ impl CmdExecutor for Set {
         };
 
         let mut keep_ttl = false;
-        let expire = match pop_front.as_ref() {
+        let expire = match next.as_ref() {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -635,7 +635,7 @@ impl CmdExecutor for Set {
                         None
                     }
                     e => {
-                        let expire_value = if let Some(val) = args.pop_front() {
+                        let expire_value = if let Some(val) = args.next() {
                             val
                         } else {
                             return Err(Err::WrongArgNum.into());
@@ -669,7 +669,7 @@ impl CmdExecutor for Set {
               //     None
               // }
               // Some(e) => {
-              //     let expire_value = if let Some(val) = args.pop_front() {
+              //     let expire_value = if let Some(val) = args.next() {
               //         val
               //     } else {
               //         return Err(Err::WrongArgNum.into());
@@ -696,7 +696,7 @@ impl CmdExecutor for Set {
         };
 
         // 如果还有多余的参数，说明参数数目不对
-        if args.pop_front().is_some() {
+        if args.next().is_some() {
             return Err(Err::WrongArgNum.into());
         }
         Ok(Set {
@@ -724,23 +724,23 @@ pub struct SetEx {
 impl CmdExecutor for SetEx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         shared.db().insert_object(
             self.key,
             Object::new_str(self.value.into(), Some(Instant::now() + self.expire)),
         );
 
-        Ok(Some(Frame::new_simple_borrowed("OK")))
+        Ok(Some(RESP3::new_simple_borrowed("OK")))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
 
-        let key = args.pop_front().unwrap();
-        let expire = Duration::from_secs(atoi(&args.pop_front().unwrap())?);
-        let value = args.pop_front().unwrap();
+        let key = args.next().unwrap();
+        let expire = Duration::from_secs(atoi(&args.next().unwrap())?);
+        let value = args.next().unwrap();
 
         Ok(SetEx { key, value, expire })
     }
@@ -760,7 +760,7 @@ pub struct SetNx {
 impl CmdExecutor for SetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         if shared.db().contains_object(&self.key) {
             return Err(0.into());
         }
@@ -769,17 +769,17 @@ impl CmdExecutor for SetNx {
             .db()
             .insert_object(self.key, Object::new_str(self.value.into(), None));
 
-        Ok(Some(Frame::new_integer(1)))
+        Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(SetNx {
-            key: args.pop_front().unwrap(),
-            value: args.pop_front().unwrap(),
+            key: args.next().unwrap(),
+            value: args.next().unwrap(),
         })
     }
 }
@@ -796,23 +796,23 @@ pub struct StrLen {
 impl CmdExecutor for StrLen {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut len = 0;
         shared.db().visit_object(&self.key, |obj| {
             len = obj.on_str()?.len();
             Ok(())
         })?;
 
-        Ok(Some(Frame::new_integer(len as Int)))
+        Ok(Some(RESP3::Integer(len as Int)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(StrLen {
-            key: args.pop_front().unwrap(),
+            key: args.next().unwrap(),
         })
     }
 }
@@ -1015,7 +1015,7 @@ mod cmd_str_tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let set = Set::parse(&mut Bulks::from(
+        let set = Set::parse(&mut CmdUnparsed::from(
             [
                 b"key_expire".as_ref(),
                 b"value_expire",
@@ -1059,7 +1059,7 @@ mod cmd_str_tests {
             .unwrap()
             .as_millis();
 
-        let set = Set::parse(&mut Bulks::from(
+        let set = Set::parse(&mut CmdUnparsed::from(
             [
                 b"key_expire".as_ref(),
                 b"value_expire",

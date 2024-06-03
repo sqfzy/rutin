@@ -21,7 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 crossbeam = { version = "0.8.4", features = ["crossbeam-queue", "nightly"] }
 itoa = "1.0.11"
 ryu = "1.0.17"
-tokio-util = "0.7.10"
+tokio-util = { version = "0.7.11", features = ["codec"] }
 atoi = "2.0.0"
 async-shutdown = "0.2.2"
 flume = { version = "0.11.0", features = ["async", "spin"] }
@@ -35,7 +35,7 @@ regex = "1.10.4"
 async-recursion = "1.1.1"
 snafu = "0.8.2"
 # smallvec = "1.13.2"
-tokio-uring = { version = "0.4.0", features = ["bytes"] }
+# tokio-uring = { version = "0.4.0", features = ["bytes"] }
 backon = "0.4.4"
 rayon = "1.10.0"
 # tokio-async-drop = "0.1.0"
@@ -52,6 +52,9 @@ pin-project = "1.1.5"
 yoke = { version = "0.7.4", features = ["derive"] }
 owning_ref = "0.4.1"
 polonius-the-crab = "0.4.1"
+num-bigint = "0.4.5"
+memchr = "2.7.2"
+smallvec = "1.13.2"
 
 [dev-dependencies]
 assert_cmd = { version = "2.0.14", features = ["color-auto"] }

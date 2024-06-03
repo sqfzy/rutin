@@ -1,7 +1,5 @@
-mod fake_cs;
 mod test;
 
-pub use fake_cs::*;
 pub use test::*;
 
 use anyhow::anyhow;
@@ -47,7 +45,14 @@ pub async fn server_test() {
 }
 
 pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, &str> {
-    atoi::atoi(text).ok_or("failed to parse number")
+    atoi::atoi(text).ok_or("failed to parse integer")
+}
+
+pub fn atof(text: &[u8]) -> Result<f64, &str> {
+    std::str::from_utf8(text)
+        .map_err(|_| "failed to parse fraction")?
+        .parse()
+        .map_err(|_| "failed to parse fraction")
 }
 
 pub fn upper_case(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {

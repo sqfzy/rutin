@@ -1,10 +1,10 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType,
+        CmdExecutor, CmdType, CmdUnparsed,
     },
     connection::AsyncStream,
-    frame::{Bulks, Frame},
+    frame::RESP3,
     persist::rdb::RDB,
     server::Handler,
     shared::Shared,
@@ -22,12 +22,12 @@ use bytes::Bytes;
 //     const CMD_TYPE: CmdType = CmdType::Other;
 //
 //     // TODO: 返回命令字典，以便支持客户端的命令补全
-// async fn _execute(self, shared: &Shared) -> Result<Option<Frame>, CmdError>{
+// async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError>{
 //
 //         Ok(None)
 //     }
 //
-//     fn parse(cmd_frame: Frame) -> Result<Self, CmdError> {
+//     fn parse(cmd_frame: RESP3) -> Result<Self, CmdError> {
 //
 //         Ok(_Command)
 //     }
@@ -45,23 +45,21 @@ pub struct Ping {
 impl CmdExecutor for Ping {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let res = match self.msg {
-            Some(msg) => Frame::new_simple_owned(String::from_utf8_lossy(&msg).to_string()),
-            None => Frame::new_simple_borrowed("PONG"),
+            Some(msg) => RESP3::SimpleString(String::from_utf8_lossy(&msg).to_string()),
+            None => RESP3::SimpleString("PONG"),
         };
 
         Ok(Some(res))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if !args.is_empty() && args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Ping {
-            msg: args.pop_front(),
-        })
+        Ok(Ping { msg: args.next() })
     }
 }
 
@@ -76,17 +74,17 @@ pub struct Echo {
 impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
-        Ok(Some(Frame::new_bulk_owned(self.msg)))
+    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+        Ok(Some(RESP3::Bulk(self.msg)))
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(Echo {
-            msg: args.pop_front().unwrap(),
+            msg: args.next().unwrap(),
         })
     }
 }
@@ -179,7 +177,7 @@ impl CmdExecutor for Echo {
 //                         OFFSET.load(std::sync::atomic::Ordering::SeqCst)
 //                     )
 //                 };
-//                 Ok(Some(Frame::Bulk(res.into())))
+//                 Ok(Some(RESP3::Bulk(res.into())))
 //             }
 //             // TODO:
 //             _ => Err(anyhow!("Incomplete")),
@@ -201,7 +199,7 @@ impl CmdExecutor for BgSave {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Frame>, CmdError> {
+    ) -> Result<Option<RESP3>, CmdError> {
         let rdb_conf = &handler.conf.rdb;
         let shared = &handler.shared;
 
@@ -219,16 +217,16 @@ impl CmdExecutor for BgSave {
             }
         });
 
-        Ok(Some(Frame::new_simple_borrowed(
+        Ok(Some(RESP3::new_simple_borrowed(
             "Background saving started",
         )))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         Ok(None)
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if !args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -244,10 +242,10 @@ impl CmdExecutor for BgSave {
 //     pub password: String,
 // }
 //
-// impl TryFrom<Frame> for Auth {
+// impl TryFrom<RESP3> for Auth {
 //     type Error = CmdError;
 //
-//     fn try_from(cmd_frame: Frame) -> Result<Self, CmdError> {
+//     fn try_from(cmd_frame: RESP3) -> Result<Self, CmdError> {
 //         let mut bulks = cmd_frame.ininto_bulks()?;
 //         if cmd_frame.array_len()? < 2 {
 //             return Err(Err::WrongArgNum.into());
@@ -309,11 +307,11 @@ impl CmdExecutor for ClientTracking {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Frame>, CmdError> {
+    ) -> Result<Option<RESP3>, CmdError> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
-            return Ok(Some(Frame::new_simple_borrowed("OK")));
+            return Ok(Some(RESP3::new_simple_borrowed("OK")));
         }
 
         if let Some(redirect) = self.redirect {
@@ -327,20 +325,20 @@ impl CmdExecutor for ClientTracking {
             handler.context.client_track = Some(handler.bg_task_channel.new_sender());
         }
 
-        Ok(Some(Frame::new_simple_borrowed("OK")))
+        Ok(Some(RESP3::new_simple_borrowed("OK")))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Frame>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         Ok(None)
     }
 
-    fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() > 2 {
             return Err(Err::WrongArgNum.into());
         }
 
         let mut switch = [0; 3];
-        let bulk = args.pop_front().unwrap();
+        let bulk = args.next().unwrap();
         let len = bulk.len();
         switch[..len].clone_from_slice(bulk.as_ref());
         switch[..len].make_ascii_uppercase();
@@ -351,7 +349,7 @@ impl CmdExecutor for ClientTracking {
             _ => return Err("ERR invalid switch is given")?,
         };
 
-        let redirect = if let Some(redirect) = args.pop_front() {
+        let redirect = if let Some(redirect) = args.next() {
             Some(util::atoi::<Id>(&redirect)?)
         } else {
             None
@@ -375,11 +373,11 @@ mod cmd_other_tests {
 
         let (mut handler, _) = Handler::new_fake();
 
-        let tracking = ClientTracking::parse(&mut Bulks::from(["ON"].as_ref())).unwrap();
+        let tracking = ClientTracking::parse(&mut CmdUnparsed::from(["ON"].as_ref())).unwrap();
         tracking.execute(&mut handler).await.unwrap();
         assert!(handler.context.client_track.is_some());
 
-        let tracking = ClientTracking::parse(&mut Bulks::from(["OFF"].as_ref())).unwrap();
+        let tracking = ClientTracking::parse(&mut CmdUnparsed::from(["OFF"].as_ref())).unwrap();
         tracking.execute(&mut handler).await.unwrap();
         assert!(handler.context.client_track.is_none());
     }

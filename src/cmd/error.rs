@@ -1,13 +1,13 @@
 pub type CmdResult<T> = Result<T, CmdError>;
 
-use crate::{shared::db::DbError, frame::FrameError, Int};
+use crate::{frame::RESP3, server::ServerError, shared::db::DbError, Int};
 use snafu::{Location, Snafu};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum CmdError {
-    IoErr {
-        source: tokio::io::Error,
+    ServerErr {
+        msg: ServerError,
         #[snafu(implicit)]
         loc: Location,
     },
@@ -19,12 +19,6 @@ pub enum CmdError {
     Err {
         source: Err,
     },
-}
-
-impl From<FrameError> for CmdError {
-    fn from(_: FrameError) -> Self {
-        Err::Syntax.into()
-    }
 }
 
 impl From<Int> for CmdError {
@@ -67,6 +61,24 @@ impl From<DbError> for CmdError {
     }
 }
 
+impl TryInto<RESP3> for CmdError {
+    type Error = ServerError;
+
+    fn try_into(self) -> Result<RESP3, Self::Error> {
+        let frame = match self {
+            CmdError::ServerErr { source, loc } => return Err(format!("{}: {}", loc, source).into()),
+            // 命令执行失败，向客户端返回错误码
+            CmdError::ErrorCode { code } => RESP3::Integer(code),
+            // 命令执行失败，向客户端返回空值
+            CmdError::Null => RESP3::Null,
+            // 命令执行失败，向客户端返回错误信息
+            CmdError::Err { source } => RESP3::SimpleError(source.to_string()),
+        };
+
+        Ok(frame)
+    }
+}
+
 #[derive(Debug, Snafu)]
 pub enum Err {
     #[snafu(display("ERR unknown command"))]
@@ -79,8 +91,8 @@ pub enum Err {
         "ERR value is not an integer or out of range or can't be represented as integer"
     ))]
     A2IParse,
-    #[snafu(display("syntax error"))]
+    #[snafu(display("ERR syntax error"))]
     Syntax,
-    #[snafu(whatever, display("{}", message))]
+    #[snafu(whatever, display("ERR {}", message))]
     Other { message: String },
 }

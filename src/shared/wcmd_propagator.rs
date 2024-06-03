@@ -2,7 +2,7 @@ use bytes::Bytes;
 use flume::{Receiver, Sender};
 use try_lock::TryLock;
 
-use crate::{connection::AsyncStream, frame::Frame, server::Handler};
+use crate::{connection::AsyncStream, frame::RESP3, server::Handler};
 
 #[derive(Debug, Default)]
 pub struct WCmdPropergator {
@@ -40,7 +40,7 @@ impl WCmdPropergator {
     }
 
     #[inline]
-    pub async fn propergate(&self, wcmd: Frame, handler: &mut Handler<impl AsyncStream>) {
+    pub async fn propergate(&self, wcmd: RESP3, handler: &mut Handler<impl AsyncStream>) {
         let mut wcmd_buf = None;
         let should_propergate = handler.conn.count() <= 1;
 

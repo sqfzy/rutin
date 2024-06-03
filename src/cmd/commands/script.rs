@@ -1,6 +1,6 @@
 use crate::{
-    cmd::{CmdError, CmdExecutor, CmdType, Err},
-    frame::{Bulks, Frame},
+    cmd::{CmdError, CmdExecutor, CmdUnparsed, CmdType, Err},
+    frame::RESP3,
     shared::Shared,
     util::atoi,
     Int,
@@ -29,7 +29,7 @@ pub struct Eval {
 //         Ok(Some(frame))
 //     }
 //
-//     fn parse(args: &mut Bulks) -> Result<Self, CmdError> {
+//     fn parse(args: &mut CmdFrame) -> Result<Self, CmdError> {
 //         if args.len() < 2 {
 //             return Err(Err::WrongArgNum.into());
 //         }

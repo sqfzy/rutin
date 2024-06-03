@@ -2,7 +2,7 @@ use crate::{
     cmd::{dispatch, CmdError},
     conf::Conf,
     connection::{AsyncStream, FakeStream, ShutdownSignal},
-    frame::Frame,
+    frame::RESP3,
     server::{Handler, ServerError},
     shared::Shared,
     Key,
@@ -114,12 +114,12 @@ impl LuaScript {
 
             let redis = lua.create_table()?;
             let call = lua.create_function_mut(move |_, cmd: Vec<String>| {
-                let cmd = Frame::Array(
+                let cmd = RESP3::Array(
                     cmd.into_iter()
                         .map(|s| {
                             let mut b = BytesMut::with_capacity(s.len());
                             b.extend(s.into_bytes());
-                            Frame::Bulk(b.freeze())
+                            RESP3::Bulk(b.freeze())
                         })
                         .collect(),
                 );
@@ -164,7 +164,7 @@ impl LuaScript {
         keys: Vec<Key>,
         argv: Vec<Bytes>,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Frame, ServerError> {
+    ) -> Result<RESP3, ServerError> {
         let res = async {
             let mut responds = vec![];
             let mut lock = self.get_lua_and_handler()?;
@@ -211,7 +211,7 @@ impl LuaScript {
                 }
             }
 
-            Ok::<_, anyhow::Error>(Frame::Array(responds))
+            Ok::<_, anyhow::Error>(RESP3::Array(responds))
         }
         .await;
 
@@ -241,7 +241,7 @@ impl LuaScript {
         keys: Vec<Key>,
         argv: Vec<Bytes>,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Frame, ServerError> {
+    ) -> Result<RESP3, ServerError> {
         let script = match self.lua_scripts.get(&script_name) {
             Some(script) => script.clone(),
             None => return Err("script not found".into()),
@@ -272,7 +272,7 @@ async fn test() {
         )
         .await
         .unwrap();
-    assert_eq!(res, Frame::Array(vec![Frame::new_simple_borrowed("PONG")]));
+    assert_eq!(res, RESP3::Array(vec![RESP3::new_simple_borrowed("PONG")]));
 
     let res = lua_script
         .eval(
@@ -289,9 +289,9 @@ async fn test() {
         .unwrap();
     assert_eq!(
         res,
-        Frame::Array(vec![
-            Frame::new_simple_borrowed("OK"),
-            Frame::new_bulk_from_static(b"value")
+        RESP3::Array(vec![
+            RESP3::new_simple_borrowed("OK"),
+            RESP3::new_bulk_from_static(b"value")
         ])
     );
 
@@ -307,7 +307,7 @@ async fn test() {
         .eval_script("f1".into(), vec![], vec![], &mut handler)
         .await
         .unwrap();
-    assert_eq!(res, Frame::Array(vec![Frame::new_simple_borrowed("PONG")]));
+    assert_eq!(res, RESP3::Array(vec![RESP3::new_simple_borrowed("PONG")]));
 
     // 删除脚本
     lua_script.remove_script("f1".into()).unwrap();

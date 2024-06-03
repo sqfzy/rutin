@@ -1,897 +1,734 @@
-#![allow(dead_code)]
-use crate::{cmd::CmdError, server::ServerError, util, Int};
+// #![allow(dead_code)]
+use crate::{
+    util::{self, atof},
+    Int,
+};
+use ahash::{AHashMap, AHashSet};
 use bytes::{Buf, Bytes, BytesMut};
-use mlua::{prelude, FromLuaMulti, IntoLua, Value};
-use snafu::Snafu;
-use std::{borrow::Cow, io::Cursor, iter::Iterator};
-use tokio::io::AsyncReadExt;
+use either::{for_both, Either};
+use num_bigint::BigInt;
+use std::{
+    hash::Hash,
+    io::{self},
+    iter::Iterator,
+};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::bytes::BufMut;
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub enum Frame {
-    Simple(Cow<'static, str>), // +<str>\r\n
-    Error(Cow<'static, str>),  // -<err>\r\n
-    Integer(Int),              // :<num>\r\n
-    Bulk(Bytes),               // $<len>\r\n<bytes>\r\n
-    #[default]
-    Null,        // $-1\r\n
-    Array(Vec<Frame>),         // *<len>\r\n<Frame>...
+type RespMap<B, S> = Either<Vec<(RESP3<B, S>, RESP3<B, S>)>, AHashMap<RESP3<B, S>, RESP3<B, S>>>;
+type RespSet<B, S> = Either<Vec<RESP3<B, S>>, AHashSet<RESP3<B, S>>>;
+
+#[derive(Clone, Debug)]
+pub enum RESP3<B = Bytes, S = String>
+where
+    B: AsRef<[u8]>,
+    S: AsRef<str>,
+{
+    // +<str>\r\n
+    SimpleString(S),
+
+    // -<err>\r\n
+    SimpleError(S),
+
+    // :[<+|->]<value>\r\n
+    Integer(Int),
+
+    // $<length>\r\n<data>\r\n
+    Bulk(B),
+
+    // *<number-of-elements>\r\n<element-1>...<element-n>
+    Array(Vec<RESP3<B, S>>),
+
+    // _\r\n
+    Null,
+
+    // #<t|f>\r\n
+    Boolean(bool),
+
+    // ,[<+|->]<integral>[.<fractional>][<E|e>[sign]<exponent>]\r\n
+    Double { double: f64, exponent: Option<Int> },
+
+    // ([+|-]<number>\r\n
+    BigNumber(BigInt),
+
+    // !<length>\r\n<error>\r\n
+    BulkError(B),
+
+    // =<length>\r\n<encoding>:<data>\r\n
+    // 类似于Bulk，但是多了一个encoding字段用于指定数据的编码方式
+    VerbatimString { encoding: [u8; 3], data: B },
+
+    // %<number-of-entries>\r\n<key-1><value-1>...<key-n><value-n>
+    // Left: 由用户保证传入的key唯一；Right: 由Frame本身保证key唯一
+    Map(RespMap<B, S>),
+
+    // ~<number-of-elements>\r\n<element-1>...<element-n>
+    // Left: 由用户保证传入的元素唯一；Right: 由Frame本身保证元素唯一
+    Set(RespSet<B, S>),
+
+    // ><number-of-elements>\r\n<element-1>...<element-n>
+    // 通常用于服务端主动向客户端推送消息
+    Push(Vec<RESP3<B, S>>),
 }
 
-impl Frame {
+impl RESP3 {
     #[inline]
     pub fn size(&self) -> usize {
         match self {
-            Frame::Simple(s) => s.len() + 3,
-            Frame::Error(e) => e.len() + 3,
-            Frame::Integer(n) => itoa::Buffer::new().format(*n).as_bytes().len() + 3,
-            Frame::Bulk(b) => {
-                let len = b.len();
-                len + itoa::Buffer::new().format(len).as_bytes().len() + 5
+            RESP3::SimpleString(s) => s.len() + 3, // 1 + s.len() + 2
+            RESP3::SimpleError(e) => e.len() + 3,  // 1 + e.len() + 2
+            RESP3::Integer(n) => itoa::Buffer::new().format(*n).len() + 3, // 1 + n.len() + 2
+            RESP3::Bulk(b) => b.len() + itoa::Buffer::new().format(b.len()).len() + 5, //  1 + len.len() + 2 + len + 2
+            RESP3::Null => 3,                                                          // 1 + 2
+            RESP3::Array(frames) => {
+                itoa::Buffer::new().format(frames.len()).len()
+                    + 3
+                    + frames.iter().map(|f| f.size()).sum::<usize>()
             }
-            Frame::Null => 5,
-            Frame::Array(frames) => {
-                itoa::Buffer::new().format(frames.len()).as_bytes().len()
+            RESP3::Boolean(_) => 3, // 1 + 2
+            RESP3::Double { double, exponent } => {
+                let mut len = 1 + ryu::Buffer::new().format(*double).len();
+                if let Some(exponent) = exponent {
+                    len += itoa::Buffer::new().format(*exponent).len() + 3; // 1 + exponent.len() + 2
+                }
+                len
+            }
+            RESP3::BigNumber(n) => n.to_str_radix(10).len() + 3, // 1 + len + 2
+            RESP3::BulkError(e) => e.len() + itoa::Buffer::new().format(e.len()).len() + 5, // 1 + len.len() + 2 + len + 2
+            RESP3::VerbatimString { data, .. } => {
+                data.len() + itoa::Buffer::new().format(data.len()).len() + 9 // 1 + len.len() + 2 + 3 + 1 + data.len() + 2
+            }
+            RESP3::Map(map) => for_both!(map, map => {
+                itoa::Buffer::new().format(map.len()).len()
+                    + 3
+                    + map.iter().map(|(k, v)| k.size() + v.size()).sum::<usize>()
+            }),
+            RESP3::Set(set) => for_both!(set, set => {
+                itoa::Buffer::new().format(set.len()).len()
+                    + 3
+                    + set.iter().map(|f| f.size()).sum::<usize>()
+            }),
+            RESP3::Push(frames) => {
+                itoa::Buffer::new().format(frames.len()).len()
                     + 3
                     + frames.iter().map(|f| f.size()).sum::<usize>()
             }
         }
     }
 
-    #[inline]
-    pub fn array_len(&self) -> Result<usize, FrameError> {
+    pub fn on_simple_string() {}
+}
+
+impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
+    pub fn as_simple_string(&self) -> Option<&S> {
         match self {
-            Frame::Array(frames) => Ok(frames.len()),
-            _ => Err(FrameError::NotArray),
+            RESP3::SimpleString(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_simple_error(&self) -> Option<&S> {
+        match self {
+            RESP3::SimpleError(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn as_integer(&self) -> Option<Int> {
+        match self {
+            RESP3::Integer(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    pub fn as_bulk(&self) -> Option<&B> {
+        match self {
+            RESP3::Bulk(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&Vec<RESP3<B, S>>> {
+        match self {
+            RESP3::Array(frames) => Some(frames),
+            _ => None,
+        }
+    }
+
+    pub fn as_null(&self) -> Option<()> {
+        match self {
+            RESP3::Null => Some(()),
+            _ => None,
+        }
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self {
+            RESP3::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn as_double(&self) -> Option<(f64, Option<Int>)> {
+        match self {
+            RESP3::Double { double, exponent } => Some((*double, *exponent)),
+            _ => None,
+        }
+    }
+
+    pub fn as_big_number(&self) -> Option<&BigInt> {
+        match self {
+            RESP3::BigNumber(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    pub fn as_bulk_error(&self) -> Option<&B> {
+        match self {
+            RESP3::BulkError(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn as_verbatim_string(&self) -> Option<(&[u8; 3], &B)> {
+        match self {
+            RESP3::VerbatimString { encoding, data } => Some((encoding, data)),
+            _ => None,
+        }
+    }
+
+    pub fn as_map(&self) -> Option<&RespMap<B, S>> {
+        match self {
+            RESP3::Map(map) => Some(map),
+            _ => None,
+        }
+    }
+
+    pub fn as_set(&self) -> Option<&RespSet<B, S>> {
+        match self {
+            RESP3::Set(set) => Some(set),
+            _ => None,
+        }
+    }
+
+    pub fn as_push(&self) -> Option<&Vec<RESP3<B, S>>> {
+        match self {
+            RESP3::Push(frames) => Some(frames),
+            _ => None,
         }
     }
 
     #[inline]
-    pub fn to_raw_in_buf(&self, buf: &mut BytesMut) {
+    pub fn encode(&self) -> BytesMut {
+        let mut buf = BytesMut::with_capacity(64);
+        self.encode_buf(&mut buf);
+        buf.split()
+    }
+
+    #[inline]
+    pub fn encode_buf(&self, buf: &mut impl BufMut) {
         match self {
-            Frame::Simple(s) => {
+            RESP3::SimpleString(s) => {
                 buf.put_u8(b'+');
-                buf.extend(s.as_bytes());
-                buf.extend(b"\r\n");
+                buf.put_slice(s.as_ref().as_bytes());
+                buf.put_slice(b"\r\n");
             }
-            Frame::Error(e) => {
+            RESP3::SimpleError(e) => {
                 buf.put_u8(b'-');
-                buf.extend(e.as_bytes());
-                buf.extend(b"\r\n");
+                buf.put_slice(e.as_ref().as_bytes());
+                buf.put_slice(b"\r\n");
             }
-            Frame::Integer(n) => {
+            RESP3::Integer(n) => {
                 buf.put_u8(b':');
-                buf.extend(itoa::Buffer::new().format(*n).as_bytes());
-                buf.extend(b"\r\n");
+                buf.put_slice(itoa::Buffer::new().format(*n).as_bytes());
+                buf.put_slice(b"\r\n");
             }
-            Frame::Bulk(b) => {
+            RESP3::Bulk(b) => {
                 buf.put_u8(b'$');
-                buf.extend(itoa::Buffer::new().format(b.len()).as_bytes());
-                buf.extend(b"\r\n");
-                buf.extend(b);
-                buf.extend(b"\r\n");
+                buf.put_slice(itoa::Buffer::new().format(b.as_ref().len()).as_bytes());
+                buf.put_slice(b"\r\n");
+                buf.put_slice(b.as_ref());
+                buf.put_slice(b"\r\n");
             }
-            Frame::Null => {
-                buf.extend(b"$-1\r\n");
-            }
-            Frame::Array(frames) => {
+            RESP3::Array(frames) => {
                 buf.put_u8(b'*');
-                buf.extend(itoa::Buffer::new().format(frames.len()).as_bytes());
-                buf.extend(b"\r\n");
+                buf.put_slice(itoa::Buffer::new().format(frames.len()).as_bytes());
+                buf.put_slice(b"\r\n");
                 for frame in frames {
-                    frame.to_raw_in_buf(buf);
+                    frame.encode_buf(buf);
                 }
             }
-        }
-    }
-
-    #[inline]
-    pub fn into_raw_in_buf(self, buf: &mut BytesMut) {
-        match self {
-            Frame::Simple(s) => {
-                buf.put_u8(b'+');
-                buf.extend(s.as_bytes());
-                buf.extend(b"\r\n");
+            RESP3::Null => {
+                buf.put_slice(b"_\r\n");
             }
-            Frame::Error(e) => {
-                buf.put_u8(b'-');
-                buf.extend(e.as_bytes());
-                buf.extend(b"\r\n");
+            RESP3::Boolean(b) => {
+                buf.put_u8(b'#');
+                buf.put_slice(if *b { b"t" } else { b"f" });
+                buf.put_slice(b"\r\n");
             }
-            Frame::Integer(n) => {
+            RESP3::Double { double, exponent } => {
+                buf.put_u8(b',');
+                if double.fract() == 0.0 {
+                    buf.put_slice(itoa::Buffer::new().format((*double) as i64).as_bytes());
+                } else {
+                    buf.put_slice(ryu::Buffer::new().format(*double).as_bytes());
+                }
+                if let Some(exponent) = exponent {
+                    buf.put_u8(b'e');
+                    buf.put_slice(itoa::Buffer::new().format(*exponent).as_bytes());
+                }
+                buf.put_slice(b"\r\n");
+            }
+            RESP3::BigNumber(n) => {
+                buf.put_u8(b'(');
+                buf.put_slice(n.to_str_radix(10).as_bytes());
+                buf.put_slice(b"\r\n");
+            }
+            RESP3::BulkError(e) => {
+                buf.put_u8(b'!');
+                buf.put_slice(itoa::Buffer::new().format(e.as_ref().len()).as_bytes());
+                buf.put_slice(b"\r\n");
+                buf.put_slice(e.as_ref());
+                buf.put_slice(b"\r\n");
+            }
+            RESP3::VerbatimString { encoding, data } => {
+                buf.put_u8(b'=');
+                buf.put_slice(itoa::Buffer::new().format(data.as_ref().len()).as_bytes());
+                buf.put_slice(b"\r\n");
+                buf.put_slice(encoding);
                 buf.put_u8(b':');
-                buf.extend(itoa::Buffer::new().format(n).as_bytes());
-                buf.extend(b"\r\n");
+                buf.put_slice(data.as_ref());
+                buf.put_slice(b"\r\n");
             }
-            Frame::Bulk(b) => {
-                buf.put_u8(b'$');
-                buf.extend(itoa::Buffer::new().format(b.len()).as_bytes());
-                buf.extend(b"\r\n");
-                buf.extend(b);
-                buf.extend(b"\r\n");
-            }
-            Frame::Null => {
-                buf.extend(b"$-1\r\n");
-            }
-            Frame::Array(frames) => {
-                buf.put_u8(b'*');
-                buf.extend(itoa::Buffer::new().format(frames.len()).as_bytes());
-                buf.extend(b"\r\n");
+            RESP3::Map(map) => for_both!(
+                map,
+                map =>  {
+                    buf.put_u8(b'%');
+                    buf.put_slice(itoa::Buffer::new().format(map.len()).as_bytes());
+                    buf.put_slice(b"\r\n");
+                    for (k, v) in map {
+                        k.encode_buf(buf);
+                        v.encode_buf(buf);
+                    }
+                }
+            ),
+            RESP3::Set(set) => for_both!(
+                set,
+                set =>  {
+                    buf.put_u8(b'~');
+                    buf.put_slice(itoa::Buffer::new().format(set.len()).as_bytes());
+                    buf.put_slice(b"\r\n");
+                    for frame in set {
+                        frame.encode_buf(buf);
+                    }
+                }
+            ),
+            RESP3::Push(frames) => {
+                buf.put_u8(b'>');
+                buf.put_slice(itoa::Buffer::new().format(frames.len()).as_bytes());
+                buf.put_slice(b"\r\n");
                 for frame in frames {
-                    frame.to_raw_in_buf(buf);
+                    frame.encode_buf(buf);
                 }
             }
         }
     }
+}
 
-    #[inline]
-    pub fn to_raw(&self) -> Bytes {
-        let mut raw = BytesMut::with_capacity(self.size());
-        match self {
-            Frame::Simple(s) => {
-                raw.put_u8(b'+');
-                raw.put_slice(s.as_bytes());
-                raw.put_slice(b"\r\n");
-            }
-            Frame::Error(e) => {
-                raw.put_u8(b'-');
-                raw.put_slice(e.as_bytes());
-                raw.put_slice(b"\r\n");
-            }
-            Frame::Integer(n) => {
-                raw.put_u8(b':');
-                raw.put_slice(itoa::Buffer::new().format(*n).as_bytes());
-                raw.put_slice(b"\r\n");
-            }
-            Frame::Bulk(b) => {
-                raw.put_u8(b'$');
-                raw.put_slice(itoa::Buffer::new().format(b.len()).as_bytes());
-                raw.put_slice(b"\r\n");
-                raw.put_slice(b);
-                raw.put_slice(b"\r\n");
-            }
-            Frame::Null => {
-                raw.put_slice(b"$-1\r\n");
-            }
-            Frame::Array(frames) => {
-                raw.put_u8(b'*');
-                raw.put_slice(itoa::Buffer::new().format(frames.len()).as_bytes());
-                raw.put_slice(b"\r\n");
-                for frame in frames {
-                    raw.extend(frame.to_raw());
-                }
-            }
-        }
-
-        raw.freeze()
-    }
-
-    // 解析一个reader中的数据为一个frame，frame应当是完整且格式正确的
-    #[inline]
+impl RESP3 {
+    #[allow(clippy::multiple_bound_locations)]
     #[async_recursion::async_recursion]
-    pub async fn parse_frame<R>(
-        reader: &mut R,
-        buf: &mut BytesMut,
-    ) -> Result<Option<Frame>, FrameError>
-    where
-        R: AsyncReadExt + Unpin + Send,
-    {
-        if buf.is_empty()
-            && reader
-                .read_buf(buf)
-                .await
-                .map_err(|e| FrameError::Other { msg: e.to_string() })?
-                == 0
-        {
+    pub async fn decode_async<R: AsyncRead + Unpin + Send>(
+        io_read: &mut R,
+        src: &mut BytesMut,
+    ) -> io::Result<Option<RESP3>> {
+        if src.is_empty() && io_read.read_buf(src).await? == 0 {
             return Ok(None);
         }
 
-        debug_assert!(!buf.is_empty());
+        debug_assert!(!src.is_empty());
 
-        let res = match buf.get_u8() {
+        let res = match src.get_u8() {
+            b'+' => RESP3::SimpleError(RESP3::decode_string_async(io_read, src).await?),
+            b'-' => RESP3::SimpleError(RESP3::decode_string_async(io_read, src).await?),
+            b':' => RESP3::Integer(RESP3::decode_decimal_async(io_read, src).await?),
+            b'$' => {
+                let len = RESP3::decode_length_async(io_read, src).await?;
+
+                if src.remaining() < len + 2 && io_read.read_buf(src).await? == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "incomplete frame",
+                    ));
+                }
+
+                let res = src.split_to(len);
+                src.advance(2);
+
+                RESP3::Bulk(res.freeze())
+            }
             b'*' => {
-                let len = Frame::parse_decimal(reader, buf).await? as usize;
+                let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
 
                 let mut frames = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let frame = Frame::parse_frame(reader, buf)
+                    let frame = RESP3::decode_async(io_read, src)
                         .await?
-                        .ok_or(FrameError::InCompleteFrame)?;
+                        .ok_or(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "incomplete frame",
+                        ))?;
                     frames.push(frame);
                 }
 
-                Frame::Array(frames)
+                RESP3::Array(frames)
             }
-            b'+' => {
-                let line = Frame::parse_line(reader, buf).await?.to_vec();
-                Frame::new_simple_owned(String::from_utf8(line).map_err(|_| {
-                    // 不是合法的utf8字符串
-                    FrameError::InvalidFormat {
-                        msg: "Invalid simple frame format, not utf8".to_string(),
-                    }
-                })?)
+            b'_' => {
+                if src.remaining() < 2 && io_read.read_buf(src).await? == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "incomplete frame",
+                    ));
+                }
+                src.advance(2);
+                RESP3::Null
             }
-            b'-' => {
-                let line = Frame::parse_line(reader, buf).await?.to_vec();
-                Frame::new_error_owned(String::from_utf8(line).map_err(|_| {
-                    // 不是合法的utf8字符串
-                    FrameError::InvalidFormat {
-                        msg: "Invalid error frame format, not utf8".to_string(),
-                    }
-                })?)
-            }
-            b':' => Frame::Integer(Frame::parse_decimal(reader, buf).await?),
-            b'$' => {
-                let len = Frame::parse_decimal(reader, buf).await?;
-
-                if len == -1 {
-                    let res = Frame::Null;
-
-                    return Ok(Some(res));
+            b'#' => {
+                if src.remaining() < 3 && io_read.read_buf(src).await? == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "incomplete frame",
+                    ));
                 }
 
-                let len: usize = if let Ok(len) = len.try_into() {
-                    len
-                } else {
-                    // 读取的len为负数，说明frame格式错误
-                    return Err(FrameError::InvalidFormat {
-                        msg: "Invalid bulk frame format, len is negative".to_string(),
-                    });
+                let b = match src.get_u8() {
+                    b't' => true,
+                    b'f' => false,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "invalid boolean value",
+                        ));
+                    }
                 };
 
-                if buf.remaining() < len + 2 {
-                    reader
-                        .read_buf(buf)
-                        .await
-                        .map_err(|_| FrameError::InCompleteFrame)?;
+                src.advance(2);
+                RESP3::Boolean(b)
+            }
+            b',' => {
+                let line = RESP3::decode_line_async(io_read, src).await?;
+
+                let mut exp_pos = line.len();
+                if let Some(i) = memchr::memchr2(b'e', b'E', &line) {
+                    exp_pos = i;
                 }
 
-                let res = buf.split_to(len);
-                buf.advance(2);
+                let double = atof(&line[..exp_pos])
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid double"))?;
 
-                Frame::new_bulk_owned(res.freeze())
+                let exponent = if exp_pos != line.len() {
+                    let exp = util::atoi(&line[exp_pos + 1..]).map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidData, "invalid exponent")
+                    })?;
+                    Some(exp)
+                } else {
+                    None
+                };
+
+                RESP3::Double { double, exponent }
+            }
+            b'(' => {
+                let line = RESP3::decode_line_async(io_read, src).await?;
+                let n = BigInt::parse_bytes(&line, 10).ok_or(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid big number",
+                ))?;
+                RESP3::BigNumber(n)
+            }
+            b'!' => {
+                let len = RESP3::decode_length_async(io_read, src).await?;
+
+                if src.remaining() < len + 2 && io_read.read_buf(src).await? == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "incomplete frame",
+                    ));
+                }
+
+                let e = src.split_to(len);
+                src.advance(2);
+
+                RESP3::BulkError(e.freeze())
+            }
+            b'=' => {
+                let len = RESP3::decode_length_async(io_read, src).await?;
+
+                if src.remaining() < len + 2 && io_read.read_buf(src).await? == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "incomplete frame",
+                    ));
+                }
+
+                let encoding = src[0..3].try_into().unwrap();
+                src.advance(4);
+
+                let data = src.split_to(len).freeze();
+                src.advance(2);
+
+                RESP3::VerbatimString { encoding, data }
+            }
+            b'%' => {
+                let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
+
+                let mut map = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let k = RESP3::decode_async(io_read, src)
+                        .await?
+                        .ok_or(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "incomplete frame",
+                        ))?;
+                    let v = RESP3::decode_async(io_read, src)
+                        .await?
+                        .ok_or(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "incomplete frame",
+                        ))?;
+                    map.push((k, v));
+                }
+
+                // map的key由客户端保证唯一
+                RESP3::Map(Either::Left(map))
+            }
+            b'~' => {
+                let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
+
+                let mut set = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let frame = RESP3::decode_async(io_read, src)
+                        .await?
+                        .ok_or(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "incomplete frame",
+                        ))?;
+                    set.push(frame);
+                }
+
+                // set的元素由客户端保证唯一
+                RESP3::Set(Either::Left(set))
+            }
+            b'>' => {
+                let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
+
+                let mut frames = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let frame = RESP3::decode_async(io_read, src)
+                        .await?
+                        .ok_or(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "incomplete frame",
+                        ))?;
+                    frames.push(frame);
+                }
+
+                RESP3::Push(frames)
             }
             prefix => {
-                return Err(FrameError::InvalidFormat {
-                    msg: format!("Invalid frame prefix: {}", prefix),
-                });
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid frame prefix: {prefix}"),
+                ));
             }
         };
 
         Ok(Some(res))
     }
 
-    pub fn from_raw(raw: &mut BytesMut) -> Result<Frame, FrameError> {
-        let res = match raw.get_u8() {
-            b'*' => {
-                let len = Frame::parse_decimal_blocking(raw)? as usize;
-
-                let mut frames = Vec::with_capacity(len);
-                for _ in 0..len {
-                    let frame = Frame::from_raw(raw)?;
-                    frames.push(frame);
-                }
-
-                Frame::Array(frames)
-            }
-            b'+' => {
-                let line = Frame::parse_line_blocking(raw)?.to_vec();
-                Frame::new_simple_owned(String::from_utf8(line).map_err(|_| {
-                    // 不是合法的utf8字符串
-                    FrameError::InvalidFormat {
-                        msg: "Invalid simple frame format, not utf8".to_string(),
-                    }
-                })?)
-            }
-            b'-' => {
-                let line = Frame::parse_line_blocking(raw)?.to_vec();
-                Frame::new_error_owned(String::from_utf8(line).map_err(|_| {
-                    // 不是合法的utf8字符串
-                    FrameError::InvalidFormat {
-                        msg: "Invalid error frame format, not utf8".to_string(),
-                    }
-                })?)
-            }
-            b':' => Frame::Integer(Frame::parse_decimal_blocking(raw)?),
-            b'$' => {
-                let len = Frame::parse_decimal_blocking(raw)?;
-
-                if len == -1 {
-                    let res = Frame::Null;
-
-                    return Ok(res);
-                }
-
-                let len: usize = if let Ok(len) = len.try_into() {
-                    len
-                } else {
-                    // 读取的len为负数，说明frame格式错误
-                    return Err(FrameError::InvalidFormat {
-                        msg: "Invalid bulk frame format, len is negative".to_string(),
-                    });
-                };
-
-                if raw.remaining() < len + 2 {
-                    return Err(FrameError::InCompleteFrame);
-                }
-
-                let res = raw.split_to(len);
-                raw.advance(2);
-
-                Frame::new_bulk_owned(res.freeze())
-            }
-            prefix => {
-                return Err(FrameError::InvalidFormat {
-                    msg: format!("Invalid frame prefix: {}", prefix),
-                });
-            }
-        };
-
-        Ok(res)
-    }
-
-    #[inline]
-    async fn parse_line<R: AsyncReadExt + Unpin>(
-        reader: &mut R,
-        buf: &mut BytesMut,
-    ) -> Result<BytesMut, FrameError> {
+    async fn decode_line_async<R: AsyncRead + Unpin + Send>(
+        io_read: &mut R,
+        src: &mut BytesMut,
+    ) -> io::Result<BytesMut> {
         loop {
-            if let Some(i) = buf.iter().position(|&b| b == b'\n') {
-                if i > 0 && buf[i - 1] == b'\r' {
-                    let line = buf.split_to(i - 1);
-                    buf.advance(2);
+            if let Some(i) = memchr::memchr(b'\n', src) {
+                if i > 0 && src[i - 1] == b'\r' {
+                    let line = src.split_to(i - 1);
+                    src.advance(2);
 
                     return Ok(line);
                 }
             }
-            if reader
-                .read_buf(buf)
-                .await
-                .map_err(|_| FrameError::InvalidFormat {
-                    msg: "Invalid line format".to_string(),
-                })?
-                == 0
-            {
-                return Err(FrameError::InCompleteFrame);
+
+            if io_read.read_buf(src).await? == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "incomplete frame",
+                ));
             }
         }
     }
 
-    #[inline]
-    fn parse_line_blocking(buf: &mut BytesMut) -> Result<BytesMut, FrameError> {
-        loop {
-            if let Some(i) = buf.iter().position(|&b| b == b'\n') {
-                if i > 0 && buf[i - 1] == b'\r' {
-                    let line = buf.split_to(i - 1);
-                    buf.advance(2);
+    async fn decode_decimal_async<R: AsyncRead + Unpin + Send>(
+        io_read: &mut R,
+        src: &mut BytesMut,
+    ) -> io::Result<Int> {
+        let line = RESP3::decode_line_async(io_read, src).await?;
+        let decimal = util::atoi(&line)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid integer"))?;
+        Ok(decimal)
+    }
 
-                    return Ok(line);
-                }
+    async fn decode_length_async<R: AsyncRead + Unpin + Send>(
+        io_read: &mut R,
+        src: &mut BytesMut,
+    ) -> io::Result<usize> {
+        let line = RESP3::decode_line_async(io_read, src).await?;
+        let len = util::atoi(&line)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid length"))?;
+        Ok(len)
+    }
+
+    async fn decode_string_async<R: AsyncRead + Unpin + Send>(
+        io_read: &mut R,
+        src: &mut BytesMut,
+    ) -> io::Result<String> {
+        let line = RESP3::decode_line_async(io_read, src).await?;
+        let string = String::from_utf8(line.to_vec())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid string"))?;
+        Ok(string)
+    }
+}
+
+impl<B: AsRef<[u8]>, S: AsRef<str>> Hash for RESP3<B, S> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            RESP3::SimpleString(s) => s.as_ref().hash(state),
+            RESP3::SimpleError(e) => e.as_ref().hash(state),
+            RESP3::Integer(n) => n.hash(state),
+            RESP3::Bulk(b) => b.as_ref().hash(state),
+            RESP3::Array(frames) => frames.hash(state),
+            RESP3::Null => state.write_u8(0),
+            RESP3::Boolean(b) => b.hash(state),
+            RESP3::Double { double, exponent } => {
+                double.to_bits().hash(state);
+                exponent.hash(state);
             }
-        }
-    }
-
-    #[inline]
-    async fn parse_decimal<R: AsyncReadExt + Unpin>(
-        reader: &mut R,
-        buf: &mut BytesMut,
-    ) -> Result<Int, FrameError> {
-        let line = Frame::parse_line(reader, buf).await?;
-        util::atoi(line.as_ref()).map_err(|_| FrameError::InvalidFormat {
-            msg: "Invalid integer format".to_string(),
-        })
-    }
-
-    #[inline]
-    fn parse_decimal_blocking(buf: &mut BytesMut) -> Result<Int, FrameError> {
-        let line = Frame::parse_line_blocking(buf)?;
-        util::atoi(line.as_ref()).map_err(|_| FrameError::InvalidFormat {
-            msg: "Invalid integer format".to_string(),
-        })
-    }
-}
-
-/// Simple变体的new and get方法
-impl Frame {
-    #[inline]
-    pub fn new_simple_owned(str: String) -> Self {
-        Frame::Simple(Cow::Owned(str))
-    }
-
-    #[inline]
-    pub fn new_simple_borrowed(str: &'static str) -> Self {
-        Frame::Simple(Cow::Borrowed(str))
-    }
-
-    // 获取simple的引用
-    #[inline]
-    pub fn on_simple(&self) -> Result<&str, FrameError> {
-        match self {
-            Frame::Simple(s) => Ok(s),
-            _ => Err(FrameError::NotSimple),
-        }
-    }
-
-    // 获取simple的可变引用
-    #[inline]
-    pub fn on_simple_mut(&mut self) -> Result<&mut String, FrameError> {
-        match self {
-            Frame::Simple(s) => Ok(s.to_mut()),
-
-            _ => Err(FrameError::NotSimple),
-        }
-    }
-
-    #[inline]
-    pub fn into_simple(self) -> Result<String, FrameError> {
-        match self {
-            Frame::Simple(s) => Ok(s.into_owned()),
-            _ => Err(FrameError::NotSimple),
-        }
-    }
-}
-
-/// Error变体的new and get方法
-impl Frame {
-    #[inline]
-    pub fn new_error_owned(str: String) -> Self {
-        Frame::Error(Cow::Owned(str))
-    }
-
-    #[inline]
-    pub fn new_error_borrowed(str: &'static str) -> Self {
-        Frame::Error(Cow::Borrowed(str))
-    }
-
-    #[inline]
-    pub fn on_error(&self) -> Result<&str, FrameError> {
-        match self {
-            Frame::Error(e) => Ok(e),
-            _ => Err(FrameError::NotError),
-        }
-    }
-
-    #[inline]
-    pub fn on_error_mut(&mut self) -> Result<&mut String, FrameError> {
-        match self {
-            Frame::Error(e) => Ok(e.to_mut()),
-            _ => Err(FrameError::NotError),
-        }
-    }
-
-    #[inline]
-    pub fn into_error(self) -> Result<String, FrameError> {
-        match self {
-            Frame::Error(e) => Ok(e.into_owned()),
-            _ => Err(FrameError::NotError),
-        }
-    }
-}
-
-impl Frame {
-    #[inline]
-    pub fn new_integer(num: Int) -> Self {
-        Frame::Integer(num)
-    }
-
-    #[inline]
-    pub fn on_integer(&self) -> Result<Int, FrameError> {
-        match self {
-            Frame::Integer(n) => Ok(*n),
-            _ => Err(FrameError::NotInteger),
-        }
-    }
-}
-
-impl Frame {
-    #[inline]
-    pub fn new_null() -> Self {
-        Frame::Null
-    }
-}
-
-/// Bulk变体的new and get方法
-impl Frame {
-    #[inline]
-    pub fn new_bulk_owned(bytes: Bytes) -> Self {
-        Frame::Bulk(bytes)
-    }
-
-    #[inline]
-    pub fn new_bulk_by_copying(bytes: &[u8]) -> Self {
-        Frame::Bulk(Bytes::copy_from_slice(bytes))
-    }
-
-    #[inline]
-    pub fn new_bulk_from_static(bytes: &'static [u8]) -> Self {
-        Frame::Bulk(Bytes::from_static(bytes))
-    }
-
-    #[inline]
-    pub fn on_bulk(&self) -> Result<&Bytes, FrameError> {
-        match self {
-            Frame::Bulk(b) => Ok(b),
-            _ => Err(FrameError::NotBulk),
-        }
-    }
-
-    #[inline]
-    pub fn to_bulk(&self) -> Result<Bytes, FrameError> {
-        match self {
-            Frame::Bulk(b) => Ok(b.clone()),
-            _ => Err(FrameError::NotBulk),
-        }
-    }
-}
-
-/// Array变体的new and get方法
-impl Frame {
-    #[inline]
-    pub fn new_array(frames: Vec<Frame>) -> Self {
-        Frame::Array(frames)
-    }
-
-    pub fn new_bulks(bytes: &[Bytes]) -> Frame {
-        Frame::Array(
-            bytes
-                .iter()
-                .map(|b| Frame::new_bulk_owned(b.clone()))
-                .collect(),
-        )
-    }
-
-    pub fn new_bulks_by_copying(bytes: &[&[u8]]) -> Frame {
-        Frame::Array(
-            bytes
-                .iter()
-                .map(|b| Frame::new_bulk_by_copying(b))
-                .collect(),
-        )
-    }
-
-    pub fn new_bulks_from_static(bytes: &'static [&'static [u8]]) -> Frame {
-        Frame::Array(
-            bytes
-                .iter()
-                .map(|b| Frame::new_bulk_from_static(b))
-                .collect(),
-        )
-    }
-
-    pub fn on_array(&self) -> Result<&Vec<Frame>, FrameError> {
-        match self {
-            Frame::Array(frames) => Ok(frames),
-            _ => Err(FrameError::NotArray),
-        }
-    }
-
-    // 不能返回Frame<'b>，因为&'a mut T的生命周期对于T是不变的
-    pub fn on_array_mut(&mut self) -> Result<&mut Vec<Frame>, FrameError> {
-        match self {
-            Frame::Array(frames) => Ok(frames),
-            _ => Err(FrameError::NotArray),
-        }
-    }
-
-    pub fn into_array(self) -> Result<Vec<Frame>, FrameError> {
-        match self {
-            Frame::Array(frames) => Ok(frames.clone()),
-            _ => Err(FrameError::NotArray),
-        }
-    }
-}
-
-impl Frame {
-    pub fn into_bulks(self) -> Result<Bulks, FrameError> {
-        match self {
-            Frame::Array(frames) => Ok(Bulks {
-                start: 0,
-                end: frames.len() - 1,
-                frames,
-            }),
-            _ => Err(FrameError::NotArray),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Bulks {
-    start: usize,
-    end: usize,
-    pub frames: Vec<Frame>,
-}
-
-impl Default for Bulks {
-    fn default() -> Self {
-        Self {
-            start: 1,
-            end: 0,
-            frames: Vec::new(),
-        }
-    }
-}
-
-impl Bulks {
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.end - self.start + 1
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.start > self.end
-    }
-
-    pub fn skip(&mut self, n: usize) {
-        self.start += n;
-    }
-
-    pub fn to_vec(&self) -> Vec<Bytes> {
-        self.frames[self.start..]
-            .iter()
-            .filter_map(|f| match f {
-                Frame::Bulk(b) => Some(b.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    pub fn get(&self, index: usize) -> Option<Bytes> {
-        if self.start + index > self.end {
-            return None;
-        }
-
-        let frame = &self.frames[self.start + index];
-        match frame {
-            Frame::Bulk(b) => Some(b.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn pop_front(&mut self) -> Option<Bytes> {
-        if self.start > self.end {
-            return None;
-        }
-
-        let frame = &self.frames[self.start];
-        self.start += 1;
-        match frame {
-            Frame::Bulk(b) => Some(b.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn pop_back(&mut self) -> Option<Bytes> {
-        if self.start > self.end {
-            return None;
-        }
-
-        let frame = &self.frames[self.end];
-        self.end -= 1;
-        match frame {
-            Frame::Bulk(b) => Some(b.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn swap_remove(&mut self, index: usize) -> Result<Bytes, FrameError> {
-        let res = self.frames.swap_remove(index);
-        self.end -= 1;
-        res.to_bulk()
-    }
-
-    pub fn iter(&mut self) -> impl Iterator<Item = &Bytes> {
-        self.frames[self.start..].iter().filter_map(|f| match f {
-            Frame::Bulk(b) => Some(b),
-            _ => None,
-        })
-    }
-
-    #[inline]
-    pub fn to_raw(self) -> Bytes {
-        Frame::Array(self.frames).to_raw()
-    }
-
-    pub fn into_frame(self) -> Frame {
-        Frame::Array(self.frames)
-    }
-}
-
-impl Iterator for Bulks {
-    type Item = Bytes;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.start > self.end {
-            return None;
-        }
-
-        let frame = &self.frames[self.start];
-        self.start += 1;
-        match frame {
-            Frame::Bulk(b) => Some(b.clone()),
-            _ => None,
-        }
-    }
-}
-
-impl From<Vec<Frame>> for Bulks {
-    fn from(value: Vec<Frame>) -> Self {
-        Self {
-            start: 0,
-            end: value.len() - 1,
-            frames: value,
-        }
-    }
-}
-
-impl From<&[Bytes]> for Bulks {
-    fn from(value: &[Bytes]) -> Self {
-        Self {
-            start: 0,
-            end: value.len() - 1,
-            frames: value
-                .iter()
-                .map(|b| Frame::new_bulk_owned(b.clone()))
-                .collect(),
-        }
-    }
-}
-
-impl From<&[&[u8]]> for Bulks {
-    fn from(value: &[&[u8]]) -> Self {
-        Self {
-            start: 0,
-            end: value.len() - 1,
-            frames: value
-                .iter()
-                .map(|b| Frame::new_bulk_by_copying(b))
-                .collect(),
-        }
-    }
-}
-
-impl From<&[&'static str]> for Bulks {
-    fn from(value: &[&'static str]) -> Self {
-        Self {
-            start: 0,
-            end: value.len() - 1,
-            frames: value
-                .iter()
-                .map(|b| Frame::new_bulk_from_static(b.as_bytes()))
-                .collect(),
-        }
-    }
-}
-
-impl IntoLua<'_> for Frame {
-    fn into_lua(
-        self,
-        lua: &'_ mlua::prelude::Lua,
-    ) -> mlua::prelude::LuaResult<mlua::prelude::LuaValue<'_>> {
-        match self {
-            Frame::Simple(s) => Ok(Value::String(lua.create_string(s.as_ref())?)),
-            Frame::Error(e) => Err(mlua::Error::RuntimeError(e.into_owned())),
-            Frame::Integer(n) => Ok(Value::Integer(n)),
-            Frame::Bulk(b) => {
-                if b.is_empty() {
-                    Ok(Value::Boolean(false))
-                } else {
-                    Ok(Value::String(lua.create_string(b)?))
-                }
+            RESP3::BigNumber(n) => n.hash(state),
+            RESP3::BulkError(e) => e.as_ref().hash(state),
+            RESP3::VerbatimString { encoding, data } => {
+                encoding.hash(state);
+                data.as_ref().hash(state);
             }
-
-            Frame::Null => Ok(Value::Nil),
-            Frame::Array(frames) => {
-                let table = lua.create_table()?;
-                for (i, frame) in frames.into_iter().enumerate() {
-                    table.set(i + 1, frame.into_lua(lua)?)?;
-                }
-                Ok(Value::Table(table))
-            }
+            RESP3::Map(map) => for_both!(map, map =>  map.iter().for_each(|(k, v)| {
+                k.hash(state);
+                v.hash(state);
+            })),
+            RESP3::Set(set) => set.iter().for_each(|f| f.hash(state)),
+            RESP3::Push(frames) => frames.hash(state),
         }
     }
 }
 
-impl FromLuaMulti<'_> for Frame {
-    fn from_lua_multi<'lua>(
-        mut values: mlua::prelude::LuaMultiValue<'lua>,
-        lua: &'lua mlua::prelude::Lua,
-    ) -> mlua::prelude::LuaResult<Self> {
-        // TODO:
-        todo!()
-        //     let value = values.remove(0);
-        //     match value {
-        //         Value::String(s) => Ok(Frame::new_simple_owned(s.to_str()?.to_string())),
-        //         Value::Integer(n) => Ok(Frame::Integer(n)),
-        //         Value::Nil => Ok(Frame::Null),
-        //         Value::Table(t) => {
-        //             let mut frames = Vec::new();
-        //             for i in 1.. {
-        //                 let value = t.get(i)?;
-        //                 if value.is_nil() {
-        //                     break;
-        //                 }
-        //                 frames.push(value.to_lua(lua)?);
-        //             }
-        //
-        //             Ok(Frame::Array(frames))
-        //         }
-        //         _ => Err(mlua::Error::FromLuaConversionError {
-        //             from: value.type_name(),
-        //             to: "Frame",
-        //             message: Some("invalid frame type".to_string()),
-        //         }),
-        //     }
-    }
-}
+impl<B: AsRef<[u8]>, S: AsRef<str>> Eq for RESP3<B, S> {}
 
-#[derive(Debug, Snafu)]
-pub enum FrameError {
-    NotSimple,
-    NotError,
-    NotInteger,
-    NotBulk,
-    NotNull,
-    NotArray,
-    Unowned,
-    InCompleteFrame,
-    #[snafu(display("Invalid frame: {}", msg))]
-    InvalidFormat {
-        msg: String,
-    },
-    #[snafu(display("Invalid frame: {}", msg))]
-    Other {
-        msg: String,
-    },
-}
-
-impl From<FrameError> for tokio::io::Error {
-    fn from(val: FrameError) -> Self {
-        tokio::io::Error::new(tokio::io::ErrorKind::InvalidData, val)
-    }
-}
-
-impl TryFrom<CmdError> for Frame {
-    type Error = ServerError;
-
-    fn try_from(cmd_err: CmdError) -> Result<Self, ServerError> {
-        let frame = match cmd_err {
-            CmdError::IoErr { source, loc } => return Err(format!("{}: {}", loc, source).into()),
-            // 命令执行失败，向客户端返回错误码
-            CmdError::ErrorCode { code } => Frame::new_integer(code),
-            // 命令执行失败，向客户端返回空值
-            CmdError::Null => Frame::new_null(),
-            // 命令执行失败，向客户端返回错误信息
-            CmdError::Err { source } => Frame::new_error_owned(source.to_string()),
-        };
-
-        Ok(frame)
+impl<B: AsRef<[u8]>, S: AsRef<str>> PartialEq for RESP3<B, S> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RESP3::SimpleString(s1), RESP3::SimpleString(s2)) => s1.as_ref() == s2.as_ref(),
+            (RESP3::SimpleError(e1), RESP3::SimpleError(e2)) => e1.as_ref() == e2.as_ref(),
+            (RESP3::Integer(n1), RESP3::Integer(n2)) => n1 == n2,
+            (RESP3::Bulk(b1), RESP3::Bulk(b2)) => b1.as_ref() == b2.as_ref(),
+            (RESP3::Array(frames1), RESP3::Array(frames2)) => frames1 == frames2,
+            (RESP3::Null, RESP3::Null) => true,
+            (RESP3::Boolean(b1), RESP3::Boolean(b2)) => b1 == b2,
+            (
+                RESP3::Double {
+                    double: d1,
+                    exponent: e1,
+                },
+                RESP3::Double {
+                    double: d2,
+                    exponent: e2,
+                },
+            ) => d1 == d2 && e1 == e2,
+            (RESP3::BigNumber(n1), RESP3::BigNumber(n2)) => n1 == n2,
+            (RESP3::BulkError(e1), RESP3::BulkError(e2)) => e1.as_ref() == e2.as_ref(),
+            (
+                RESP3::VerbatimString {
+                    encoding: e1,
+                    data: d1,
+                },
+                RESP3::VerbatimString {
+                    encoding: e2,
+                    data: d2,
+                },
+            ) => e1 == e2 && d1.as_ref() == d2.as_ref(),
+            (RESP3::Map(map1), RESP3::Map(map2)) => map1 == map2,
+            (RESP3::Set(set1), RESP3::Set(set2)) => set1 == set2,
+            (RESP3::Push(frames1), RESP3::Push(frames2)) => frames1 == frames2,
+            _ => false,
+        }
     }
 }
 
 #[cfg(test)]
 mod frame_tests {
-    use super::*;
+    // use crate::server::Handler;
+    //
+    // use super::*;
 
-    #[test]
-    fn size_test() {
-        use crate::frame::Frame;
-        let frame1 = Frame::new_simple_borrowed("OK"); // +OK\r\n
-        assert_eq!(frame1.size(), 5);
-
-        let frame2 = Frame::new_error_borrowed("ERR"); // -ERR\r\n
-        assert_eq!(frame2.size(), 6);
-
-        let frame3 = Frame::new_integer(100); // :100\r\n
-        assert_eq!(frame3.size(), 6);
-
-        let frame4 = Frame::new_bulk_from_static(b"Hello"); // $5\r\nHello\r\n
-        assert_eq!(frame4.size(), 11);
-
-        let frame5 = Frame::new_null(); // $-1\r\n
-        assert_eq!(frame5.size(), 5);
-
-        // *5\r\n+OK\r\n-ERR\r\n:100\r\n$5\r\nHello\r\n$-1\r\n
-        let frame6 = Frame::new_array(vec![frame1, frame2, frame3, frame4, frame5]);
-        assert_eq!(frame6.size(), 37);
-    }
+    // TODO:
+    // #[tokio::test]
+    // async fn test_resp3() {
+    //     let frame = Frame::Array(vec![
+    //         Frame::SimpleString("OK".to_string()),
+    //         Frame::Integer(123),
+    //         Frame::Bulk(Bytes::from("hello".as_bytes())),
+    //         Frame::Null,
+    //         Frame::Boolean(true),
+    //         Frame::Double {
+    //             double: 3.14,
+    //             exponent: None,
+    //         },
+    //         Frame::BigNumber(BigInt::from(1234567890)),
+    //         Frame::BulkError(Bytes::from("error".as_bytes())),
+    //         Frame::VerbatimString {
+    //             encoding: *b"txt",
+    //             data: Bytes::from("hello".as_bytes()),
+    //         },
+    //         Frame::Map(Either::Right(
+    //             vec![
+    //                 (Frame::SimpleString("key1".to_string()), Frame::Integer(1)),
+    //                 (Frame::SimpleString("key2".to_string()), Frame::Integer(2)),
+    //             ]
+    //             .into_iter()
+    //             .collect(),
+    //         )),
+    //         Frame::Set(Either::Right(
+    //             vec![
+    //                 Frame::SimpleString("key1".to_string()),
+    //                 Frame::SimpleString("key2".to_string()),
+    //             ]
+    //             .into_iter()
+    //             .collect(),
+    //         )),
+    //         Frame::Push(vec![
+    //             Frame::SimpleString("OK".to_string()),
+    //             Frame::Integer(123),
+    //         ]),
+    //     ]);
+    //
+    //     let mut buf = BytesMut::new();
+    //     frame.encode_buf(&mut buf);
+    //
+    //     let (handler, client) = Handler::new_fake();
+    //
+    //     let mut src = BytesMut::new();
+    //     // let decoded = RESP3::decode_async(&mut cursor, &mut src)
+    //     //     .await
+    //     //     .unwrap()
+    //     //     .unwrap();
+    //
+    //     // assert_eq!(frame, decoded);
+    // }
 }

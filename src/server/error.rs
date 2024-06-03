@@ -1,5 +1,3 @@
-use crate::frame::FrameError;
-
 #[derive(Debug)]
 pub struct ServerError(String);
 
@@ -20,12 +18,6 @@ impl From<String> for ServerError {
 impl From<&str> for ServerError {
     fn from(s: &str) -> Self {
         Self(s.to_string())
-    }
-}
-
-impl From<FrameError> for ServerError {
-    fn from(e: FrameError) -> Self {
-        Self(e.to_string())
     }
 }
 
