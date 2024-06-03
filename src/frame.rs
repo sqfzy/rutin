@@ -5,7 +5,7 @@ use crate::{
 };
 use ahash::{AHashMap, AHashSet};
 use bytes::{Buf, Bytes, BytesMut};
-use either::{for_both, Either};
+use either::{for_both, Either, Left, Right};
 use num_bigint::BigInt;
 use std::{
     hash::Hash,
@@ -15,29 +15,22 @@ use std::{
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::bytes::BufMut;
 
-type RespMap<B, S> = Either<Vec<(RESP3<B, S>, RESP3<B, S>)>, AHashMap<RESP3<B, S>, RESP3<B, S>>>;
-type RespSet<B, S> = Either<Vec<RESP3<B, S>>, AHashSet<RESP3<B, S>>>;
-
 #[derive(Clone, Debug)]
-pub enum RESP3<B = Bytes, S = String>
-where
-    B: AsRef<[u8]>,
-    S: AsRef<str>,
-{
+pub enum RESP3 {
     // +<str>\r\n
-    SimpleString(S),
+    SimpleString(Either<&'static str, String>),
 
     // -<err>\r\n
-    SimpleError(S),
+    SimpleError(Either<&'static str, String>),
 
     // :[<+|->]<value>\r\n
     Integer(Int),
 
     // $<length>\r\n<data>\r\n
-    Bulk(B),
+    Bulk(Either<Bytes, BytesMut>),
 
     // *<number-of-elements>\r\n<element-1>...<element-n>
-    Array(Vec<RESP3<B, S>>),
+    Array(Vec<RESP3>),
 
     // _\r\n
     Null,
@@ -46,40 +39,48 @@ where
     Boolean(bool),
 
     // ,[<+|->]<integral>[.<fractional>][<E|e>[sign]<exponent>]\r\n
-    Double { double: f64, exponent: Option<Int> },
+    Double {
+        double: f64,
+        exponent: Option<Int>,
+    },
 
     // ([+|-]<number>\r\n
     BigNumber(BigInt),
 
     // !<length>\r\n<error>\r\n
-    BulkError(B),
+    BulkError(Either<Bytes, BytesMut>),
 
     // =<length>\r\n<encoding>:<data>\r\n
     // 类似于Bulk，但是多了一个encoding字段用于指定数据的编码方式
-    VerbatimString { encoding: [u8; 3], data: B },
+    VerbatimString {
+        encoding: [u8; 3],
+        data: Either<Bytes, BytesMut>,
+    },
 
     // %<number-of-entries>\r\n<key-1><value-1>...<key-n><value-n>
     // Left: 由用户保证传入的key唯一；Right: 由Frame本身保证key唯一
-    Map(RespMap<B, S>),
+    Map(Either<Vec<(RESP3, RESP3)>, AHashMap<RESP3, RESP3>>),
 
     // ~<number-of-elements>\r\n<element-1>...<element-n>
     // Left: 由用户保证传入的元素唯一；Right: 由Frame本身保证元素唯一
-    Set(RespSet<B, S>),
+    Set(Either<Vec<RESP3>, AHashSet<RESP3>>),
 
     // ><number-of-elements>\r\n<element-1>...<element-n>
     // 通常用于服务端主动向客户端推送消息
-    Push(Vec<RESP3<B, S>>),
+    Push(Vec<RESP3>),
 }
 
 impl RESP3 {
     #[inline]
     pub fn size(&self) -> usize {
         match self {
-            RESP3::SimpleString(s) => s.len() + 3, // 1 + s.len() + 2
-            RESP3::SimpleError(e) => e.len() + 3,  // 1 + e.len() + 2
+            RESP3::SimpleString(s) => for_both!(s, s => s.len() + 3), // 1 + s.len() + 2
+            RESP3::SimpleError(e) => for_both!(e, e => e.len() + 3),  // 1 + e.len() + 2
             RESP3::Integer(n) => itoa::Buffer::new().format(*n).len() + 3, // 1 + n.len() + 2
-            RESP3::Bulk(b) => b.len() + itoa::Buffer::new().format(b.len()).len() + 5, //  1 + len.len() + 2 + len + 2
-            RESP3::Null => 3,                                                          // 1 + 2
+            RESP3::Bulk(b) => for_both!(b, b => {
+               b.len() + itoa::Buffer::new().format(b.len()).len() + 5
+            }), //  1 + len.len() + 2 + len + 2
+            RESP3::Null => 3,                                         // 1 + 2
             RESP3::Array(frames) => {
                 itoa::Buffer::new().format(frames.len()).len()
                     + 3
@@ -94,7 +95,9 @@ impl RESP3 {
                 len
             }
             RESP3::BigNumber(n) => n.to_str_radix(10).len() + 3, // 1 + len + 2
-            RESP3::BulkError(e) => e.len() + itoa::Buffer::new().format(e.len()).len() + 5, // 1 + len.len() + 2 + len + 2
+            RESP3::BulkError(e) => for_both!(e, e => {
+               e.len() + itoa::Buffer::new().format(e.len()).len() + 5
+            }), // 1 + len.len() + 2 + len + 2
             RESP3::VerbatimString { data, .. } => {
                 data.len() + itoa::Buffer::new().format(data.len()).len() + 9 // 1 + len.len() + 2 + 3 + 1 + data.len() + 2
             }
@@ -116,18 +119,14 @@ impl RESP3 {
         }
     }
 
-    pub fn on_simple_string() {}
-}
-
-impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
-    pub fn as_simple_string(&self) -> Option<&S> {
+    pub fn as_simple_string(&self) -> Option<&str> {
         match self {
-            RESP3::SimpleString(s) => Some(s),
+            RESP3::SimpleString(s) => for_both!(s, s => Some(s)),
             _ => None,
         }
     }
 
-    pub fn as_simple_error(&self) -> Option<&S> {
+    pub fn as_simple_error(&self) -> Option<&str> {
         match self {
             RESP3::SimpleError(e) => Some(e),
             _ => None,
@@ -141,14 +140,27 @@ impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
         }
     }
 
-    pub fn as_bulk(&self) -> Option<&B> {
+    pub fn as_bulk(&self) -> Option<Bytes> {
         match self {
-            RESP3::Bulk(b) => Some(b),
+            RESP3::Bulk(b) => match b {
+                Either::Left(b) => Some(b.clone()),
+                Either::Right(b) => Some(b.clone().freeze()),
+            },
             _ => None,
         }
     }
 
-    pub fn as_array(&self) -> Option<&Vec<RESP3<B, S>>> {
+    pub fn as_bulk_mut(&mut self) -> Option<&mut BytesMut> {
+        match self {
+            RESP3::Bulk(b) => match b {
+                Either::Left(_) => None,
+                Either::Right(b) => Some(b),
+            },
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&Vec<RESP3>> {
         match self {
             RESP3::Array(frames) => Some(frames),
             _ => None,
@@ -183,41 +195,46 @@ impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
         }
     }
 
-    pub fn as_bulk_error(&self) -> Option<&B> {
+    pub fn as_bulk_error(&self) -> Option<&[u8]> {
         match self {
-            RESP3::BulkError(e) => Some(e),
+            RESP3::BulkError(e) => for_both!(e, e => Some(e)),
             _ => None,
         }
     }
 
-    pub fn as_verbatim_string(&self) -> Option<(&[u8; 3], &B)> {
+    pub fn as_verbatim_string(&self) -> Option<(&[u8; 3], &[u8])> {
         match self {
-            RESP3::VerbatimString { encoding, data } => Some((encoding, data)),
+            RESP3::VerbatimString { encoding, data } => {
+                for_both!(data, data => Some((encoding, data)))
+            }
             _ => None,
         }
     }
 
-    pub fn as_map(&self) -> Option<&RespMap<B, S>> {
+    pub fn as_map(&self) -> Option<&Either<Vec<(RESP3, RESP3)>, AHashMap<RESP3, RESP3>>> {
         match self {
             RESP3::Map(map) => Some(map),
             _ => None,
         }
     }
 
-    pub fn as_set(&self) -> Option<&RespSet<B, S>> {
+    pub fn as_set(&self) -> Option<&Either<Vec<RESP3>, AHashSet<RESP3>>> {
         match self {
             RESP3::Set(set) => Some(set),
             _ => None,
         }
     }
 
-    pub fn as_push(&self) -> Option<&Vec<RESP3<B, S>>> {
+    pub fn as_push(&self) -> Option<&Vec<RESP3>> {
         match self {
             RESP3::Push(frames) => Some(frames),
             _ => None,
         }
     }
+}
 
+// 编码
+impl RESP3 {
     #[inline]
     pub fn encode(&self) -> BytesMut {
         let mut buf = BytesMut::with_capacity(64);
@@ -230,12 +247,12 @@ impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
         match self {
             RESP3::SimpleString(s) => {
                 buf.put_u8(b'+');
-                buf.put_slice(s.as_ref().as_bytes());
+                buf.put_slice(for_both!(s, s => s.as_bytes()));
                 buf.put_slice(b"\r\n");
             }
             RESP3::SimpleError(e) => {
                 buf.put_u8(b'-');
-                buf.put_slice(e.as_ref().as_bytes());
+                buf.put_slice(for_both!(e, e => e.as_bytes()));
                 buf.put_slice(b"\r\n");
             }
             RESP3::Integer(n) => {
@@ -245,9 +262,13 @@ impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
             }
             RESP3::Bulk(b) => {
                 buf.put_u8(b'$');
-                buf.put_slice(itoa::Buffer::new().format(b.as_ref().len()).as_bytes());
+                buf.put_slice(
+                    itoa::Buffer::new()
+                        .format(for_both!(b, b => b.len()))
+                        .as_bytes(),
+                );
                 buf.put_slice(b"\r\n");
-                buf.put_slice(b.as_ref());
+                buf.put_slice(for_both!(b, b => &b));
                 buf.put_slice(b"\r\n");
             }
             RESP3::Array(frames) => {
@@ -286,18 +307,26 @@ impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
             }
             RESP3::BulkError(e) => {
                 buf.put_u8(b'!');
-                buf.put_slice(itoa::Buffer::new().format(e.as_ref().len()).as_bytes());
+                buf.put_slice(
+                    itoa::Buffer::new()
+                        .format(for_both!(e, e => e.len()))
+                        .as_bytes(),
+                );
                 buf.put_slice(b"\r\n");
-                buf.put_slice(e.as_ref());
+                buf.put_slice(for_both!(e, e => &e));
                 buf.put_slice(b"\r\n");
             }
             RESP3::VerbatimString { encoding, data } => {
                 buf.put_u8(b'=');
-                buf.put_slice(itoa::Buffer::new().format(data.as_ref().len()).as_bytes());
+                buf.put_slice(
+                    itoa::Buffer::new()
+                        .format(for_both!(data, data => data.len()))
+                        .as_bytes(),
+                );
                 buf.put_slice(b"\r\n");
                 buf.put_slice(encoding);
                 buf.put_u8(b':');
-                buf.put_slice(data.as_ref());
+                buf.put_slice(for_both!(data, data => &data));
                 buf.put_slice(b"\r\n");
             }
             RESP3::Map(map) => for_both!(
@@ -335,6 +364,7 @@ impl<B: AsRef<[u8]>, S: AsRef<str>> RESP3<B, S> {
     }
 }
 
+// 解码
 impl RESP3 {
     #[allow(clippy::multiple_bound_locations)]
     #[async_recursion::async_recursion]
@@ -349,8 +379,8 @@ impl RESP3 {
         debug_assert!(!src.is_empty());
 
         let res = match src.get_u8() {
-            b'+' => RESP3::SimpleError(RESP3::decode_string_async(io_read, src).await?),
-            b'-' => RESP3::SimpleError(RESP3::decode_string_async(io_read, src).await?),
+            b'+' => RESP3::SimpleError(Right(RESP3::decode_string_async(io_read, src).await?)),
+            b'-' => RESP3::SimpleError(Right(RESP3::decode_string_async(io_read, src).await?)),
             b':' => RESP3::Integer(RESP3::decode_decimal_async(io_read, src).await?),
             b'$' => {
                 let len = RESP3::decode_length_async(io_read, src).await?;
@@ -365,7 +395,7 @@ impl RESP3 {
                 let res = src.split_to(len);
                 src.advance(2);
 
-                RESP3::Bulk(res.freeze())
+                RESP3::Bulk(Right(res))
             }
             b'*' => {
                 let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
@@ -458,7 +488,7 @@ impl RESP3 {
                 let e = src.split_to(len);
                 src.advance(2);
 
-                RESP3::BulkError(e.freeze())
+                RESP3::BulkError(Right(e))
             }
             b'=' => {
                 let len = RESP3::decode_length_async(io_read, src).await?;
@@ -473,10 +503,13 @@ impl RESP3 {
                 let encoding = src[0..3].try_into().unwrap();
                 src.advance(4);
 
-                let data = src.split_to(len).freeze();
+                let data = src.split_to(len);
                 src.advance(2);
 
-                RESP3::VerbatimString { encoding, data }
+                RESP3::VerbatimString {
+                    encoding,
+                    data: Right(data),
+                }
             }
             b'%' => {
                 let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
@@ -499,7 +532,7 @@ impl RESP3 {
                 }
 
                 // map的key由客户端保证唯一
-                RESP3::Map(Either::Left(map))
+                RESP3::Map(Left(map))
             }
             b'~' => {
                 let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
@@ -516,7 +549,7 @@ impl RESP3 {
                 }
 
                 // set的元素由客户端保证唯一
-                RESP3::Set(Either::Left(set))
+                RESP3::Set(Left(set))
             }
             b'>' => {
                 let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
@@ -599,7 +632,7 @@ impl RESP3 {
     }
 }
 
-impl<B: AsRef<[u8]>, S: AsRef<str>> Hash for RESP3<B, S> {
+impl Hash for RESP3 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
             RESP3::SimpleString(s) => s.as_ref().hash(state),
@@ -629,9 +662,9 @@ impl<B: AsRef<[u8]>, S: AsRef<str>> Hash for RESP3<B, S> {
     }
 }
 
-impl<B: AsRef<[u8]>, S: AsRef<str>> Eq for RESP3<B, S> {}
+impl Eq for RESP3 {}
 
-impl<B: AsRef<[u8]>, S: AsRef<str>> PartialEq for RESP3<B, S> {
+impl PartialEq for RESP3 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (RESP3::SimpleString(s1), RESP3::SimpleString(s2)) => s1.as_ref() == s2.as_ref(),

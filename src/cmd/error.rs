@@ -1,13 +1,14 @@
 pub type CmdResult<T> = Result<T, CmdError>;
 
 use crate::{frame::RESP3, server::ServerError, shared::db::DbError, Int};
+use either::Either::Right;
 use snafu::{Location, Snafu};
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
 pub enum CmdError {
     ServerErr {
-        msg: ServerError,
+        source: ServerError,
         #[snafu(implicit)]
         loc: Location,
     },
@@ -66,13 +67,15 @@ impl TryInto<RESP3> for CmdError {
 
     fn try_into(self) -> Result<RESP3, Self::Error> {
         let frame = match self {
-            CmdError::ServerErr { source, loc } => return Err(format!("{}: {}", loc, source).into()),
+            CmdError::ServerErr { source, loc } => {
+                return Err(format!("{}: {}", loc, source).into())
+            }
             // 命令执行失败，向客户端返回错误码
             CmdError::ErrorCode { code } => RESP3::Integer(code),
             // 命令执行失败，向客户端返回空值
             CmdError::Null => RESP3::Null,
             // 命令执行失败，向客户端返回错误信息
-            CmdError::Err { source } => RESP3::SimpleError(source.to_string()),
+            CmdError::Err { source } => RESP3::SimpleError(Right(source.to_string())),
         };
 
         Ok(frame)

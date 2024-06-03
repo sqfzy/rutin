@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed,
+        CmdExecutor, CmdType, CmdUnparsed, Mutable,
     },
     connection::AsyncStream,
     frame::RESP3,
@@ -11,6 +11,7 @@ use crate::{
     util, Id,
 };
 use bytes::Bytes;
+use either::Either::{Left, Right};
 
 /// # Reply:
 ///
@@ -47,19 +48,21 @@ impl CmdExecutor for Ping {
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let res = match self.msg {
-            Some(msg) => RESP3::SimpleString(String::from_utf8_lossy(&msg).to_string()),
-            None => RESP3::SimpleString("PONG"),
+            Some(msg) => RESP3::SimpleString(Right(String::from_utf8_lossy(&msg).to_string())),
+            None => RESP3::SimpleString(Left("PONG")),
         };
 
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if !args.is_empty() && args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Ping { msg: args.next() })
+        Ok(Ping {
+            msg: args.next(),
+        })
     }
 }
 
@@ -75,10 +78,10 @@ impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
-        Ok(Some(RESP3::Bulk(self.msg)))
+        Ok(Some(RESP3::Bulk(Left(self.msg))))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -217,16 +220,14 @@ impl CmdExecutor for BgSave {
             }
         });
 
-        Ok(Some(RESP3::new_simple_borrowed(
-            "Background saving started",
-        )))
+        Ok(Some(RESP3::SimpleString(Left("Background saving started"))))
     }
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if !args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -311,7 +312,7 @@ impl CmdExecutor for ClientTracking {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
-            return Ok(Some(RESP3::new_simple_borrowed("OK")));
+            return Ok(Some(RESP3::SimpleString(Left("OK"))));
         }
 
         if let Some(redirect) = self.redirect {
@@ -325,14 +326,14 @@ impl CmdExecutor for ClientTracking {
             handler.context.client_track = Some(handler.bg_task_channel.new_sender());
         }
 
-        Ok(Some(RESP3::new_simple_borrowed("OK")))
+        Ok(Some(RESP3::SimpleString(Left("OK"))))
     }
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() > 2 {
             return Err(Err::WrongArgNum.into());
         }

@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{error::Err, CmdError, CmdExecutor, CmdType, CmdUnparsed, ServerErrSnafu},
+    cmd::{error::Err, CmdError, CmdExecutor, CmdType, CmdUnparsed, Mutable, ServerErrSnafu},
     connection::AsyncStream,
     frame::RESP3,
     server::{Handler, ServerError},
@@ -11,6 +11,7 @@ use crate::{
     Id, Int, Key,
 };
 use bytes::Bytes;
+use either::Either::Left;
 use flume::{Receiver, Sender};
 use snafu::{location, OptionExt, ResultExt};
 use std::time::Duration;
@@ -63,7 +64,7 @@ impl CmdExecutor for BLMove {
                     Where::Right => list.push_back(elem.clone()),
                 }
 
-                res = Some(RESP3::Bulk(elem));
+                res = Some(RESP3::Bulk(Left(elem)));
                 Ok(())
             })?;
 
@@ -89,7 +90,7 @@ impl CmdExecutor for BLMove {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 5 {
             return Err(Err::WrongArgNum.into());
         }
@@ -150,7 +151,7 @@ impl CmdExecutor for BLPop {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -158,7 +159,7 @@ impl CmdExecutor for BLPop {
         let timeout = atoi::<u64>(&args.next_back().unwrap())?;
 
         Ok(Self {
-            keys: args.iter().cloned().collect(),
+            keys: args.collect(),
             timeout,
         })
     }
@@ -250,7 +251,7 @@ impl CmdExecutor for LPos {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if !(args.len() == 2 || args.len() == 4 || args.len() == 6 || args.len() == 8) {
             return Err(Err::WrongArgNum.into());
         }
@@ -315,7 +316,7 @@ impl CmdExecutor for LLen {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -346,7 +347,7 @@ impl CmdExecutor for LPop {
 
             if self.count == 1 {
                 if let Some(value) = list.pop_front() {
-                    res = Some(RESP3::Bulk(value));
+                    res = Some(RESP3::Bulk(Left(value)));
                 } else {
                     res = Some(RESP3::Null);
                 }
@@ -354,7 +355,7 @@ impl CmdExecutor for LPop {
                 let mut values = Vec::with_capacity(self.count as usize);
                 for _ in 0..self.count {
                     if let Some(value) = list.pop_front() {
-                        values.push(RESP3::Bulk(value));
+                        values.push(RESP3::Bulk(Left(value)));
                     } else {
                         break;
                     }
@@ -373,7 +374,7 @@ impl CmdExecutor for LPop {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         let len = args.len();
         if len != 1 && len != 2 {
             return Err(Err::WrongArgNum.into());
@@ -422,14 +423,14 @@ impl CmdExecutor for LPush {
         Ok(Some(RESP3::Integer(len as Int)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(Self {
             key: args.next().unwrap(),
-            values: args.iter().cloned().collect(),
+            values: args.collect(),
         })
     }
 }
@@ -507,7 +508,7 @@ impl CmdExecutor for NBLPop {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() < 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -516,7 +517,7 @@ impl CmdExecutor for NBLPop {
         let timeout = atoi::atoi::<u64>(&args.next_back().unwrap()).ok_or(Err::A2IParse)?;
 
         Ok(Self {
-            keys: args.iter().cloned().collect(),
+            keys: args.collect(),
             timeout,
             redirect,
         })
@@ -557,8 +558,8 @@ async fn first_round(keys: &[Key], shared: &Shared) -> Result<Option<RESP3>, Cmd
 
             if let Some(value) = list.pop_front() {
                 res = Some(RESP3::Array(vec![
-                    RESP3::Bulk(key.clone()),
-                    RESP3::Bulk(value),
+                    RESP3::Bulk(Left(key.clone())),
+                    RESP3::Bulk(Left(value)),
                 ]));
             }
 
@@ -594,17 +595,18 @@ async fn pop_timeout_at(
         if let Some(dl) = deadline {
             match tokio::time::timeout_at(dl, key_rx.recv_async()).await {
                 Ok(Ok(key)) => {
-                    let key = key.as_bulk().context(ServerErrSnafu {
-                        msg: "receive frame with invalid format",
-                    })?;
+                    let key = key
+                        .as_bulk()
+                        .ok_or(ServerError::from("receive frame with invalid format"))
+                        .context(ServerErrSnafu)?;
 
                     let update_res = db.update_object(&key, |obj| {
                         let list = obj.on_list_mut()?;
 
                         if let Some(value) = list.pop_front() {
                             res = Some(RESP3::Array(vec![
-                                RESP3::Bulk(key.clone()),
-                                RESP3::Bulk(value),
+                                RESP3::Bulk(Left(key.clone())),
+                                RESP3::Bulk(Left(value)),
                             ]));
                         }
 
@@ -632,17 +634,18 @@ async fn pop_timeout_at(
 
         // 不存在超时时间
         if let Ok(key) = key_rx.recv_async().await {
-            let key = key.as_bulk().context(ServerErrSnafu {
-                msg: "receive frame with invalid format",
-            })?;
+            let key = key
+                .as_bulk()
+                .ok_or(ServerError::from("receive frame with invalid format"))
+                .context(ServerErrSnafu)?;
 
             let update_res = shared.db().update_object(&key, |obj| {
                 let list = obj.on_list_mut()?;
 
                 if let Some(value) = list.pop_front() {
                     res = Some(RESP3::Array(vec![
-                        RESP3::Bulk(key.clone()),
-                        RESP3::Bulk(value),
+                        RESP3::Bulk(Left(key.clone())),
+                        RESP3::Bulk(Left(value)),
                     ]));
                 }
 
@@ -683,7 +686,7 @@ async fn pop_timeout_at(
 //             CmdError::ErrorCode { code } if code == 0
 //         );
 //
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["list", "key1"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["list", "key1"].as_ref())).unwrap();
 //         assert_eq!(
 //             Some(RESP3::Integer(1)),
 //             lpush._execute(&shared).await.unwrap()
@@ -697,7 +700,7 @@ async fn pop_timeout_at(
 //             llen._execute(&shared).await.unwrap()
 //         );
 //
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["list", "key2", "key3"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["list", "key2", "key3"].as_ref())).unwrap();
 //         assert_eq!(
 //             Some(RESP3::Integer(3)),
 //             lpush._execute(&shared).await.unwrap()
@@ -717,33 +720,33 @@ async fn pop_timeout_at(
 //         test_init();
 //         let shared = Shared::default();
 //
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["list", "key1"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["list", "key1"].as_ref())).unwrap();
 //         assert_eq!(
 //             Some(RESP3::Integer(1)),
 //             lpush._execute(&shared).await.unwrap()
 //         );
 //         // key1
 //
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["list", "key2", "key3"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["list", "key2", "key3"].as_ref())).unwrap();
 //         assert_eq!(
 //             Some(RESP3::Integer(3)),
 //             lpush._execute(&shared).await.unwrap()
 //         );
 //         // key3 key2 key1
 //
-//         let lpop = LPop::parse(&mut CmdUnparsed::from(["list"].as_ref())).unwrap();
+//         let lpop = LPop::parse(&mut CmdUnparsed<Mutable>::from(["list"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::new_bulk_from_static(b"key3"),
 //             lpop._execute(&shared).await.unwrap().unwrap()
 //         );
 //
-//         let lpop = LPop::parse(&mut CmdUnparsed::from(["list", "2"].as_ref())).unwrap();
+//         let lpop = LPop::parse(&mut CmdUnparsed<Mutable>::from(["list", "2"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::new_bulks_from_static(&[b"key2", b"key1"]),
 //             lpop._execute(&shared).await.unwrap().unwrap()
 //         );
 //
-//         let lpop = LPop::parse(&mut CmdUnparsed::from(["list"].as_ref())).unwrap();
+//         let lpop = LPop::parse(&mut CmdUnparsed<Mutable>::from(["list"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::new_null(),
 //             lpop._execute(&shared).await.unwrap().unwrap()
@@ -758,7 +761,7 @@ async fn pop_timeout_at(
 //         /* 非阻塞测试 */
 //         /***************/
 //         let (handler, _) = Handler::new_fake();
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(
 //             ["l1", "key1a", "key1", "key1c"].as_ref(),
 //         ))
 //         .unwrap();
@@ -768,7 +771,7 @@ async fn pop_timeout_at(
 //         );
 //         // l1: key1c key1b key1a
 //
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(
 //             ["l2", "key2a", "key2", "key2c"].as_ref(),
 //         ))
 //         .unwrap();
@@ -778,14 +781,14 @@ async fn pop_timeout_at(
 //         );
 //         // l2: key2c key2b key2a
 //
-//         let blpop = BLPop::parse(&mut CmdUnparsed::from(["l1", "l2", "1"].as_ref())).unwrap();
+//         let blpop = BLPop::parse(&mut CmdUnparsed<Mutable>::from(["l1", "l2", "1"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::new_bulks_from_static(&[b"l1", b"key1c"]),
 //             blpop._execute(&handler.shared).await.unwrap().unwrap()
 //         );
 //         // l1: key1b key1a
 //
-//         let blpop = BLPop::parse(&mut CmdUnparsed::from(["l2", "list1", "1"].as_ref())).unwrap();
+//         let blpop = BLPop::parse(&mut CmdUnparsed<Mutable>::from(["l2", "list1", "1"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::new_bulks_from_static(&[b"l2", b"key2c"]),
 //             blpop._execute(&handler.shared).await.unwrap().unwrap()
@@ -797,7 +800,7 @@ async fn pop_timeout_at(
 //         /************************/
 //         let (handler2, _) = Handler::new_fake();
 //         tokio::spawn(async move {
-//             let blpop = BLPop::parse(&mut CmdUnparsed::from(["l3", "0"].as_ref())).unwrap();
+//             let blpop = BLPop::parse(&mut CmdUnparsed<Mutable>::from(["l3", "0"].as_ref())).unwrap();
 //             assert_eq!(
 //                 RESP3::new_bulks_from_static(&[b"l3", b"key"]),
 //                 blpop._execute(&handler2.shared).await.unwrap().unwrap()
@@ -805,7 +808,7 @@ async fn pop_timeout_at(
 //         });
 //
 //         sleep(Duration::from_millis(500)).await;
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["l3", "key"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["l3", "key"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::Integer(1),
 //             lpush._execute(&handler.shared).await.unwrap().unwrap()
@@ -816,7 +819,7 @@ async fn pop_timeout_at(
 //         /************************/
 //         let (handler3, _) = Handler::new_fake();
 //         tokio::spawn(async move {
-//             let blpop = BLPop::parse(&mut CmdUnparsed::from(["l4", "2"].as_ref())).unwrap();
+//             let blpop = BLPop::parse(&mut CmdUnparsed<Mutable>::from(["l4", "2"].as_ref())).unwrap();
 //             assert_eq!(
 //                 RESP3::new_bulks_from_static(&[b"l4", b"key"]),
 //                 blpop._execute(&handler3.shared).await.unwrap().unwrap()
@@ -824,7 +827,7 @@ async fn pop_timeout_at(
 //         });
 //
 //         sleep(Duration::from_millis(500)).await;
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["l4", "key"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["l4", "key"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::Integer(1),
 //             lpush._execute(&handler.shared).await.unwrap().unwrap()
@@ -833,7 +836,7 @@ async fn pop_timeout_at(
 //         /************************/
 //         /* 有超时时间，超时测试 */
 //         /************************/
-//         let blpop = BLPop::parse(&mut CmdUnparsed::from(["null", "1"].as_ref())).unwrap();
+//         let blpop = BLPop::parse(&mut CmdUnparsed<Mutable>::from(["null", "1"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::new_null(),
 //             blpop._execute(&handler.shared).await.unwrap().unwrap()
@@ -849,7 +852,7 @@ async fn pop_timeout_at(
 //         /************/
 //         /* 普通测试 */
 //         /************/
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(
 //             ["l1", "key1a", "key1", "key1c"].as_ref(),
 //         ))
 //         .unwrap();
@@ -859,7 +862,7 @@ async fn pop_timeout_at(
 //         );
 //         // l1: key1c key1b key1a
 //
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(
 //             ["l2", "key2a", "key2", "key2c"].as_ref(),
 //         ))
 //         .unwrap();
@@ -872,18 +875,18 @@ async fn pop_timeout_at(
 //         /**************/
 //         /* 有超时时间 */
 //         /**************/
-//         let nblpop = NBLPop::parse(&mut CmdUnparsed::from(["list3", "2", "0"].as_ref())).unwrap();
+//         let nblpop = NBLPop::parse(&mut CmdUnparsed<Mutable>::from(["list3", "2", "0"].as_ref())).unwrap();
 //         nblpop.execute(&mut handler).await.unwrap();
 //         println!("{:?}", get_event(handler.shared.db(), b"list3").unwrap());
 //
-//         let ping = Ping::parse(&mut CmdUnparsed::default()).unwrap();
+//         let ping = Ping::parse(&mut CmdUnparsed<Mutable>::default()).unwrap();
 //         assert_eq!(
 //             RESP3::new_simple_borrowed("PONG"),
 //             ping._execute(&handler.shared).await.unwrap().unwrap()
 //         );
 //
 //         sleep(Duration::from_millis(500)).await;
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["list3", "key"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["list3", "key"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::Integer(1),
 //             lpush._execute(&handler.shared).await.unwrap().unwrap()
@@ -897,7 +900,7 @@ async fn pop_timeout_at(
 //         /************************/
 //         /* 有超时时间，超时测试 */
 //         /************************/
-//         let nblpop = NBLPop::parse(&mut CmdUnparsed::from(["whatever", "1", "0"].as_ref())).unwrap();
+//         let nblpop = NBLPop::parse(&mut CmdUnparsed<Mutable>::from(["whatever", "1", "0"].as_ref())).unwrap();
 //         nblpop.execute(&mut handler).await.unwrap();
 //         assert_eq!(
 //             RESP3::new_null(),
@@ -907,17 +910,17 @@ async fn pop_timeout_at(
 //         /**************/
 //         /* 无超时时间 */
 //         /**************/
-//         let nblpop = NBLPop::parse(&mut CmdUnparsed::from(["list3", "0", "0"].as_ref())).unwrap();
+//         let nblpop = NBLPop::parse(&mut CmdUnparsed<Mutable>::from(["list3", "0", "0"].as_ref())).unwrap();
 //         nblpop.execute(&mut handler).await.unwrap();
 //
-//         let ping = Ping::parse(&mut CmdUnparsed::default()).unwrap();
+//         let ping = Ping::parse(&mut CmdUnparsed<Mutable>::default()).unwrap();
 //         assert_eq!(
 //             RESP3::new_simple_borrowed("PONG"),
 //             ping._execute(&handler.shared).await.unwrap().unwrap()
 //         );
 //
 //         sleep(Duration::from_millis(500)).await;
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(["list3", "key"].as_ref())).unwrap();
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(["list3", "key"].as_ref())).unwrap();
 //         assert_eq!(
 //             RESP3::Integer(1),
 //             lpush._execute(&handler.shared).await.unwrap().unwrap()
@@ -934,24 +937,24 @@ async fn pop_timeout_at(
 //         test_init();
 //
 //         let shared = Shared::default();
-//         let lpush = LPush::parse(&mut CmdUnparsed::from(
+//         let lpush = LPush::parse(&mut CmdUnparsed<Mutable>::from(
 //             ["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"].as_ref(),
 //         ))
 //         .unwrap();
 //         lpush._execute(&shared).await.unwrap().unwrap();
 //
-//         let lpos = LPos::parse(&mut CmdUnparsed::from(["list", "1"].as_ref())).unwrap();
+//         let lpos = LPos::parse(&mut CmdUnparsed<Mutable>::from(["list", "1"].as_ref())).unwrap();
 //         let res = lpos._execute(&shared).await.unwrap().unwrap();
 //         assert_eq!(res.on_integer().unwrap(), 1);
 //
-//         let lpos = LPos::parse(&mut CmdUnparsed::from(["list", "2", "count", "0"].as_ref())).unwrap();
+//         let lpos = LPos::parse(&mut CmdUnparsed<Mutable>::from(["list", "2", "count", "0"].as_ref())).unwrap();
 //         let res = lpos._execute(&shared).await.unwrap().unwrap();
 //         assert_eq!(
 //             res.into_array().unwrap(),
 //             vec![RESP3::Integer(2), RESP3::Integer(3), RESP3::Integer(4)]
 //         );
 //
-//         let lpos = LPos::parse(&mut CmdUnparsed::from(
+//         let lpos = LPos::parse(&mut CmdUnparsed<Mutable>::from(
 //             ["list", "2", "rank", "2", "count", "2"].as_ref(),
 //         ))
 //         .unwrap();

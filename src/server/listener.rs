@@ -52,6 +52,7 @@ impl Listener {
                     let mut handler = Handler::new(shared, stream, conf);
 
                     tokio::spawn(async move {
+                        // 开始处理连接
                         if let Err(err) = handler.run().await {
                             error!(cause = ?err, "connection error");
                         }
@@ -70,6 +71,7 @@ impl Listener {
                         Handler::new(shared, tls_acceptor.accept(stream).await?, conf);
 
                     tokio::spawn(async move {
+                        // 开始处理连接
                         if let Err(err) = handler.run().await {
                             error!(cause = ?err, "connection error");
                         }

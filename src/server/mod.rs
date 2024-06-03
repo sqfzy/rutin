@@ -56,7 +56,7 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
         conf,
     };
 
-    // 当shutdown触发时，解除主线程的阻塞
+    // 运行服务，阻塞主线程。当shutdown触发时，解除主线程的阻塞
     if let Ok(Err(err)) = shutdown_manager.wrap_cancel(server.run()).await {
         error!(cause = %err, "failed to accept");
         shutdown_manager.trigger_shutdown(()).ok();

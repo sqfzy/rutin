@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed,
+        CmdExecutor, CmdType, CmdUnparsed, Mutable,
     },
     connection::AsyncStream,
     frame::RESP3,
@@ -14,6 +14,7 @@ use crate::{
     Id, Int, Key, EPOCH,
 };
 use bytes::{Bytes, BytesMut};
+use either::Either::Left;
 use rayon::prelude::*;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -63,13 +64,13 @@ impl CmdExecutor for Del {
         Ok(Some(RESP3::Integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(Del {
-            keys: args.iter().cloned().collect(),
+            keys: args.collect(),
         })
     }
 }
@@ -101,10 +102,10 @@ impl CmdExecutor for Dump {
             Ok(())
         })?;
 
-        Ok(Some(RESP3::Bulk(buf.freeze())))
+        Ok(Some(RESP3::Bulk(Left(buf.freeze()))))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -137,13 +138,13 @@ impl CmdExecutor for Exists {
         Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
 
         Ok(Exists {
-            keys: args.iter().cloned().collect(),
+            keys: args.collect(),
         })
     }
 }
@@ -218,7 +219,7 @@ impl CmdExecutor for Expire {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 2 && args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -298,7 +299,7 @@ impl CmdExecutor for ExpireAt {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 2 && args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -356,7 +357,7 @@ impl CmdExecutor for ExpireTime {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -388,18 +389,20 @@ impl CmdExecutor for Keys {
             db.entries()
                 .par_iter()
                 .filter_map(|entry| {
-                    std::str::from_utf8(entry.key())
-                        .ok()
-                        .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
+                    std::str::from_utf8(entry.key()).ok().and_then(|key| {
+                        re.is_match(key)
+                            .then(|| RESP3::Bulk(Left(entry.key().clone())))
+                    })
                 })
                 .collect::<Vec<RESP3>>()
         } else {
             db.entries()
                 .iter()
                 .filter_map(|entry| {
-                    std::str::from_utf8(entry.key())
-                        .ok()
-                        .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
+                    std::str::from_utf8(entry.key()).ok().and_then(|key| {
+                        re.is_match(key)
+                            .then(|| RESP3::Bulk(Left(entry.key().clone())))
+                    })
                 })
                 .collect::<Vec<RESP3>>()
         };
@@ -407,7 +410,7 @@ impl CmdExecutor for Keys {
         Ok(Some(RESP3::Array(matched_keys)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -454,7 +457,8 @@ impl CmdExecutor for NBKeys {
                     .par_iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
+                            re.is_match(key)
+                                .then(|| RESP3::Bulk(Left(entry.key().clone())))
                         })
                     })
                     .collect::<Vec<RESP3>>()
@@ -463,7 +467,8 @@ impl CmdExecutor for NBKeys {
                     .iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
+                            re.is_match(key)
+                                .then(|| RESP3::Bulk(Left(entry.key().clone())))
                         })
                     })
                     .collect::<Vec<RESP3>>()
@@ -478,7 +483,7 @@ impl CmdExecutor for NBKeys {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -519,7 +524,7 @@ impl CmdExecutor for Persist {
         Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -563,7 +568,7 @@ impl CmdExecutor for Pttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -607,7 +612,7 @@ impl CmdExecutor for Ttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -627,13 +632,10 @@ pub struct Type {
     pub key: Key,
 }
 
-impl CmdExecutor<Bytes, &'static str> for Type {
+impl CmdExecutor for Type {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(
-        self,
-        shared: &Shared,
-    ) -> Result<Option<RESP3<Bytes, &'static str>>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut typ = "";
 
         shared.db().visit_object(&self.key, |obj| {
@@ -641,10 +643,10 @@ impl CmdExecutor<Bytes, &'static str> for Type {
             Ok(())
         })?;
 
-        Ok(Some(RESP3::SimpleString(typ)))
+        Ok(Some(RESP3::SimpleString(Left(typ))))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
