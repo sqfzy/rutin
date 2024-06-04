@@ -75,7 +75,7 @@ pub async fn dispatch(
 }
 
 #[inline]
-#[instrument(level = "debug", skip(handler), err)]
+#[instrument(level = "debug", skip(handler), err, ret)]
 pub async fn _dispatch(
     cmd_frame: RESP3,
     handler: &mut Handler<impl AsyncStream>,

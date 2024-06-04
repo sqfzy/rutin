@@ -2,12 +2,17 @@ use rutin::conf;
 
 #[tokio::main]
 async fn main() {
-    // rutin::util::client_test(
-    //     rutin::frame::Frame::new_bulks_from_static(&[b"get", b"a", b"b"])
-    //         .to_raw()
-    //         .as_ref(),
-    // )
-    // .await;
+    #[cfg(feature = "fake_server")]
+    {
+        rutin::util::fake_server().await;
+        return;
+    }
+
+    #[cfg(feature = "fake_client")]
+    {
+        rutin::util::fake_client().await;
+        return;
+    }
 
     let conf = std::sync::Arc::new(conf::Conf::new().unwrap());
 

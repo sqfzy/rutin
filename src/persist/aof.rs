@@ -19,7 +19,6 @@ pub struct AOF {
     file: File,
     shared: Shared,
     conf: Arc<Conf>,
-    buffer: BytesMut,
     shutdown: ShutdownManager<()>,
 }
 
@@ -36,7 +35,6 @@ impl AOF {
                 .create(true)
                 .open(conf.aof.file_path.as_str())
                 .await?,
-            buffer: BytesMut::with_capacity(1024),
             shared,
             conf,
             shutdown,
@@ -62,7 +60,7 @@ impl AOF {
             .await?;
 
         // 将数据保存到临时文件
-        rdb_save(&mut temp_file, self.shared.db(), false).await?;
+        rdb_save(&mut temp_file, self.shared.db(), true).await?;
 
         // 将数据保存到临时文件后，将原来的AOF文件关闭
         self.file = temp_file;
@@ -82,9 +80,8 @@ impl AOF {
         // 为了避免在shutdown的时候，还有数据没有写入到文件中，shutdown时必须等待该函数执行完毕
         let _delay_token = self.shutdown.delay_shutdown_token()?;
 
-        let mut count = 0;
-        let max_count = 2 << aof_conf.max_record_exponent; // 达到最大记录数后，进行rewrite
-
+        let mut curr_aof_size = 0_u128; // 单位为byte
+        let auto_aof_rewrite_min_size = (self.conf.aof.auto_aof_rewrite_min_size as u128) << 20;
         let wcmd_receiver = self
             .shared
             .wcmd_propagator()
@@ -94,79 +91,91 @@ impl AOF {
             .1
             .clone();
 
+        // PERF: 使用io_uring
         match aof_conf.append_fsync {
             AppendFSync::Always => loop {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
-                    b = wcmd_receiver.recv() => {
-                        self.buffer.unsplit(b?);
-                        while let Some(b) = wcmd_receiver.try_recv()? {
-                            self.buffer.unsplit(b);
+                    wcmd = wcmd_receiver.recv() => {
+                        let mut wcmd = wcmd?;
+
+                        while let Some(w) = wcmd_receiver.try_recv()? {
+                            wcmd.unsplit(w);
                         }
 
-                        self.file.write_all_buf(&mut self.buffer).await?;
+                        curr_aof_size += wcmd.len() as u128;
+                        if curr_aof_size >= auto_aof_rewrite_min_size {
+                            self.rewrite().await?;
+                            curr_aof_size = 0;
+                        }
+
+                        self.file.write_all_buf(&mut wcmd).await?;
                         self.file.sync_data().await?;
                     }
-                }
-
-                count += 1;
-                if count >= max_count {
-                    self.rewrite().await?;
                 }
             },
             AppendFSync::EverySec => {
                 let mut interval = tokio::time::interval(Duration::from_secs(1));
+                let mut buffer = BytesMut::with_capacity(1024);
+
                 loop {
                     tokio::select! {
                         _ = self.shutdown.wait_shutdown_triggered() => {
                             break
                         } ,
                         // 每隔一秒，同步文件
+                        // PERF: 同步文件时会造成性能波动，也许应该新开一个线程来处理这个任务
                         _ = interval.tick() => {
-                            self.file.sync_data().await?;
-                            self.file.write_all_buf(&mut self.buffer).await?;
+                            self.file.write_all_buf(&mut buffer).await?;
                             self.file.sync_data().await?;
                         }
-                        b = wcmd_receiver.recv() => {
-                            self.buffer.unsplit(b?);
-                            while let Some(b) = wcmd_receiver.try_recv()? {
-                                self.buffer.unsplit(b);
-                            }
-                        }
-                    }
+                        wcmd = wcmd_receiver.recv() => {
+                            let mut wcmd = wcmd?;
 
-                    count += 1;
-                    if count >= max_count {
-                        self.rewrite().await?;
+                            while let Some(w) = wcmd_receiver.try_recv()? {
+                                wcmd.unsplit(w);
+                            }
+
+                            curr_aof_size += wcmd.len() as u128;
+                            if curr_aof_size >= auto_aof_rewrite_min_size {
+                                self.rewrite().await?;
+                                curr_aof_size = 0;
+                            }
+
+                            buffer.unsplit(wcmd);
+                        }
                     }
                 }
             }
             AppendFSync::No => loop {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
-                    b = wcmd_receiver.recv() => {
-                        self.buffer.extend(b?);
-                        while let Some(b) = wcmd_receiver.try_recv()? {
-                            self.buffer.unsplit(b);
+                    wcmd = wcmd_receiver.recv() => {
+                        let mut wcmd = wcmd?;
+
+                        while let Some(w) = wcmd_receiver.try_recv()? {
+                            wcmd.unsplit(w);
                         }
 
-                        self.file.write_all_buf(&mut self.buffer).await?;
-                    }
-                }
+                        curr_aof_size += wcmd.len() as u128;
+                        if curr_aof_size >= auto_aof_rewrite_min_size {
+                            self.rewrite().await?;
+                            curr_aof_size = 0;
+                        }
 
-                count += 1;
-                if count >= max_count {
-                    self.rewrite().await?;
+                        self.file.write_all_buf(&mut wcmd).await?;
+                    }
                 }
             },
         }
 
-        while let Some(b) = wcmd_receiver.try_recv()? {
-            self.buffer.unsplit(b);
+        while let Ok(Some(mut wcmd)) = wcmd_receiver.try_recv() {
+            self.file.write_all_buf(&mut wcmd).await?;
         }
-        self.file.write_all_buf(&mut self.buffer).await?;
-        self.file.sync_data().await?;
 
+        self.file.sync_data().await?;
+        self.rewrite().await?; // 最后再重写一次
+        println!("AOF file rewrited.");
         Ok(())
     }
 
