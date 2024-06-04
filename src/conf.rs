@@ -95,7 +95,7 @@ pub struct AOFConf {
     pub use_rdb_preamble: bool,
     pub file_path: String,
     pub append_fsync: AppendFSync,
-    pub max_record_exponent: usize,
+    pub auto_aof_rewrite_min_size: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -155,7 +155,7 @@ impl Default for Conf {
                 use_rdb_preamble: false,
                 file_path: "appendonly.aof".to_string(),
                 append_fsync: AppendFSync::EverySec,
-                max_record_exponent: 20,
+                auto_aof_rewrite_min_size: 64,
             },
             memory: MemoryConf {
                 // max_memory: 0,
@@ -293,9 +293,9 @@ impl Conf {
 async fn enable_aof(
     shared: Shared,
     conf: Arc<Conf>,
-    shutdown_manager: ShutdownManager<()>,
+    shutdown: ShutdownManager<()>,
 ) -> anyhow::Result<()> {
-    let mut aof = AOF::new(shared.clone(), conf.clone(), shutdown_manager.clone()).await?;
+    let mut aof = AOF::new(shared.clone(), conf.clone(), shutdown.clone()).await?;
 
     let (mut handler, client) = Handler::new_fake_with(shared, conf, None);
 

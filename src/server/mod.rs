@@ -17,7 +17,7 @@ use crossbeam::atomic::AtomicCell;
 use std::sync::Arc;
 use tokio::{net::TcpListener, sync::Semaphore};
 use tokio_rustls::TlsAcceptor;
-use tracing::error;
+use tracing::{debug, error};
 
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
 // 需要检查是否已经存在相同的ID
@@ -62,10 +62,12 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
         error!(cause = %err, "failed to accept");
         shutdown_manager.trigger_shutdown(()).ok();
     }
+    debug!("shutdown complete");
 
     server.clean().await;
     drop(server.delay_token);
 
     // 等待所有DelayShutdownToken被释放
+    debug!("waiting for shutdown complete");
     shutdown_manager.wait_shutdown_complete().await;
 }

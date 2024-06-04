@@ -57,6 +57,7 @@ smallvec = "1.13.2"
 mimalloc = "0.1"
 arc-swap = "1.7.1"
 bus = "2.4.1"
+tokio-uring = "0.5.0"
 
 # [target.'cfg(not(target_env = "msvc"))'.dependencies]
 # tikv-jemallocator = "0.5"
@@ -91,3 +92,5 @@ panic = "abort"
 
 [features]
 debug = []
+fake_client = []
+fake_server = []

@@ -50,6 +50,7 @@ impl<S: AsyncStream> Handler<S> {
             tokio::select! {
                 // 等待shutdown信号
                 _signal = self.shared.shutdown().wait_shutdown_triggered() => {
+                    debug!("handler received shutdown signal");
                     return Ok(());
                 }
                 // 等待客户端请求
@@ -60,14 +61,14 @@ impl<S: AsyncStream> Handler<S> {
                                  self.conn.write_frame(&respond).await?;
                            }
                         }
-                    }else {
+                    } else {
                         return Ok(());
                     }
                 },
                 // 从后台任务接收数据，并发送给客户端。只要拥有对应的BgTaskSender，
                 // 任何其它连接 都可以向当前连接的客户端发送消息
                 frame = self.bg_task_channel.recv_from_bg_task() => {
-                    debug!("recv from background task: {:?}", frame);
+                    debug!("handler received from background task: {:?}", frame);
                     self.conn.write_frame(&frame).await?;
                 },
             };

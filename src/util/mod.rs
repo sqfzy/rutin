@@ -2,45 +2,78 @@ mod test;
 
 pub use test::*;
 
+use crate::Int;
 use anyhow::anyhow;
 use atoi::FromRadix10SignedChecked;
-use std::time::Duration;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
 
-use crate::Int;
-
-// 测试客户端，向服务端发送指定命令
+// 模拟服务端，接收客户端的命令并打印
+#[cfg(feature = "fake_server")]
 #[allow(dead_code)]
-pub async fn client_test(cmd: &[u8]) {
-    let mut stream = TcpStream::connect("127.0.0.1:6379").await.unwrap();
-    stream.write_all(cmd).await.unwrap();
-    let mut buf = [0u8; 1024];
-    loop {
-        let n = stream.read(&mut buf).await.unwrap();
-        if n == 0 {
-            break;
-        }
-        print!("{:?}", String::from_utf8(buf[0..n].to_vec()).unwrap());
-    }
-}
+pub async fn fake_server() {
+    use crate::{conf::Conf, util::test_init};
+    use std::sync::Arc;
 
-// 测试服务端，接收客户端的命令并打印
-#[allow(dead_code)]
-pub async fn server_test() {
+    test_init();
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:6379")
         .await
         .unwrap();
 
-    let mut stream = listener.accept().await.unwrap().0;
+    let stream = listener.accept().await.unwrap().0;
+    let mut handler =
+        crate::server::Handler::new(Default::default(), stream, Arc::new(Conf::new().unwrap()));
 
     loop {
-        let mut buf = vec![0; 1024];
-        let n = stream.read(&mut buf).await.unwrap();
-        println!("read: {n}.\n{:?}", String::from_utf8(buf.clone()).unwrap());
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let cmd_frame = if let Some(f) = handler.conn.read_frame().await.unwrap() {
+            f
+        } else {
+            return;
+        };
+
+        if let Some(res) = crate::cmd::dispatch(cmd_frame, &mut handler).await.unwrap() {
+            handler.conn.write_frame(&res).await.unwrap();
+        }
+    }
+}
+
+// 模拟客户端，发送命令给服务端并打印响应
+#[cfg(feature = "fake_client")]
+#[allow(dead_code)]
+pub async fn fake_client() {
+    use crate::frame::RESP3;
+    use bytes::BytesMut;
+    use clap::Parser;
+    use either::Either::Right;
+    use tokio::net::TcpStream;
+
+    crate::util::test_init();
+
+    #[derive(clap::Parser)]
+    struct RequireCmd {
+        #[clap(name = "cmd", required = true)]
+        inner: Vec<String>,
+    }
+
+    let cmd = RequireCmd::parse();
+
+    let stream = TcpStream::connect("127.0.0.1:6379".to_string())
+        .await
+        .unwrap();
+    let mut conn = crate::Connection::new(stream, 0);
+
+    let cmd = cmd
+        .inner
+        .into_iter()
+        .map(|s| RESP3::Bulk(Right(BytesMut::from(s.as_str()))))
+        .collect::<Vec<_>>();
+
+    let cmd = RESP3::Array(cmd);
+    conn.write_frame(&cmd).await.unwrap();
+
+    let res = conn.read_frame().await.unwrap();
+
+    if let Some(res) = res {
+        println!("{:?}", res);
     }
 }
 

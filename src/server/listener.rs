@@ -87,14 +87,16 @@ impl Listener {
     }
 
     pub async fn clean(&mut self) {
-        let mut rdb = RDB::new(
-            self.shared.clone(),
-            self.conf.rdb.file_path.clone(),
-            self.conf.rdb.enable_checksum,
-            self.shared.shutdown().clone(),
-        );
-        let start = tokio::time::Instant::now();
-        rdb.save().await.ok();
-        println!("RDB file saved. Time elapsed: {:?}", start.elapsed());
+        if self.conf.rdb.enable && !self.conf.aof.enable {
+            let mut rdb = RDB::new(
+                self.shared.clone(),
+                self.conf.rdb.file_path.clone(),
+                self.conf.rdb.enable_checksum,
+                self.shared.shutdown().clone(),
+            );
+            let start = tokio::time::Instant::now();
+            rdb.save().await.ok();
+            println!("RDB file saved. Time elapsed: {:?}", start.elapsed());
+        }
     }
 }
