@@ -1,17 +1,17 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed, Mutable, ServerErrSnafu,
+        CmdExecutor, CmdType, CmdUnparsed, Mutable,
     },
     connection::AsyncStream,
     frame::RESP3,
-    server::{Handler, ServerError},
+    server::Handler,
     shared::Shared,
     Int, Key,
 };
 use bytes::Bytes;
 use either::Either::Left;
-use snafu::{location, Location, ResultExt};
+use snafu::location;
 
 /// # Reply:
 ///
@@ -80,6 +80,8 @@ impl CmdExecutor for Subscribe {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> Result<Option<RESP3>, CmdError> {
+        use snafu::Location;
+
         let Handler {
             shared,
             conn,
@@ -152,6 +154,8 @@ impl CmdExecutor for Unsubscribe {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> Result<Option<RESP3>, CmdError> {
+        use snafu::Location;
+
         let Handler {
             shared,
             conn,

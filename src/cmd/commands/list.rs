@@ -13,7 +13,7 @@ use crate::{
 use bytes::Bytes;
 use either::Either::Left;
 use flume::{Receiver, Sender};
-use snafu::{location, OptionExt, ResultExt};
+use snafu::ResultExt;
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::trace;

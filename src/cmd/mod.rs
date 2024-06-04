@@ -87,8 +87,8 @@ pub async fn _dispatch(
     let res = match cmd_name.as_ref() {
         // commands::other
         // b"COMMAND" => _Command::apply(cmd_frame, handler).await?,
-        // b"BGSAVE" => BgSave::apply(cmd, handler).await,
-        // b"ECHO" => Echo::apply(cmd, handler).await,
+        b"BGSAVE" => BgSave::apply(cmd, handler).await,
+        b"ECHO" => Echo::apply(cmd, handler).await,
         b"PING" => Ping::apply(cmd, handler).await,
         b"CLIENT" => {
             let subname = cmd.next_mut().ok_or(Err::Syntax)?;
@@ -99,54 +99,54 @@ pub async fn _dispatch(
                 _ => return Err(Err::UnknownCmd.into()),
             }
         }
-        //
-        // // commands::key
-        // b"DEL" => Del::apply(cmd, handler).await,
-        // b"EXISTS" => Exists::apply(cmd, handler).await,
-        // b"EXPIRE" => Expire::apply(cmd, handler).await,
-        // b"EXPIREAT" => ExpireAt::apply(cmd, handler).await,
-        // b"EXPIRETIME" => ExpireTime::apply(cmd, handler).await,
-        // b"KEYS" => Keys::apply(cmd, handler).await,
-        // b"PERSIST" => Persist::apply(cmd, handler).await,
-        // b"PTTL" => Pttl::apply(cmd, handler).await,
-        // b"TTL" => Ttl::apply(cmd, handler).await,
-        // b"TYPE" => Type::apply(cmd, handler).await,
-        //
-        // // commands::str
-        // b"APPEND" => Append::apply(cmd, handler).await,
-        // b"DECR" => Decr::apply(cmd, handler).await,
-        // b"DECRBY" => DecrBy::apply(cmd, handler).await,
+
+        // commands::key
+        b"DEL" => Del::apply(cmd, handler).await,
+        b"EXISTS" => Exists::apply(cmd, handler).await,
+        b"EXPIRE" => Expire::apply(cmd, handler).await,
+        b"EXPIREAT" => ExpireAt::apply(cmd, handler).await,
+        b"EXPIRETIME" => ExpireTime::apply(cmd, handler).await,
+        b"KEYS" => Keys::apply(cmd, handler).await,
+        b"PERSIST" => Persist::apply(cmd, handler).await,
+        b"PTTL" => Pttl::apply(cmd, handler).await,
+        b"TTL" => Ttl::apply(cmd, handler).await,
+        b"TYPE" => Type::apply(cmd, handler).await,
+
+        // commands::str
+        b"APPEND" => Append::apply(cmd, handler).await,
+        b"DECR" => Decr::apply(cmd, handler).await,
+        b"DECRBY" => DecrBy::apply(cmd, handler).await,
         b"GET" => Get::apply(cmd, handler).await,
-        // b"GETRANGE" => GetRange::apply(cmd, handler).await,
-        // b"GETSET" => GetSet::apply(cmd, handler).await,
-        // b"INCR" => Incr::apply(cmd, handler).await,
-        // b"INCRBY" => IncrBy::apply(cmd, handler).await,
-        // b"MGET" => MGet::apply(cmd, handler).await,
-        // b"MSET" => MSet::apply(cmd, handler).await,
-        // b"MSETNX" => MSetNx::apply(cmd, handler).await,
+        b"GETRANGE" => GetRange::apply(cmd, handler).await,
+        b"GETSET" => GetSet::apply(cmd, handler).await,
+        b"INCR" => Incr::apply(cmd, handler).await,
+        b"INCRBY" => IncrBy::apply(cmd, handler).await,
+        b"MGET" => MGet::apply(cmd, handler).await,
+        b"MSET" => MSet::apply(cmd, handler).await,
+        b"MSETNX" => MSetNx::apply(cmd, handler).await,
         b"SET" => Set::apply(cmd, handler).await,
-        // b"SETEX" => SetEx::apply(cmd, handler).await,
-        // b"SETNX" => SetNx::apply(cmd, handler).await,
-        // b"STRLEN" => StrLen::apply(cmd, handler).await,
-        //
-        // // commands::list
-        // b"LLEN" => LLen::apply(cmd, handler).await,
-        // b"LPUSH" => LPush::apply(cmd, handler).await,
-        // b"LPOP" => LPop::apply(cmd, handler).await,
-        // b"BLPOP" => BLPop::apply(cmd, handler).await,
-        // b"NBLPOP" => NBLPop::apply(cmd, handler).await,
-        // b"BLMOVE" => BLMove::apply(cmd, handler).await,
-        //
-        // // commands::hash
-        // b"HDEL" => HDel::apply(cmd, handler).await,
-        // b"HEXISTS" => HExists::apply(cmd, handler).await,
-        // b"HGET" => HGet::apply(cmd, handler).await,
-        // b"HSET" => HSet::apply(cmd, handler).await,
-        //
-        // // commands::pub_sub
-        // b"PUBLISH" => Publish::apply(cmd, handler).await,
-        // b"SUBSCRIBE" => Subscribe::apply(cmd, handler).await,
-        // b"UNSUBSCRIBE" => Unsubscribe::apply(cmd, handler).await,
+        b"SETEX" => SetEx::apply(cmd, handler).await,
+        b"SETNX" => SetNx::apply(cmd, handler).await,
+        b"STRLEN" => StrLen::apply(cmd, handler).await,
+
+        // commands::list
+        b"LLEN" => LLen::apply(cmd, handler).await,
+        b"LPUSH" => LPush::apply(cmd, handler).await,
+        b"LPOP" => LPop::apply(cmd, handler).await,
+        b"BLPOP" => BLPop::apply(cmd, handler).await,
+        b"NBLPOP" => NBLPop::apply(cmd, handler).await,
+        b"BLMOVE" => BLMove::apply(cmd, handler).await,
+
+        // commands::hash
+        b"HDEL" => HDel::apply(cmd, handler).await,
+        b"HEXISTS" => HExists::apply(cmd, handler).await,
+        b"HGET" => HGet::apply(cmd, handler).await,
+        b"HSET" => HSet::apply(cmd, handler).await,
+
+        // commands::pub_sub
+        b"PUBLISH" => Publish::apply(cmd, handler).await,
+        b"SUBSCRIBE" => Subscribe::apply(cmd, handler).await,
+        b"UNSUBSCRIBE" => Unsubscribe::apply(cmd, handler).await,
         _ => return Err(Err::UnknownCmd.into()),
     };
 
