@@ -31,27 +31,27 @@ where
     reader_buf: BytesMut,
     writer_buf: BytesMut,
     /// 支持批处理
-    count: usize,
-}
-
-impl<S: AsyncStream> From<S> for Connection<S> {
-    fn from(value: S) -> Self {
-        Self {
-            stream: value,
-            reader_buf: BytesMut::with_capacity(1024),
-            writer_buf: BytesMut::with_capacity(1024),
-            count: 0,
-        }
-    }
+    batch_count: usize,
+    max_batch_count: usize,
 }
 
 impl<S: AsyncStream> Connection<S> {
-    pub const fn count(&self) -> usize {
-        self.count
+    pub fn new(stream: S, max_batch_count: usize) -> Self {
+        Self {
+            stream,
+            reader_buf: BytesMut::with_capacity(1024),
+            writer_buf: BytesMut::with_capacity(1024),
+            batch_count: 0,
+            max_batch_count,
+        }
+    }
+
+    pub const fn unhandled_count(&self) -> usize {
+        self.batch_count
     }
 
     pub fn set_count(&mut self, count: usize) {
-        self.count = count;
+        self.batch_count = count;
     }
 
     #[inline]
@@ -101,10 +101,10 @@ impl<S: AsyncStream> Connection<S> {
 
             trace!(?frame, "read frame");
             frames.push(frame);
-            self.count += 1;
+            self.batch_count += 1;
 
-            // 最大支持1024容量的批处理
-            if self.count > 1024 {
+            // PERF: 该值影响pipeline的性能，以及内存占用
+            if self.batch_count > self.max_batch_count {
                 return Ok(Some(frames));
             }
 
@@ -130,11 +130,11 @@ impl<S: AsyncStream> Connection<S> {
     pub async fn write_frame(&mut self, frame: &RESP3) -> io::Result<()> {
         frame.encode_buf(&mut self.writer_buf);
 
-        if self.count > 0 {
-            self.count -= 1;
+        if self.batch_count > 0 {
+            self.batch_count -= 1;
         }
 
-        if self.count == 0 {
+        if self.batch_count == 0 {
             self.stream.write_buf(&mut self.writer_buf).await?;
             self.flush().await?;
         }
@@ -151,11 +151,11 @@ impl Connection<FakeStream> {
     pub fn write_frame_blocking(&mut self, frame: &RESP3) -> io::Result<()> {
         frame.encode_buf(&mut self.writer_buf);
 
-        if self.count > 0 {
-            self.count -= 1;
+        if self.batch_count > 0 {
+            self.batch_count -= 1;
         }
 
-        if self.count == 0 {
+        if self.batch_count == 0 {
             self.stream
                 .tx
                 .send(self.writer_buf.split())

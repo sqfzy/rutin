@@ -36,7 +36,7 @@ impl<S: AsyncStream> Handler<S> {
 
         Self {
             shared,
-            conn: Connection::from(stream),
+            conn: Connection::new(stream, conf.server.max_batch),
             bg_task_channel,
             conf,
             context: HandlerContext::new(client_id),
@@ -95,15 +95,16 @@ impl Handler<FakeStream> {
             (flume::unbounded(), flume::unbounded())
         };
 
+        let max_batch = conf.server.max_batch;
         (
             Self {
                 shared,
-                conn: Connection::from(FakeStream::new(server_tx, server_rx)),
+                conn: Connection::new(FakeStream::new(server_tx, server_rx), max_batch),
                 bg_task_channel: Default::default(),
                 conf,
                 context: HandlerContext::default(),
             },
-            Connection::from(FakeStream::new(client_tx, client_rx)),
+            Connection::new(FakeStream::new(client_tx, client_rx), max_batch),
         )
     }
 }

@@ -29,13 +29,12 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         let res = cmd.execute(handler).await?;
 
         if Self::CMD_TYPE == CmdType::Write {
-            // TODO:
-            // handler
-            //     .shared
-            //     .clone()
-            //     .wcmd_propagator()
-            //     .propergate(args.into_frame(), handler)
-            //     .await;
+            handler
+                .shared
+                .clone()
+                .wcmd_propagator()
+                .may_propagate(args, handler)
+                .await;
         }
 
         Ok(res)
@@ -154,17 +153,6 @@ pub async fn _dispatch(
     res.map_err(Into::into)
 }
 
-// fn get_cmd_name_uppercase(cmd: &mut CmdUnparsed) -> Result<Bytes, CmdError> {}
-//
-// fn get_cmd_sub_name_uppercase(cmd: &mut Bulks) -> Result<([u8; 16], usize), CmdError> {
-//     let name_bytes = cmd.pop_front().ok_or(CmdError::from(Err::Syntax))?;
-//
-//     let mut cmd_name = [0u8; 16];
-//     cmd_name[..name_bytes.len()].copy_from_slice(&name_bytes);
-//     cmd_name[..name_bytes.len()].make_ascii_uppercase();
-//     Ok((cmd_name, name_bytes.len()))
-// }
-
 pub struct Mutable;
 pub struct UnMutable;
 
@@ -255,6 +243,20 @@ impl CmdUnparsed<Mutable> {
             _ => None,
         }
     }
+
+    pub fn get(&self, idx: usize) -> Option<&[u8]> {
+        if idx > self.end {
+            return None;
+        }
+
+        match &self.inner[self.start + idx] {
+            RESP3::Bulk(either) => match either {
+                Either::Left(b) => Some(b),
+                Either::Right(b) => Some(b),
+            },
+            _ => None,
+        }
+    }
 }
 
 impl Iterator for CmdUnparsed<Mutable> {
@@ -299,6 +301,12 @@ impl TryFrom<RESP3> for CmdUnparsed<Mutable> {
             }
             .into()),
         }
+    }
+}
+
+impl From<CmdUnparsed<Mutable>> for RESP3 {
+    fn from(value: CmdUnparsed<Mutable>) -> Self {
+        RESP3::Array(value.inner)
     }
 }
 

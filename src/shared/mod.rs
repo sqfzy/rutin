@@ -1,12 +1,12 @@
 use crate::{
     conf::Conf,
-    shared::{db::Db, wcmd_propagator::WCmdPropergator},
+    shared::{db::Db, propagator::Propagator},
 };
 use async_shutdown::ShutdownManager;
 use std::sync::Arc;
 
 pub mod db;
-pub mod wcmd_propagator;
+pub mod propagator;
 
 #[derive(Clone, Default)]
 pub struct Shared {
@@ -16,7 +16,7 @@ pub struct Shared {
 #[derive(Default)]
 pub struct SharedInner {
     db: db::Db,
-    wcmd_propagator: WCmdPropergator,
+    wcmd_propagator: Propagator,
     shutdown: ShutdownManager<()>,
 }
 
@@ -25,7 +25,7 @@ impl Shared {
         Self {
             inner: Arc::new(SharedInner {
                 db,
-                wcmd_propagator: WCmdPropergator::new(conf.aof.enable),
+                wcmd_propagator: Propagator::new(conf.aof.enable, conf.replica.max_replica),
                 shutdown,
             }),
         }
@@ -37,7 +37,7 @@ impl Shared {
     }
 
     #[inline]
-    pub fn wcmd_propagator(&self) -> &WCmdPropergator {
+    pub fn wcmd_propagator(&self) -> &Propagator {
         &self.inner.wcmd_propagator
     }
 

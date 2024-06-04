@@ -8,7 +8,7 @@ use crate::{
         db::{ObjValueType, Object},
         Shared,
     },
-    util::{self, atoi},
+    util::atoi,
     Int, Key, EPOCH,
 };
 use bytes::Bytes;
@@ -140,16 +140,17 @@ impl CmdExecutor for Get {
 
     #[inline]
     async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
-        let mut str = "".into();
+        let mut res = None;
 
         shared.db().visit_object(&self.key, |obj| {
-            str = obj.on_str()?.to_bytes();
+            res = Some(RESP3::Bulk(Left(obj.on_str()?.to_bytes())));
             Ok(())
         })?;
 
-        Ok(Some(RESP3::Bulk(Left(str))))
+        Ok(res)
     }
 
+    #[inline]
     fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
@@ -551,13 +552,12 @@ impl CmdExecutor for Set {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
-        let mut buf = [0; 7];
 
         let key = args.next().unwrap();
         let value = args.next().unwrap();
 
-        let mut next = args.next();
-        let opt = match next.as_ref() {
+        let mut next = args.next_mut();
+        let opt = match next {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -570,25 +570,27 @@ impl CmdExecutor for Set {
                 });
             }
             Some(opt) => {
-                let len = util::upper_case(opt, &mut buf)
-                    .map_err(|_| CmdError::from("ERR invalid option is given"))?;
+                opt.make_ascii_uppercase();
 
-                match &buf[..len] {
+                match opt.as_ref() {
                     b"NX" => {
-                        next = args.next();
+                        next = args.next_mut();
                         Some(SetOpt::NX)
                     }
                     b"XX" => {
-                        next = args.next();
+                        next = args.next_mut();
                         Some(SetOpt::XX)
                     }
                     // 该参数不是设置选项的参数
-                    _ => None,
+                    _ => {
+                        next = Some(opt);
+                        None
+                    }
                 }
             }
         };
 
-        let get = match next.as_ref() {
+        let get = match next {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -601,22 +603,24 @@ impl CmdExecutor for Set {
                 });
             }
             Some(get) => {
-                let len = util::upper_case(get, &mut buf)
-                    .map_err(|_| CmdError::from("ERR invalid get option is given"))?;
+                get.make_ascii_uppercase();
 
-                match &buf[..len] {
+                match get.as_ref() {
                     b"GET" => {
-                        next = args.next();
+                        next = args.next_mut();
                         true
                     }
                     // 该参数不是设置GET的参数
-                    _ => false,
+                    _ => {
+                        next = Some(get);
+                        false
+                    }
                 }
             }
         };
 
         let mut keep_ttl = false;
-        let expire = match next.as_ref() {
+        let expire = match next {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -628,78 +632,60 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(e) => {
-                let len = util::upper_case(e, &mut buf)
-                    .map_err(|_| CmdError::from("ERR invalid expire is given"))?;
+            Some(ex) => {
+                ex.make_ascii_uppercase();
 
-                match &buf[..len] {
+                match ex.as_ref() {
                     b"KEEPTTL" => {
                         keep_ttl = true;
                         None
                     }
-                    e => {
-                        let expire_value = if let Some(val) = args.next() {
+                    b"EX" => {
+                        let expire_value = if let Some(val) = args.next_mut() {
                             val
                         } else {
                             return Err(Err::WrongArgNum.into());
                         };
 
-                        let len = e.len();
-                        if len > 4 {
-                            return Err("ERR invalid option is given".into());
-                        }
-                        let mut buf = [0; 6];
-                        buf[..len].copy_from_slice(e);
-                        buf[..len].make_ascii_uppercase();
-                        match e {
-                            b"EX" => {
-                                Some(Instant::now() + Duration::from_secs(atoi(&expire_value)?))
-                            }
-                            // PX milliseconds -- 以毫秒为单位设置键的过期时间
-                            b"PX" => {
-                                Some(Instant::now() + Duration::from_millis(atoi(&expire_value)?))
-                            }
-                            // EXAT timestamp -- timestamp是以秒为单位的Unix时间戳
-                            b"EXAT" => Some(*EPOCH + Duration::from_secs(atoi(&expire_value)?)),
-                            // PXAT timestamp -- timestamp是以毫秒为单位的Unix时间戳
-                            b"PXAT" => Some(*EPOCH + Duration::from_millis(atoi(&expire_value)?)),
-                            _ => return Err(Err::Syntax.into()),
-                        }
+                        Some(Instant::now() + Duration::from_secs(atoi(expire_value)?))
                     }
+                    // PX milliseconds -- 以毫秒为单位设置键的过期时间
+                    b"PX" => {
+                        let expire_value = if let Some(val) = args.next_mut() {
+                            val
+                        } else {
+                            return Err(Err::WrongArgNum.into());
+                        };
+
+                        Some(Instant::now() + Duration::from_millis(atoi(expire_value)?))
+                    }
+                    // EXAT timestamp -- timestamp是以秒为单位的Unix时间戳
+                    b"EXAT" => {
+                        let expire_value = if let Some(val) = args.next_mut() {
+                            val
+                        } else {
+                            return Err(Err::WrongArgNum.into());
+                        };
+
+                        Some(*EPOCH + Duration::from_secs(atoi(expire_value)?))
+                    }
+                    // PXAT timestamp -- timestamp是以毫秒为单位的Unix时间戳
+                    b"PXAT" => {
+                        let expire_value = if let Some(val) = args.next_mut() {
+                            val
+                        } else {
+                            return Err(Err::WrongArgNum.into());
+                        };
+
+                        Some(*EPOCH + Duration::from_millis(atoi(expire_value)?))
+                    }
+                    _ => return Err(Err::Syntax.into()),
                 }
-            } // Some(e) if e.as_ref() == b"KEEPTTL" => {
-              //     keep_ttl = true;
-              //     None
-              // }
-              // Some(e) => {
-              //     let expire_value = if let Some(val) = args.next_freeze() {
-              //         val
-              //     } else {
-              //         return Err(Err::WrongArgNum.into());
-              //     };
-              //
-              //     let len = e.len();
-              //     if len > 4 {
-              //         return Err("ERR invalid option is given".into());
-              //     }
-              //     let mut buf = [0; 6];
-              //     buf[..len].copy_from_slice(&e);
-              //     buf[..len].make_ascii_uppercase();
-              //     match e.as_ref() {
-              //         b"EX" => Some(Instant::now() + Duration::from_secs(atoi(&expire_value)?)),
-              //         // PX milliseconds -- 以毫秒为单位设置键的过期时间
-              //         b"PX" => Some(Instant::now() + Duration::from_millis(atoi(&expire_value)?)),
-              //         // EXAT timestamp -- timestamp是以秒为单位的Unix时间戳
-              //         b"EXAT" => Some(*EPOCH + Duration::from_secs(atoi(&expire_value)?)),
-              //         // PXAT timestamp -- timestamp是以毫秒为单位的Unix时间戳
-              //         b"PXAT" => Some(*EPOCH + Duration::from_millis(atoi(&expire_value)?)),
-              //         _ => return Err(Err::Syntax.into()),
-              //     }
-              // }
+            }
         };
 
         // 如果还有多余的参数，说明参数数目不对
-        if args.next().is_some() {
+        if !args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
         Ok(Set {

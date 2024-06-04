@@ -8,7 +8,6 @@ use crate::{
 use anyhow::Result;
 use async_shutdown::ShutdownManager;
 use bytes::BytesMut;
-use futures::executor::block_on;
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
 use tokio::{
@@ -84,7 +83,8 @@ impl AOF {
         let _delay_token = self.shutdown.delay_shutdown_token()?;
 
         let mut count = 0;
-        let max_count = 2 << aof_conf.max_record_exponent;
+        let max_count = 2 << aof_conf.max_record_exponent; // 达到最大记录数后，进行rewrite
+
         let wcmd_receiver = self
             .shared
             .wcmd_propagator()
@@ -98,10 +98,10 @@ impl AOF {
             AppendFSync::Always => loop {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
-                    b = wcmd_receiver.recv_async() => {
-                        self.buffer.extend(b?);
-                        while let Ok(b) = wcmd_receiver.try_recv() {
-                            self.buffer.extend(b);
+                    b = wcmd_receiver.recv() => {
+                        self.buffer.unsplit(b?);
+                        while let Some(b) = wcmd_receiver.try_recv()? {
+                            self.buffer.unsplit(b);
                         }
 
                         self.file.write_all_buf(&mut self.buffer).await?;
@@ -127,10 +127,10 @@ impl AOF {
                             self.file.write_all_buf(&mut self.buffer).await?;
                             self.file.sync_data().await?;
                         }
-                        b = wcmd_receiver.recv_async() => {
-                            self.buffer.extend(b?);
-                            while let Ok(b) = wcmd_receiver.try_recv() {
-                                self.buffer.extend(b);
+                        b = wcmd_receiver.recv() => {
+                            self.buffer.unsplit(b?);
+                            while let Some(b) = wcmd_receiver.try_recv()? {
+                                self.buffer.unsplit(b);
                             }
                         }
                     }
@@ -144,10 +144,10 @@ impl AOF {
             AppendFSync::No => loop {
                 tokio::select! {
                     _ = self.shutdown.wait_shutdown_triggered() => break,
-                    b = wcmd_receiver.recv_async() => {
+                    b = wcmd_receiver.recv() => {
                         self.buffer.extend(b?);
-                        while let Ok(b) = wcmd_receiver.try_recv() {
-                            self.buffer.extend(b);
+                        while let Some(b) = wcmd_receiver.try_recv()? {
+                            self.buffer.unsplit(b);
                         }
 
                         self.file.write_all_buf(&mut self.buffer).await?;
@@ -161,8 +161,8 @@ impl AOF {
             },
         }
 
-        while let Ok(b) = wcmd_receiver.try_recv() {
-            self.buffer.extend(b);
+        while let Some(b) = wcmd_receiver.try_recv()? {
+            self.buffer.unsplit(b);
         }
         self.file.write_all_buf(&mut self.buffer).await?;
         self.file.sync_data().await?;

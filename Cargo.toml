@@ -34,7 +34,6 @@ regex = "1.10.4"
 # lockfree-object-pool = "0.1.5"
 async-recursion = "1.1.1"
 snafu = "0.8.2"
-# smallvec = "1.13.2"
 # tokio-uring = { version = "0.4.0", features = ["bytes"] }
 backon = "0.4.4"
 rayon = "1.10.0"
@@ -55,6 +54,13 @@ polonius-the-crab = "0.4.1"
 num-bigint = "0.4.5"
 memchr = "2.7.2"
 smallvec = "1.13.2"
+mimalloc = "0.1"
+arc-swap = "1.7.1"
+bus = "2.4.1"
+
+# [target.'cfg(not(target_env = "msvc"))'.dependencies]
+# tikv-jemallocator = "0.5"
+
 
 [dev-dependencies]
 assert_cmd = { version = "2.0.14", features = ["color-auto"] }

@@ -42,6 +42,7 @@ pub struct ServerConf {
     pub expire_check_interval_secs: u64, // 检查过期键的周期
     pub log_level: String,
     pub max_connections: usize,
+    pub max_batch: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,7 +62,7 @@ pub struct SecurityConf {
 pub struct ReplicaConf {
     pub replicaof: Option<String>, // 主服务器的地址
     /// 最多允许多少个从服务器连接到当前服务器
-    pub max_replicate: u64,
+    pub max_replica: u8,
     /// 用于记录当前服务器的复制偏移量。当从服务器发送 PSYNC
     /// 命令给主服务器时，比较从服务器和主服务器的ACK_OFFSET，从而判断主从是否一致。
     #[serde(skip)]
@@ -128,6 +129,7 @@ impl Default for Conf {
                 expire_check_interval_secs: 1,
                 log_level: "info".to_string(),
                 max_connections: 1024,
+                max_batch: 1024,
             },
             security: SecurityConf {
                 requirepass: None,
@@ -135,7 +137,7 @@ impl Default for Conf {
                 rename_commands: vec![None; 128],
             },
             replica: ReplicaConf {
-                max_replicate: 3,
+                max_replica: 3,
                 offset: AtomicCell::new(0),
                 // repli_backlog: RepliBackLog::new(1024),
                 replicaof: None,

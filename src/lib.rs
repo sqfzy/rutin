@@ -1,6 +1,11 @@
 #![feature(slice_split_once)]
 #![feature(lazy_cell)]
 
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 pub mod cli;
 pub mod cmd;
 pub mod conf;
