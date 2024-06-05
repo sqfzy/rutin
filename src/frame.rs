@@ -5,29 +5,29 @@ use crate::{
 };
 use ahash::{AHashMap, AHashSet};
 use bytes::{Buf, Bytes, BytesMut};
-use either::{for_both, Either, Left, Right};
-use num_bigint::BigInt;
-use std::{
-    hash::Hash,
-    io::{self},
-    iter::Iterator,
+use either::{
+    for_both,
+    Either::{self, Right},
+    Left,
 };
+use num_bigint::BigInt;
+use std::{borrow::Borrow, hash::Hash, io, iter::Iterator, ops::Deref};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::bytes::BufMut;
 
 #[derive(Clone, Debug)]
 pub enum RESP3 {
     // +<str>\r\n
-    SimpleString(Either<&'static str, String>),
+    SimpleString(EitherString<'static>),
 
     // -<err>\r\n
-    SimpleError(Either<&'static str, String>),
+    SimpleError(EitherString<'static>),
 
     // :[<+|->]<value>\r\n
     Integer(Int),
 
     // $<length>\r\n<data>\r\n
-    Bulk(Either<Bytes, BytesMut>),
+    Bulk(EitherBytes),
 
     // *<number-of-elements>\r\n<element-1>...<element-n>
     Array(Vec<RESP3>),
@@ -48,13 +48,13 @@ pub enum RESP3 {
     BigNumber(BigInt),
 
     // !<length>\r\n<error>\r\n
-    BulkError(Either<Bytes, BytesMut>),
+    BulkError(EitherBytes),
 
     // =<length>\r\n<encoding>:<data>\r\n
     // 类似于Bulk，但是多了一个encoding字段用于指定数据的编码方式
     VerbatimString {
         encoding: [u8; 3],
-        data: Either<Bytes, BytesMut>,
+        data: EitherBytes,
     },
 
     // %<number-of-entries>\r\n<key-1><value-1>...<key-n><value-n>
@@ -74,13 +74,11 @@ impl RESP3 {
     #[inline]
     pub fn size(&self) -> usize {
         match self {
-            RESP3::SimpleString(s) => for_both!(s, s => s.len() + 3), // 1 + s.len() + 2
-            RESP3::SimpleError(e) => for_both!(e, e => e.len() + 3),  // 1 + e.len() + 2
+            RESP3::SimpleString(s) => s.len() + 3, // 1 + s.len() + 2
+            RESP3::SimpleError(e) => e.len() + 3,  // 1 + e.len() + 2
             RESP3::Integer(n) => itoa::Buffer::new().format(*n).len() + 3, // 1 + n.len() + 2
-            RESP3::Bulk(b) => for_both!(b, b => {
-               b.len() + itoa::Buffer::new().format(b.len()).len() + 5
-            }), //  1 + len.len() + 2 + len + 2
-            RESP3::Null => 3,                                         // 1 + 2
+            RESP3::Bulk(b) => b.len() + itoa::Buffer::new().format(b.len()).len() + 5, //  1 + len.len() + 2 + len + 2
+            RESP3::Null => 3,                                                          // 1 + 2
             RESP3::Array(frames) => {
                 itoa::Buffer::new().format(frames.len()).len()
                     + 3
@@ -95,9 +93,7 @@ impl RESP3 {
                 len
             }
             RESP3::BigNumber(n) => n.to_str_radix(10).len() + 3, // 1 + len + 2
-            RESP3::BulkError(e) => for_both!(e, e => {
-               e.len() + itoa::Buffer::new().format(e.len()).len() + 5
-            }), // 1 + len.len() + 2 + len + 2
+            RESP3::BulkError(e) => e.len() + itoa::Buffer::new().format(e.len()).len() + 5, // 1 + len.len() + 2 + len + 2
             RESP3::VerbatimString { data, .. } => {
                 data.len() + itoa::Buffer::new().format(data.len()).len() + 9 // 1 + len.len() + 2 + 3 + 1 + data.len() + 2
             }
@@ -121,7 +117,14 @@ impl RESP3 {
 
     pub fn as_simple_string(&self) -> Option<&str> {
         match self {
-            RESP3::SimpleString(s) => for_both!(s, s => Some(s)),
+            RESP3::SimpleString(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn to_simple_string(&self) -> Option<String> {
+        match self {
+            RESP3::SimpleString(s) => Some(s.to_string()),
             _ => None,
         }
     }
@@ -133,6 +136,13 @@ impl RESP3 {
         }
     }
 
+    pub fn to_simple_error(&self) -> Option<String> {
+        match self {
+            RESP3::SimpleError(e) => Some(e.to_string()),
+            _ => None,
+        }
+    }
+
     pub fn as_integer(&self) -> Option<Int> {
         match self {
             RESP3::Integer(n) => Some(*n),
@@ -140,11 +150,14 @@ impl RESP3 {
         }
     }
 
-    pub fn as_bulk(&self) -> Option<Bytes> {
+    pub fn as_bulk(&mut self) -> Option<Bytes> {
         match self {
-            RESP3::Bulk(b) => match b {
+            RESP3::Bulk(b) => match &mut b.0 {
                 Either::Left(b) => Some(b.clone()),
-                Either::Right(b) => Some(b.clone().freeze()),
+                Either::Right(_) => {
+                    b.freeze();
+                    self.as_bulk()
+                }
             },
             _ => None,
         }
@@ -152,7 +165,7 @@ impl RESP3 {
 
     pub fn as_bulk_mut(&mut self) -> Option<&mut BytesMut> {
         match self {
-            RESP3::Bulk(b) => match b {
+            RESP3::Bulk(b) => match &mut b.0 {
                 Either::Left(_) => None,
                 Either::Right(b) => Some(b),
             },
@@ -197,16 +210,14 @@ impl RESP3 {
 
     pub fn as_bulk_error(&self) -> Option<&[u8]> {
         match self {
-            RESP3::BulkError(e) => for_both!(e, e => Some(e)),
+            RESP3::BulkError(e) => Some(e),
             _ => None,
         }
     }
 
     pub fn as_verbatim_string(&self) -> Option<(&[u8; 3], &[u8])> {
         match self {
-            RESP3::VerbatimString { encoding, data } => {
-                for_both!(data, data => Some((encoding, data)))
-            }
+            RESP3::VerbatimString { encoding, data } => Some((encoding, data)),
             _ => None,
         }
     }
@@ -248,12 +259,12 @@ impl RESP3 {
         match self {
             RESP3::SimpleString(s) => {
                 buf.put_u8(b'+');
-                buf.put_slice(for_both!(s, s => s.as_bytes()));
+                buf.put_slice(s.as_bytes());
                 buf.put_slice(b"\r\n");
             }
             RESP3::SimpleError(e) => {
                 buf.put_u8(b'-');
-                buf.put_slice(for_both!(e, e => e.as_bytes()));
+                buf.put_slice(e.as_bytes());
                 buf.put_slice(b"\r\n");
             }
             RESP3::Integer(n) => {
@@ -263,13 +274,9 @@ impl RESP3 {
             }
             RESP3::Bulk(b) => {
                 buf.put_u8(b'$');
-                buf.put_slice(
-                    itoa::Buffer::new()
-                        .format(for_both!(b, b => b.len()))
-                        .as_bytes(),
-                );
+                buf.put_slice(itoa::Buffer::new().format(b.len()).as_bytes());
                 buf.put_slice(b"\r\n");
-                buf.put_slice(for_both!(b, b => &b));
+                buf.put_slice(b);
                 buf.put_slice(b"\r\n");
             }
             RESP3::Array(frames) => {
@@ -308,26 +315,18 @@ impl RESP3 {
             }
             RESP3::BulkError(e) => {
                 buf.put_u8(b'!');
-                buf.put_slice(
-                    itoa::Buffer::new()
-                        .format(for_both!(e, e => e.len()))
-                        .as_bytes(),
-                );
+                buf.put_slice(itoa::Buffer::new().format(e.len()).as_bytes());
                 buf.put_slice(b"\r\n");
-                buf.put_slice(for_both!(e, e => &e));
+                buf.put_slice(e);
                 buf.put_slice(b"\r\n");
             }
             RESP3::VerbatimString { encoding, data } => {
                 buf.put_u8(b'=');
-                buf.put_slice(
-                    itoa::Buffer::new()
-                        .format(for_both!(data, data => data.len()))
-                        .as_bytes(),
-                );
+                buf.put_slice(itoa::Buffer::new().format(data.len()).as_bytes());
                 buf.put_slice(b"\r\n");
                 buf.put_slice(encoding);
                 buf.put_u8(b':');
-                buf.put_slice(for_both!(data, data => &data));
+                buf.put_slice(data);
                 buf.put_slice(b"\r\n");
             }
             RESP3::Map(map) => for_both!(
@@ -369,7 +368,6 @@ impl RESP3 {
 impl RESP3 {
     #[allow(clippy::multiple_bound_locations)]
     #[inline]
-    #[async_recursion::async_recursion]
     pub async fn decode_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
@@ -381,8 +379,8 @@ impl RESP3 {
         debug_assert!(!src.is_empty());
 
         let res = match src.get_u8() {
-            b'+' => RESP3::SimpleError(Right(RESP3::decode_string_async(io_read, src).await?)),
-            b'-' => RESP3::SimpleError(Right(RESP3::decode_string_async(io_read, src).await?)),
+            b'+' => RESP3::SimpleString(RESP3::decode_string_async(io_read, src).await?.into()),
+            b'-' => RESP3::SimpleError(RESP3::decode_string_async(io_read, src).await?.into()),
             b':' => RESP3::Integer(RESP3::decode_decimal_async(io_read, src).await?),
             b'$' => {
                 let len = RESP3::decode_length_async(io_read, src).await?;
@@ -397,19 +395,16 @@ impl RESP3 {
                 let res = src.split_to(len);
                 src.advance(2);
 
-                RESP3::Bulk(Right(res))
+                RESP3::Bulk(res.into())
             }
             b'*' => {
                 let len = RESP3::decode_decimal_async(io_read, src).await? as usize;
 
                 let mut frames = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let frame = RESP3::decode_async(io_read, src)
-                        .await?
-                        .ok_or(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "incomplete frame",
-                        ))?;
+                    let frame = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
+                    )?;
                     frames.push(frame);
                 }
 
@@ -490,7 +485,7 @@ impl RESP3 {
                 let e = src.split_to(len);
                 src.advance(2);
 
-                RESP3::BulkError(Right(e))
+                RESP3::BulkError(e.into())
             }
             b'=' => {
                 let len = RESP3::decode_length_async(io_read, src).await?;
@@ -510,7 +505,7 @@ impl RESP3 {
 
                 RESP3::VerbatimString {
                     encoding,
-                    data: Right(data),
+                    data: data.into(),
                 }
             }
             b'%' => {
@@ -518,18 +513,12 @@ impl RESP3 {
 
                 let mut map = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let k = RESP3::decode_async(io_read, src)
-                        .await?
-                        .ok_or(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "incomplete frame",
-                        ))?;
-                    let v = RESP3::decode_async(io_read, src)
-                        .await?
-                        .ok_or(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "incomplete frame",
-                        ))?;
+                    let k = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
+                    )?;
+                    let v = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
+                    )?;
                     map.push((k, v));
                 }
 
@@ -541,12 +530,9 @@ impl RESP3 {
 
                 let mut set = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let frame = RESP3::decode_async(io_read, src)
-                        .await?
-                        .ok_or(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "incomplete frame",
-                        ))?;
+                    let frame = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
+                    )?;
                     set.push(frame);
                 }
 
@@ -558,12 +544,9 @@ impl RESP3 {
 
                 let mut frames = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let frame = RESP3::decode_async(io_read, src)
-                        .await?
-                        .ok_or(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "incomplete frame",
-                        ))?;
+                    let frame = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
+                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
+                    )?;
                     frames.push(frame);
                 }
 
@@ -710,64 +693,198 @@ impl PartialEq for RESP3 {
     }
 }
 
-#[cfg(test)]
-mod frame_tests {
-    // use crate::server::Handler;
-    //
-    // use super::*;
+#[derive(Clone, Debug)]
+pub struct EitherString<'a>(Either<&'a str, String>);
 
-    // TODO:
-    // #[tokio::test]
-    // async fn test_resp3() {
-    //     let frame = Frame::Array(vec![
-    //         Frame::SimpleString("OK".to_string()),
-    //         Frame::Integer(123),
-    //         Frame::Bulk(Bytes::from("hello".as_bytes())),
-    //         Frame::Null,
-    //         Frame::Boolean(true),
-    //         Frame::Double {
-    //             double: 3.14,
-    //             exponent: None,
-    //         },
-    //         Frame::BigNumber(BigInt::from(1234567890)),
-    //         Frame::BulkError(Bytes::from("error".as_bytes())),
-    //         Frame::VerbatimString {
-    //             encoding: *b"txt",
-    //             data: Bytes::from("hello".as_bytes()),
-    //         },
-    //         Frame::Map(Either::Right(
-    //             vec![
-    //                 (Frame::SimpleString("key1".to_string()), Frame::Integer(1)),
-    //                 (Frame::SimpleString("key2".to_string()), Frame::Integer(2)),
-    //             ]
-    //             .into_iter()
-    //             .collect(),
-    //         )),
-    //         Frame::Set(Either::Right(
-    //             vec![
-    //                 Frame::SimpleString("key1".to_string()),
-    //                 Frame::SimpleString("key2".to_string()),
-    //             ]
-    //             .into_iter()
-    //             .collect(),
-    //         )),
-    //         Frame::Push(vec![
-    //             Frame::SimpleString("OK".to_string()),
-    //             Frame::Integer(123),
-    //         ]),
-    //     ]);
-    //
-    //     let mut buf = BytesMut::new();
-    //     frame.encode_buf(&mut buf);
-    //
-    //     let (handler, client) = Handler::new_fake();
-    //
-    //     let mut src = BytesMut::new();
-    //     // let decoded = RESP3::decode_async(&mut cursor, &mut src)
-    //     //     .await
-    //     //     .unwrap()
-    //     //     .unwrap();
-    //
-    //     // assert_eq!(frame, decoded);
-    // }
+impl EitherString<'_> {
+    #[inline]
+    pub fn len(&self) -> usize {
+        for_both!(&self.0, s => s.len())
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        for_both!(&self.0, s => s.is_empty())
+    }
+
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        for_both!(&self.0, s => s.as_bytes())
+    }
+
+    pub fn new_left(value: &'static str) -> Self {
+        EitherString(Left(value))
+    }
+
+    pub fn new_right(value: String) -> Self {
+        EitherString(Right(value))
+    }
+
+    pub fn left(&self) -> Option<&str> {
+        match &self.0 {
+            Either::Left(s) => Some(s),
+            Either::Right(_) => None,
+        }
+    }
+
+    pub fn right(&self) -> Option<&String> {
+        match &self.0 {
+            Either::Left(_) => None,
+            Either::Right(s) => Some(s),
+        }
+    }
+
+    pub fn right_mut(&mut self) -> Option<&mut String> {
+        match &mut self.0 {
+            Either::Left(_) => None,
+            Either::Right(s) => Some(s),
+        }
+    }
+}
+
+impl AsRef<str> for EitherString<'_> {
+    fn as_ref(&self) -> &str {
+        match self {
+            EitherString(Left(s)) => s,
+            EitherString(Right(s)) => s.as_str(),
+        }
+    }
+}
+
+impl Borrow<str> for EitherString<'_> {
+    fn borrow(&self) -> &str {
+        self.as_ref()
+    }
+}
+
+impl Deref for EitherString<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl<'a> From<&'a str> for EitherString<'a> {
+    fn from(s: &'a str) -> Self {
+        EitherString(Left(s))
+    }
+}
+
+impl From<String> for EitherString<'_> {
+    fn from(s: String) -> Self {
+        EitherString(Right(s))
+    }
+}
+
+impl PartialEq for EitherString<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        let a = self.as_ref();
+        let b = other.as_ref();
+        a == b
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct EitherBytes(pub Either<Bytes, BytesMut>);
+
+impl EitherBytes {
+    pub fn len(&self) -> usize {
+        for_both!(&self.0, b => b.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        for_both!(&self.0, b => b.is_empty())
+    }
+
+    pub fn freeze(&mut self) -> bool {
+        match &mut self.0 {
+            Either::Left(_) => false,
+            Either::Right(b) => {
+                self.0 = Either::Left(b.split().freeze());
+                true
+            }
+        }
+    }
+
+    pub fn new_left(value: impl Into<Bytes>) -> Self {
+        EitherBytes(Left(value.into()))
+    }
+
+    pub fn new_right(value: impl Into<BytesMut>) -> Self {
+        EitherBytes(Right(value.into()))
+    }
+
+    pub fn left(&self) -> Option<&Bytes> {
+        match &self.0 {
+            Either::Left(b) => Some(b),
+            Either::Right(_) => None,
+        }
+    }
+
+    pub fn right(&self) -> Option<&BytesMut> {
+        match &self.0 {
+            Either::Left(_) => None,
+            Either::Right(b) => Some(b),
+        }
+    }
+
+    pub fn right_mut(&mut self) -> Option<&mut BytesMut> {
+        match &mut self.0 {
+            Either::Left(_) => None,
+            Either::Right(b) => Some(b),
+        }
+    }
+}
+
+impl AsRef<[u8]> for EitherBytes {
+    fn as_ref(&self) -> &[u8] {
+        for_both!(&self.0, b => b.as_ref())
+    }
+}
+
+impl Borrow<[u8]> for EitherBytes {
+    fn borrow(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
+impl Deref for EitherBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl From<Bytes> for EitherBytes {
+    fn from(b: Bytes) -> Self {
+        EitherBytes(Left(b))
+    }
+}
+
+impl<'a> From<&'a Bytes> for EitherBytes {
+    fn from(b: &'a Bytes) -> Self {
+        EitherBytes(Left(b.clone()))
+    }
+}
+
+impl From<&'static str> for EitherBytes {
+    fn from(value: &'static str) -> Self {
+        EitherBytes(Left(Bytes::from_static(value.as_bytes())))
+    }
+}
+
+impl From<BytesMut> for EitherBytes {
+    fn from(b: BytesMut) -> Self {
+        EitherBytes(Right(b))
+    }
+}
+
+impl PartialEq for EitherBytes {
+    fn eq(&self, other: &Self) -> bool {
+        let a = self.as_ref();
+        let b = other.as_ref();
+        a == b
+    }
 }

@@ -4,7 +4,6 @@
 // HSet
 
 use bytes::Bytes;
-use either::Either::Left;
 
 use crate::{
     cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err, Mutable},
@@ -109,7 +108,7 @@ impl CmdExecutor for HGet {
             Ok(())
         })?;
 
-        Ok(value.map(|b| RESP3::Bulk(Left(b))))
+        Ok(value.map(|b| RESP3::Bulk(b.into())))
     }
 
     fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
@@ -169,121 +168,121 @@ impl CmdExecutor for HSet {
     }
 }
 
-// #[cfg(test)]
-// mod cmd_hash_tests {
-//     use super::*;
-//     use crate::util::test_init;
-//
-//     #[tokio::test]
-//     async fn hdel_test() {
-//         test_init();
-//         let shared = Shared::default();
-//
-//         let hset = HSet::parse(
-//             &mut ["key", "field1", "value1", "field2", "value2"]
-//                 .as_ref()
-//                 .into(),
-//         )
-//         .unwrap();
-//         assert_eq!(
-//             hset._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(2)
-//         );
-//
-//         let hdel = HDel::parse(&mut ["key", "field1", "field2"].as_ref().into()).unwrap();
-//         assert_eq!(
-//             hdel._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(2)
-//         );
-//
-//         let hdel = HDel::parse(&mut ["key", "field1", "field2"].as_ref().into()).unwrap();
-//         assert_eq!(
-//             hdel._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(0)
-//         );
-//     }
-//
-//     #[tokio::test]
-//     async fn hexists_test() {
-//         test_init();
-//         let shared = Shared::default();
-//
-//         let hset = HSet::parse(
-//             &mut ["key", "field1", "value1", "field2", "value2"]
-//                 .as_ref()
-//                 .into(),
-//         )
-//         .unwrap();
-//         assert_eq!(
-//             hset._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(2)
-//         );
-//
-//         let hexists = HExists::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
-//         assert_eq!(
-//             hexists._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(1)
-//         );
-//
-//         let hexists = HExists::parse(&mut ["key", "field3"].as_ref().into()).unwrap();
-//         assert_eq!(
-//             hexists._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(0)
-//         );
-//     }
-//
-//     #[tokio::test]
-//     async fn hget_test() {
-//         test_init();
-//         let shared = Shared::default();
-//
-//         let hset = HSet::parse(
-//             &mut ["key", "field1", "value1", "field2", "value2"]
-//                 .as_ref()
-//                 .into(),
-//         )
-//         .unwrap();
-//         assert_eq!(
-//             hset._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(2)
-//         );
-//
-//         let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
-//         assert_eq!(
-//             hget._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Bulk(Bytes::from("value1"))
-//         );
-//
-//         let hget = HGet::parse(&mut ["key", "field3"].as_ref().into()).unwrap();
-//         assert!(hget._execute(&shared).await.unwrap().is_none());
-//     }
-//
-//     #[tokio::test]
-//     async fn hset_test() {
-//         test_init();
-//         let shared = Shared::default();
-//
-//         let hset = HSet::parse(
-//             &mut ["key", "field1", "value1", "field2", "value2"]
-//                 .as_ref()
-//                 .into(),
-//         )
-//         .unwrap();
-//         assert_eq!(
-//             hset._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Integer(2)
-//         );
-//
-//         let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
-//         assert_eq!(
-//             hget._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Bulk(Bytes::from("value1"))
-//         );
-//
-//         let hget = HGet::parse(&mut ["key", "field2"].as_ref().into()).unwrap();
-//         assert_eq!(
-//             hget._execute(&shared).await.unwrap().unwrap(),
-//             RESP3::Bulk(Bytes::from("value2"))
-//         );
-//     }
-// }
+#[cfg(test)]
+mod cmd_hash_tests {
+    use super::*;
+    use crate::util::test_init;
+
+    #[tokio::test]
+    async fn hdel_test() {
+        test_init();
+        let shared = Shared::default();
+
+        let hset = HSet::parse(
+            &mut ["key", "field1", "value1", "field2", "value2"]
+                .as_ref()
+                .into(),
+        )
+        .unwrap();
+        assert_eq!(
+            hset._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(2)
+        );
+
+        let hdel = HDel::parse(&mut ["key", "field1", "field2"].as_ref().into()).unwrap();
+        assert_eq!(
+            hdel._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(2)
+        );
+
+        let hdel = HDel::parse(&mut ["key", "field1", "field2"].as_ref().into()).unwrap();
+        assert_eq!(
+            hdel._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn hexists_test() {
+        test_init();
+        let shared = Shared::default();
+
+        let hset = HSet::parse(
+            &mut ["key", "field1", "value1", "field2", "value2"]
+                .as_ref()
+                .into(),
+        )
+        .unwrap();
+        assert_eq!(
+            hset._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(2)
+        );
+
+        let hexists = HExists::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
+        assert_eq!(
+            hexists._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(1)
+        );
+
+        let hexists = HExists::parse(&mut ["key", "field3"].as_ref().into()).unwrap();
+        assert_eq!(
+            hexists._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn hget_test() {
+        test_init();
+        let shared = Shared::default();
+
+        let hset = HSet::parse(
+            &mut ["key", "field1", "value1", "field2", "value2"]
+                .as_ref()
+                .into(),
+        )
+        .unwrap();
+        assert_eq!(
+            hset._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(2)
+        );
+
+        let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
+        assert_eq!(
+            hget._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Bulk("value1".into())
+        );
+
+        let hget = HGet::parse(&mut ["key", "field3"].as_ref().into()).unwrap();
+        assert!(hget._execute(&shared).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn hset_test() {
+        test_init();
+        let shared = Shared::default();
+
+        let hset = HSet::parse(
+            &mut ["key", "field1", "value1", "field2", "value2"]
+                .as_ref()
+                .into(),
+        )
+        .unwrap();
+        assert_eq!(
+            hset._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Integer(2)
+        );
+
+        let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
+        assert_eq!(
+            hget._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Bulk("value1".into())
+        );
+
+        let hget = HGet::parse(&mut ["key", "field2"].as_ref().into()).unwrap();
+        assert_eq!(
+            hget._execute(&shared).await.unwrap().unwrap(),
+            RESP3::Bulk("value2".into())
+        );
+    }
+}

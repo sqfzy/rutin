@@ -26,7 +26,7 @@ version = 6                             # RDB版本
 enable_checksum = false                 # 是否开启RDB校验和
 
 [aof]
-enable = true                    # 是否开启AOF持久化
+enable = false                   # 是否开启AOF持久化
 use_rdb_preamble = true          # 是否在AOF文件开头加入RDB版本信息
 file_path = "appendonly.aof"     # AOF文件路径
 append_fsync = "everysec"        # AOF同步频率。可能为：always | everysec | no

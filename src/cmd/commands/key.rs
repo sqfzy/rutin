@@ -14,7 +14,6 @@ use crate::{
     Id, Int, Key, EPOCH,
 };
 use bytes::{Bytes, BytesMut};
-use either::Either::Left;
 use rayon::prelude::*;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -102,7 +101,7 @@ impl CmdExecutor for Dump {
             Ok(())
         })?;
 
-        Ok(Some(RESP3::Bulk(Left(buf.freeze()))))
+        Ok(Some(RESP3::Bulk(buf.freeze().into())))
     }
 
     fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
@@ -391,7 +390,7 @@ impl CmdExecutor for Keys {
                 .filter_map(|entry| {
                     std::str::from_utf8(entry.key()).ok().and_then(|key| {
                         re.is_match(key)
-                            .then(|| RESP3::Bulk(Left(entry.key().clone())))
+                            .then(|| RESP3::Bulk(entry.key().clone().into()))
                     })
                 })
                 .collect::<Vec<RESP3>>()
@@ -401,7 +400,7 @@ impl CmdExecutor for Keys {
                 .filter_map(|entry| {
                     std::str::from_utf8(entry.key()).ok().and_then(|key| {
                         re.is_match(key)
-                            .then(|| RESP3::Bulk(Left(entry.key().clone())))
+                            .then(|| RESP3::Bulk(entry.key().clone().into()))
                     })
                 })
                 .collect::<Vec<RESP3>>()
@@ -458,7 +457,7 @@ impl CmdExecutor for NBKeys {
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
                             re.is_match(key)
-                                .then(|| RESP3::Bulk(Left(entry.key().clone())))
+                                .then(|| RESP3::Bulk(entry.key().clone().into()))
                         })
                     })
                     .collect::<Vec<RESP3>>()
@@ -468,7 +467,7 @@ impl CmdExecutor for NBKeys {
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
                             re.is_match(key)
-                                .then(|| RESP3::Bulk(Left(entry.key().clone())))
+                                .then(|| RESP3::Bulk(entry.key().clone().into()))
                         })
                     })
                     .collect::<Vec<RESP3>>()
@@ -643,7 +642,7 @@ impl CmdExecutor for Type {
             Ok(())
         })?;
 
-        Ok(Some(RESP3::SimpleString(Left(typ))))
+        Ok(Some(RESP3::SimpleString(typ.into())))
     }
 
     fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
@@ -657,549 +656,560 @@ impl CmdExecutor for Type {
     }
 }
 
-// #[cfg(test)]
-// mod cmd_key_tests {
-//     use super::*;
-//     use crate::shared::{
-//         db::{db_tests::get_object, Hash, List, Object, Set, Str, ZSet},
-//         Shared,
-//     };
-//
-//     // 允许的时间误差
-//     const ALLOWED_DELTA: u64 = 3;
-//
-//     #[tokio::test]
-//     async fn del_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         assert!(db.contains_object(b"key1"));
-//
-//         // case: 键存在
-//         let del = Del::parse(&mut CmdFrame::from(["DEL", "key1"].as_ref())).unwrap();
-//         let result = del._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//         assert!(!db.contains_object(b"key1"));
-//
-//         // case: 键不存在
-//         let del = Del::parse(&mut CmdFrame::from(["DEL", "key_nil"].as_ref())).unwrap();
-//         let result = del._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(0));
-//     }
-//
-//     #[tokio::test]
-//     async fn exists_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         assert!(db.contains_object(b"key1"));
-//
-//         // case: 键存在
-//         let exists = Exists::parse(&mut CmdFrame::from(["key1"].as_ref())).unwrap();
-//         let result = exists._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//
-//         // case: 键不存在
-//         let exists = Exists::parse(&mut CmdFrame::from(["key_nil"].as_ref())).unwrap();
-//         let result = exists._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//     }
-//
-//     #[tokio::test]
-//     async fn expire_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         assert!(get_object(db, b"key1").unwrap().expire().is_none());
-//
-//         // case: 键存在，设置过期时间
-//         let expire = Expire::parse(&mut CmdFrame::from(["key1", "10"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//         assert!(get_object(db, b"key1").unwrap().expire().is_some());
-//
-//         // case: 键不存在
-//         let expire = Expire::parse(&mut CmdFrame::from(["key_nil", "10"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(Instant::now() + Duration::from_secs(10)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//         // case: with EX option
-//         let expire = Expire::parse(&mut CmdFrame::from(["key_with_ex", "10", "NX"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire =
-//             Expire::parse(&mut CmdFrame::from(["key_without_ex", "10", "NX"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(Instant::now() + Duration::from_secs(10)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: with NX option
-//         let expire = Expire::parse(&mut CmdFrame::from(["key_with_ex", "10", "NX"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire =
-//             Expire::parse(&mut CmdFrame::from(["key_without_ex", "10", "NX"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(Instant::now() + Duration::from_secs(10)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: with GT option
-//         let expire = Expire::parse(&mut CmdFrame::from(["key_with_ex", "5", "GT"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire = Expire::parse(&mut CmdFrame::from(["key_with_ex", "20", "GT"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(Instant::now() + Duration::from_secs(10)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: with LT option
-//         let expire = Expire::parse(&mut CmdFrame::from(["key_with_ex", "20", "LT"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire = Expire::parse(&mut CmdFrame::from(["key_with_ex", "5", "LT"].as_ref())).unwrap();
-//         let result = expire._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//     }
-//
-//     #[tokio::test]
-//     async fn expire_at_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         assert!(get_object(db, b"key1").unwrap().expire().is_none());
-//
-//         // case: 键存在，设置过期时间
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             [
-//                 "key1",
-//                 "1893427200", // 2030-01-01 00:00:00
-//             ]
-//             .as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//         assert!(get_object(db, b"key1").unwrap().expire().is_some());
-//
-//         // case: 键不存在
-//         let expire_at =
-//             ExpireAt::parse(&mut CmdFrame::from(["key_nil", "1893427200"].as_ref())).unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(*EPOCH + Duration::from_secs(1893427200)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: with EX option
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_with_ex", "1893427200", "NX"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_without_ex", "1893427200", "NX"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(*EPOCH + Duration::from_secs(1893427200)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: with NX option
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_with_ex", "1893427200", "NX"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_without_ex", "1893427200", "NX"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(*EPOCH + Duration::from_secs(1893427200)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: with GT option
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_with_ex", "1893427000", "GT"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_with_ex", "1893427201", "GT"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(*EPOCH + Duration::from_secs(1893427200)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: with LT option
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_with_ex", "1893427201", "LT"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         let expire_at = ExpireAt::parse(&mut CmdFrame::from(
-//             ["key_with_ex", "1893427000", "LT"].as_ref(),
-//         ))
-//         .unwrap();
-//         let result = expire_at._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//     }
-//
-//     #[tokio::test]
-//     async fn expire_time_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         assert!(get_object(db, b"key1").unwrap().expire().is_none());
-//         let expire = Instant::now() + Duration::from_secs(10);
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str("value_with_ex".into(), Some(expire)),
-//         );
-//
-//         // case: 键存在，但没有过期时间
-//         let expire_time = ExpireTime::parse(&mut CmdFrame::from(["key1"].as_ref())).unwrap();
-//         let result = expire_time._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == -1);
-//
-//         // case: 键不存在
-//         let expire_time = ExpireTime::parse(&mut CmdFrame::from(["key_nil"].as_ref())).unwrap();
-//         let result = expire_time._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == -2);
-//
-//         // case: 键存在且有过期时间
-//         let expire_time = ExpireTime::parse(&mut CmdFrame::from(["key_with_ex"].as_ref())).unwrap();
-//         let result = expire_time._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(
-//             result,
-//             RESP3::Integer(expire.duration_since(*EPOCH).as_secs() as Int)
-//         );
-//     }
-//
-//     #[tokio::test]
-//     async fn keys_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         db.insert_object(Key::from("key2"), Object::new_str("value2".into(), None));
-//         db.insert_object(Key::from("key3"), Object::new_str("value3".into(), None));
-//         db.insert_object(Key::from("key4"), Object::new_str("value4".into(), None));
-//
-//         let keys = Keys::parse(&mut CmdFrame::from([".*"].as_ref())).unwrap();
-//         let result = keys
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_bulks()
-//             .unwrap()
-//             .to_vec();
-//         assert!(
-//             result.contains(&"key1".into())
-//                 && result.contains(&"key2".into())
-//                 && result.contains(&"key3".into())
-//                 && result.contains(&"key4".into())
-//         );
-//
-//         let keys = Keys::parse(&mut CmdFrame::from(["key*"].as_ref())).unwrap();
-//         let result = keys
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_bulks()
-//             .unwrap()
-//             .to_vec();
-//         assert!(
-//             result.contains(&"key1".into())
-//                 && result.contains(&"key2".into())
-//                 && result.contains(&"key3".into())
-//                 && result.contains(&"key4".into())
-//         );
-//
-//         let keys = Keys::parse(&mut CmdFrame::from(["key1"].as_ref())).unwrap();
-//         let result = keys
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_bulks()
-//             .unwrap()
-//             .to_vec();
-//         assert!(result.contains(&"key1".into()));
-//     }
-//
-//     #[tokio::test]
-//     async fn persist_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str(
-//                 "value_with_ex".into(),
-//                 Some(Instant::now() + Duration::from_secs(10)),
-//             ),
-//         );
-//         db.insert_object(
-//             Key::from("key_without_ex"),
-//             Object::new_str("value_without_ex".into(), None),
-//         );
-//
-//         // case: 键存在，有过期时间
-//         let persist = Persist::parse(&mut CmdFrame::from(["key_with_ex"].as_ref())).unwrap();
-//         let result = persist._execute(&shared).await.unwrap().unwrap();
-//         assert_eq!(result, RESP3::Integer(1));
-//         assert!(get_object(db, b"key_with_ex").unwrap().expire().is_none());
-//
-//         // case: 键存在，没有过期时间
-//         let persist = Persist::parse(&mut CmdFrame::from(["key_without_ex"].as_ref())).unwrap();
-//         let result = persist._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//
-//         // case: 键不存在
-//         let persist = Persist::parse(&mut CmdFrame::from(["key_nil"].as_ref())).unwrap();
-//         let result = persist._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == 0);
-//     }
-//
-//     #[tokio::test]
-//     async fn pttl_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         assert!(get_object(db, b"key1").unwrap().expire().is_none());
-//         let dur = Duration::from_secs(10);
-//         let expire = Instant::now() + dur;
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str("value_with_ex".into(), Some(expire)),
-//         );
-//
-//         // case: 键存在，但没有过期时间
-//         let pttl = Pttl::parse(&mut CmdFrame::from(["key1"].as_ref())).unwrap();
-//         let result = pttl._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == -1);
-//
-//         // case: 键不存在
-//         let pttl = Pttl::parse(&mut CmdFrame::from(["key_nil"].as_ref())).unwrap();
-//         let result = pttl._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == -2);
-//
-//         // case: 键存在且有过期时间
-//         let pttl = Pttl::parse(&mut CmdFrame::from(["key_with_ex"].as_ref())).unwrap();
-//         let result = pttl
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .on_integer()
-//             .unwrap() as u64;
-//         assert!(dur.as_millis() as u64 - result < ALLOWED_DELTA);
-//     }
-//
-//     #[tokio::test]
-//     async fn ttl_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-//         assert!(get_object(db, b"key1").unwrap().expire().is_none());
-//         let dur = Duration::from_secs(10);
-//         let expire = Instant::now() + dur;
-//         db.insert_object(
-//             Key::from("key_with_ex"),
-//             Object::new_str("value_with_ex".into(), Some(expire)),
-//         );
-//
-//         // case: 键存在，但没有过期时间
-//         let ttl = Ttl::parse(&mut CmdFrame::from(["key1"].as_ref())).unwrap();
-//         let result = ttl._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == -1);
-//
-//         // case: 键不存在
-//         let ttl = Ttl::parse(&mut CmdFrame::from(["key_nil"].as_ref())).unwrap();
-//         let result = ttl._execute(&shared).await.unwrap_err();
-//         matches!(result, CmdError::ErrorCode { code } if code == -2);
-//
-//         // case: 键存在且有过期时间
-//         let ttl = Ttl::parse(&mut CmdFrame::from(["key_with_ex"].as_ref())).unwrap();
-//         let result = ttl
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .on_integer()
-//             .unwrap() as u64;
-//         assert!(dur.as_secs() - result < ALLOWED_DELTA);
-//     }
-//
-//     #[tokio::test]
-//     async fn type_test() {
-//         let shared = Shared::default();
-//         let db = shared.db();
-//
-//         db.insert_object(Key::from("key1"), Object::new_str(Str::default(), None));
-//         db.insert_object(Key::from("key2"), Object::new_list(List::default(), None));
-//         db.insert_object(Key::from("key3"), Object::new_set(Set::default(), None));
-//         db.insert_object(Key::from("key4"), Object::new_hash(Hash::default(), None));
-//         db.insert_object(Key::from("key5"), Object::new_zset(ZSet::default(), None));
-//
-//         // case: 键存在
-//         let typ = Type::parse(&mut CmdFrame::from(["key1"].as_ref())).unwrap();
-//         let result = typ
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_simple()
-//             .unwrap();
-//         assert_eq!(result, "string");
-//
-//         let typ = Type::parse(&mut CmdFrame::from(["key2"].as_ref())).unwrap();
-//         let result = typ
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_simple()
-//             .unwrap();
-//         assert_eq!(result, "list");
-//
-//         let typ = Type::parse(&mut CmdFrame::from(["key3"].as_ref())).unwrap();
-//         let result = typ
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_simple()
-//             .unwrap();
-//         assert_eq!(result, "set");
-//
-//         let typ = Type::parse(&mut CmdFrame::from(["key4"].as_ref())).unwrap();
-//         let result = typ
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_simple()
-//             .unwrap();
-//         assert_eq!(result, "hash");
-//
-//         let typ = Type::parse(&mut CmdFrame::from(["key5"].as_ref())).unwrap();
-//         let result = typ
-//             ._execute(&shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .into_simple()
-//             .unwrap();
-//         assert_eq!(result, "zset");
-//     }
-// }
+#[cfg(test)]
+mod cmd_key_tests {
+    use super::*;
+    use crate::shared::{
+        db::{db_tests::get_object, Hash, List, Object, Set, Str, ZSet},
+        Shared,
+    };
+
+    // 允许的时间误差
+    const ALLOWED_DELTA: u64 = 3;
+
+    #[tokio::test]
+    async fn del_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        assert!(db.contains_object(b"key1"));
+
+        // case: 键存在
+        let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key1"].as_ref())).unwrap();
+        let result = del._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+        assert!(!db.contains_object(b"key1"));
+
+        // case: 键不存在
+        let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key_nil"].as_ref())).unwrap();
+        let result = del._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(0));
+    }
+
+    #[tokio::test]
+    async fn exists_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        assert!(db.contains_object(b"key1"));
+
+        // case: 键存在
+        let exists = Exists::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let result = exists._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+
+        // case: 键不存在
+        let exists = Exists::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
+        let result = exists._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+    }
+
+    #[tokio::test]
+    async fn expire_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+
+        // case: 键存在，设置过期时间
+        let expire = Expire::parse(&mut CmdUnparsed::from(["key1", "10"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+        assert!(get_object(db, b"key1").unwrap().expire().is_some());
+
+        // case: 键不存在
+        let expire = Expire::parse(&mut CmdUnparsed::from(["key_nil", "10"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(Instant::now() + Duration::from_secs(10)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+        // case: with EX option
+        let expire =
+            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire = Expire::parse(&mut CmdUnparsed::from(
+            ["key_without_ex", "10", "NX"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(Instant::now() + Duration::from_secs(10)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: with NX option
+        let expire =
+            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire = Expire::parse(&mut CmdUnparsed::from(
+            ["key_without_ex", "10", "NX"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(Instant::now() + Duration::from_secs(10)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: with GT option
+        let expire =
+            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "5", "GT"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire =
+            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "20", "GT"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(Instant::now() + Duration::from_secs(10)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: with LT option
+        let expire =
+            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "20", "LT"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire =
+            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "5", "LT"].as_ref())).unwrap();
+        let result = expire._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+    }
+
+    #[tokio::test]
+    async fn expire_at_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+
+        // case: 键存在，设置过期时间
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            [
+                "key1",
+                "1893427200", // 2030-01-01 00:00:00
+            ]
+            .as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+        assert!(get_object(db, b"key1").unwrap().expire().is_some());
+
+        // case: 键不存在
+        let expire_at =
+            ExpireAt::parse(&mut CmdUnparsed::from(["key_nil", "1893427200"].as_ref())).unwrap();
+        let result = expire_at._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(*EPOCH + Duration::from_secs(1893427200)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: with EX option
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_with_ex", "1893427200", "NX"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_without_ex", "1893427200", "NX"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(*EPOCH + Duration::from_secs(1893427200)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: with NX option
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_with_ex", "1893427200", "NX"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_without_ex", "1893427200", "NX"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(*EPOCH + Duration::from_secs(1893427200)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: with GT option
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_with_ex", "1893427000", "GT"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_with_ex", "1893427201", "GT"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(*EPOCH + Duration::from_secs(1893427200)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: with LT option
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_with_ex", "1893427201", "LT"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
+            ["key_with_ex", "1893427000", "LT"].as_ref(),
+        ))
+        .unwrap();
+        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+    }
+
+    #[tokio::test]
+    async fn expire_time_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        let expire = Instant::now() + Duration::from_secs(10);
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str("value_with_ex".into(), Some(expire)),
+        );
+
+        // case: 键存在，但没有过期时间
+        let expire_time = ExpireTime::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let result = expire_time._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == -1);
+
+        // case: 键不存在
+        let expire_time = ExpireTime::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
+        let result = expire_time._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == -2);
+
+        // case: 键存在且有过期时间
+        let expire_time =
+            ExpireTime::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
+        let result = expire_time._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(
+            result,
+            RESP3::Integer(expire.duration_since(*EPOCH).as_secs() as Int)
+        );
+    }
+
+    #[tokio::test]
+    async fn keys_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        db.insert_object(Key::from("key2"), Object::new_str("value2".into(), None));
+        db.insert_object(Key::from("key3"), Object::new_str("value3".into(), None));
+        db.insert_object(Key::from("key4"), Object::new_str("value4".into(), None));
+
+        let keys = Keys::parse(&mut CmdUnparsed::from([".*"].as_ref())).unwrap();
+        let result = keys
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .to_vec();
+        assert!(
+            result.contains(&RESP3::Bulk("key1".into()))
+                && result.contains(&RESP3::Bulk("key2".into()))
+                && result.contains(&RESP3::Bulk("key3".into()))
+                && result.contains(&RESP3::Bulk("key4".into()))
+        );
+
+        let keys = Keys::parse(&mut CmdUnparsed::from(["key*"].as_ref())).unwrap();
+        let result = keys
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .to_vec();
+        assert!(
+            result.contains(&RESP3::Bulk("key1".into()))
+                && result.contains(&RESP3::Bulk("key2".into()))
+                && result.contains(&RESP3::Bulk("key3".into()))
+                && result.contains(&RESP3::Bulk("key4".into()))
+        );
+
+        let keys = Keys::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let result = keys
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .to_vec();
+        assert!(result.contains(&RESP3::Bulk("key1".into())));
+    }
+
+    #[tokio::test]
+    async fn persist_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str(
+                "value_with_ex".into(),
+                Some(Instant::now() + Duration::from_secs(10)),
+            ),
+        );
+        db.insert_object(
+            Key::from("key_without_ex"),
+            Object::new_str("value_without_ex".into(), None),
+        );
+
+        // case: 键存在，有过期时间
+        let persist = Persist::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
+        let result = persist._execute(&shared).await.unwrap().unwrap();
+        assert_eq!(result, RESP3::Integer(1));
+        assert!(get_object(db, b"key_with_ex").unwrap().expire().is_none());
+
+        // case: 键存在，没有过期时间
+        let persist = Persist::parse(&mut CmdUnparsed::from(["key_without_ex"].as_ref())).unwrap();
+        let result = persist._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+
+        // case: 键不存在
+        let persist = Persist::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
+        let result = persist._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == 0);
+    }
+
+    #[tokio::test]
+    async fn pttl_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        let dur = Duration::from_secs(10);
+        let expire = Instant::now() + dur;
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str("value_with_ex".into(), Some(expire)),
+        );
+
+        // case: 键存在，但没有过期时间
+        let pttl = Pttl::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let result = pttl._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == -1);
+
+        // case: 键不存在
+        let pttl = Pttl::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
+        let result = pttl._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == -2);
+
+        // case: 键存在且有过期时间
+        let pttl = Pttl::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
+        let result = pttl
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_integer()
+            .unwrap() as u64;
+        assert!(dur.as_millis() as u64 - result < ALLOWED_DELTA);
+    }
+
+    #[tokio::test]
+    async fn ttl_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
+        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        let dur = Duration::from_secs(10);
+        let expire = Instant::now() + dur;
+        db.insert_object(
+            Key::from("key_with_ex"),
+            Object::new_str("value_with_ex".into(), Some(expire)),
+        );
+
+        // case: 键存在，但没有过期时间
+        let ttl = Ttl::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let result = ttl._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == -1);
+
+        // case: 键不存在
+        let ttl = Ttl::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
+        let result = ttl._execute(&shared).await.unwrap_err();
+        matches!(result, CmdError::ErrorCode { code } if code == -2);
+
+        // case: 键存在且有过期时间
+        let ttl = Ttl::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
+        let result = ttl
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_integer()
+            .unwrap() as u64;
+        assert!(dur.as_secs() - result < ALLOWED_DELTA);
+    }
+
+    #[tokio::test]
+    async fn type_test() {
+        let shared = Shared::default();
+        let db = shared.db();
+
+        db.insert_object(Key::from("key1"), Object::new_str(Str::default(), None));
+        db.insert_object(Key::from("key2"), Object::new_list(List::default(), None));
+        db.insert_object(Key::from("key3"), Object::new_set(Set::default(), None));
+        db.insert_object(Key::from("key4"), Object::new_hash(Hash::default(), None));
+        db.insert_object(Key::from("key5"), Object::new_zset(ZSet::default(), None));
+
+        // case: 键存在
+        let typ = Type::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let result = typ
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .to_simple_string()
+            .unwrap();
+        assert_eq!(result, "string");
+
+        let typ = Type::parse(&mut CmdUnparsed::from(["key2"].as_ref())).unwrap();
+        let result = typ
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .to_simple_string()
+            .unwrap();
+        assert_eq!(result, "list");
+
+        let typ = Type::parse(&mut CmdUnparsed::from(["key3"].as_ref())).unwrap();
+        let result = typ
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .to_simple_string()
+            .unwrap();
+        assert_eq!(result, "set");
+
+        let typ = Type::parse(&mut CmdUnparsed::from(["key4"].as_ref())).unwrap();
+        let result = typ
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .to_simple_string()
+            .unwrap();
+        assert_eq!(result, "hash");
+
+        let typ = Type::parse(&mut CmdUnparsed::from(["key5"].as_ref())).unwrap();
+        let result = typ
+            ._execute(&shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .to_simple_string()
+            .unwrap();
+        assert_eq!(result, "zset");
+    }
+}

@@ -11,7 +11,6 @@ use crate::{
     util, Id,
 };
 use bytes::Bytes;
-use either::Either::{Left, Right};
 
 /// # Reply:
 ///
@@ -48,8 +47,8 @@ impl CmdExecutor for Ping {
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let res = match self.msg {
-            Some(msg) => RESP3::SimpleString(Right(String::from_utf8_lossy(&msg).to_string())),
-            None => RESP3::SimpleString(Left("PONG")),
+            Some(msg) => RESP3::SimpleString(String::from_utf8_lossy(&msg).to_string().into()),
+            None => RESP3::SimpleString("PONG".into()),
         };
 
         Ok(Some(res))
@@ -60,9 +59,7 @@ impl CmdExecutor for Ping {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Ping {
-            msg: args.next(),
-        })
+        Ok(Ping { msg: args.next() })
     }
 }
 
@@ -78,7 +75,7 @@ impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
-        Ok(Some(RESP3::Bulk(Left(self.msg))))
+        Ok(Some(RESP3::Bulk(self.msg.into())))
     }
 
     fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
@@ -220,7 +217,9 @@ impl CmdExecutor for BgSave {
             }
         });
 
-        Ok(Some(RESP3::SimpleString(Left("Background saving started"))))
+        Ok(Some(RESP3::SimpleString(
+            "Background saving started".into(),
+        )))
     }
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
@@ -312,7 +311,7 @@ impl CmdExecutor for ClientTracking {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
-            return Ok(Some(RESP3::SimpleString(Left("OK"))));
+            return Ok(Some(RESP3::SimpleString("OK".into())));
         }
 
         if let Some(redirect) = self.redirect {
@@ -326,7 +325,7 @@ impl CmdExecutor for ClientTracking {
             handler.context.client_track = Some(handler.bg_task_channel.new_sender());
         }
 
-        Ok(Some(RESP3::SimpleString(Left("OK"))))
+        Ok(Some(RESP3::SimpleString("OK".into())))
     }
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {

@@ -10,7 +10,6 @@ use crate::{
     Int, Key,
 };
 use bytes::Bytes;
-use either::Either::Left;
 use snafu::location;
 
 /// # Reply:
@@ -39,9 +38,9 @@ impl CmdExecutor for Publish {
         for listener in listeners {
             let res = listener
                 .send_async(RESP3::Array(vec![
-                    RESP3::Bulk(Left("message".into())),
-                    RESP3::Bulk(Left(self.topic.clone())),
-                    RESP3::Bulk(Left(self.msg.clone())),
+                    RESP3::Bulk("message".into()),
+                    RESP3::Bulk(self.topic.clone().into()),
+                    RESP3::Bulk(self.msg.clone().into()),
                 ]))
                 .await;
 
@@ -108,8 +107,8 @@ impl CmdExecutor for Subscribe {
             }
 
             conn.write_frame(&RESP3::Array(vec![
-                RESP3::Bulk(Left("subscribe".into())),
-                RESP3::Bulk(Left(topic)),
+                RESP3::Bulk("subscribe".into()),
+                RESP3::Bulk(topic.into()),
                 RESP3::Integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await
@@ -169,8 +168,8 @@ impl CmdExecutor for Unsubscribe {
         } else {
             for topic in self.topics {
                 conn.write_frame(&RESP3::Array(vec![
-                    RESP3::Bulk(Left("unsubscribe".into())),
-                    RESP3::Bulk(Left(topic)),
+                    RESP3::Bulk("unsubscribe".into()),
+                    RESP3::Bulk(topic.into()),
                     RESP3::Integer(0),
                 ]))
                 .await
@@ -192,8 +191,8 @@ impl CmdExecutor for Unsubscribe {
             }
 
             conn.write_frame(&RESP3::Array(vec![
-                RESP3::Bulk(Left("unsubscribe".into())),
-                RESP3::Bulk(Left(topic)),
+                RESP3::Bulk("unsubscribe".into()),
+                RESP3::Bulk(topic.into()),
                 RESP3::Integer(subscribed_channels.len() as Int),
             ]))
             .await
@@ -221,119 +220,121 @@ impl CmdExecutor for Unsubscribe {
     }
 }
 
-// #[cfg(test)]
-// mod cmd_pub_sub_tests {
-//     use super::*;
-//     use crate::util::test_init;
-//
-//     #[tokio::test]
-//     async fn sub_pub_unsub_test() {
-//         test_init();
-//
-//         let (mut handler, _) = Handler::new_fake();
-//
-//         // 订阅channel1和channel2
-//         let subscribe =
-//             Subscribe::parse(&mut CmdUnparsed::from(["channel1", "channel2"].as_ref())).unwrap();
-//         subscribe.execute(&mut handler).await.unwrap();
-//
-//         assert!(handler
-//             .shared
-//             .db()
-//             .get_channel_all_listener(b"channel1")
-//             .is_some());
-//         assert!(handler
-//             .shared
-//             .db()
-//             .get_channel_all_listener(b"channel2")
-//             .is_some());
-//
-//         assert_eq!(
-//             2,
-//             handler.context.subscribed_channels.as_ref().unwrap().len()
-//         );
-//
-//         // 订阅channel3
-//         let subscribe = Subscribe::parse(&mut CmdUnparsed::from(["channel3"].as_ref())).unwrap();
-//         subscribe.execute(&mut handler).await.unwrap();
-//
-//         assert!(handler
-//             .shared
-//             .db()
-//             .get_channel_all_listener(b"channel3")
-//             .is_some());
-//
-//         assert_eq!(
-//             3,
-//             handler.context.subscribed_channels.as_ref().unwrap().len()
-//         );
-//
-//         // 向channel1发布消息
-//         let publish =
-//             Publish::parse(&mut CmdUnparsed::from(["channel1", "hello"].as_ref())).unwrap();
-//         let res = publish
-//             ._execute(&handler.shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .on_integer()
-//             .unwrap();
-//         assert_eq!(res, 1);
-//
-//         let msg = handler
-//             .bg_task_channel
-//             .recv_from_bg_task()
-//             .await
-//             .into_array()
-//             .unwrap();
-//         matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");
-//         matches!(msg.get(1).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"channel1");
-//         matches!(msg.get(2).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"hello");
-//
-//         // 向channel2发布消息
-//         let publish =
-//             Publish::parse(&mut CmdUnparsed::from(["channel2", "world"].as_ref())).unwrap();
-//         let res = publish
-//             ._execute(&handler.shared)
-//             .await
-//             .unwrap()
-//             .unwrap()
-//             .on_integer()
-//             .unwrap();
-//         assert_eq!(res, 1);
-//
-//         let msg = handler
-//             .bg_task_channel
-//             .recv_from_bg_task()
-//             .await
-//             .into_array()
-//             .unwrap();
-//         matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");
-//         matches!(msg.get(1).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"channel2");
-//         matches!(msg.get(2).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"world");
-//
-//         // 尝试向未订阅的频道发布消息
-//         let publish = Publish::parse(&mut CmdUnparsed::from(
-//             ["channel_not_exist", "hello"].as_ref(),
-//         ))
-//         .unwrap();
-//         let res = publish.execute(&mut handler).await.unwrap_err();
-//         matches!(res, CmdError::ErrorCode { code } if code == 0);
-//
-//         // 取消订阅channel1
-//         let unsubscribe =
-//             Unsubscribe::parse(&mut CmdUnparsed::from(["channel1"].as_ref())).unwrap();
-//         unsubscribe.execute(&mut handler).await.unwrap();
-//
-//         assert!(handler
-//             .shared
-//             .db()
-//             .get_channel_all_listener(b"channel1")
-//             .is_none());
-//
-//         assert_eq!(
-//             2,
-//             handler.context.subscribed_channels.as_ref().unwrap().len()
-//         );
-//     }
-// }
+#[cfg(test)]
+mod cmd_pub_sub_tests {
+    use super::*;
+    use crate::util::test_init;
+
+    #[tokio::test]
+    async fn sub_pub_unsub_test() {
+        test_init();
+
+        let (mut handler, _) = Handler::new_fake();
+
+        // 订阅channel1和channel2
+        let subscribe =
+            Subscribe::parse(&mut CmdUnparsed::from(["channel1", "channel2"].as_ref())).unwrap();
+        subscribe.execute(&mut handler).await.unwrap();
+
+        assert!(handler
+            .shared
+            .db()
+            .get_channel_all_listener(b"channel1")
+            .is_some());
+        assert!(handler
+            .shared
+            .db()
+            .get_channel_all_listener(b"channel2")
+            .is_some());
+
+        assert_eq!(
+            2,
+            handler.context.subscribed_channels.as_ref().unwrap().len()
+        );
+
+        // 订阅channel3
+        let subscribe = Subscribe::parse(&mut CmdUnparsed::from(["channel3"].as_ref())).unwrap();
+        subscribe.execute(&mut handler).await.unwrap();
+
+        assert!(handler
+            .shared
+            .db()
+            .get_channel_all_listener(b"channel3")
+            .is_some());
+
+        assert_eq!(
+            3,
+            handler.context.subscribed_channels.as_ref().unwrap().len()
+        );
+
+        // 向channel1发布消息
+        let publish =
+            Publish::parse(&mut CmdUnparsed::from(["channel1", "hello"].as_ref())).unwrap();
+        let res = publish
+            ._execute(&handler.shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_integer()
+            .unwrap();
+        assert_eq!(res, 1);
+
+        let msg = handler
+            .bg_task_channel
+            .recv_from_bg_task()
+            .await
+            .as_array()
+            .unwrap()
+            .to_vec();
+        matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");
+        matches!(msg.get(1).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"channel1");
+        matches!(msg.get(2).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"hello");
+
+        // 向channel2发布消息
+        let publish =
+            Publish::parse(&mut CmdUnparsed::from(["channel2", "world"].as_ref())).unwrap();
+        let res = publish
+            ._execute(&handler.shared)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_integer()
+            .unwrap();
+        assert_eq!(res, 1);
+
+        let msg = handler
+            .bg_task_channel
+            .recv_from_bg_task()
+            .await
+            .as_array()
+            .unwrap()
+            .to_vec();
+        matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");
+        matches!(msg.get(1).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"channel2");
+        matches!(msg.get(2).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"world");
+
+        // 尝试向未订阅的频道发布消息
+        let publish = Publish::parse(&mut CmdUnparsed::from(
+            ["channel_not_exist", "hello"].as_ref(),
+        ))
+        .unwrap();
+        let res = publish.execute(&mut handler).await.unwrap_err();
+        matches!(res, CmdError::ErrorCode { code } if code == 0);
+
+        // 取消订阅channel1
+        let unsubscribe =
+            Unsubscribe::parse(&mut CmdUnparsed::from(["channel1"].as_ref())).unwrap();
+        unsubscribe.execute(&mut handler).await.unwrap();
+
+        assert!(handler
+            .shared
+            .db()
+            .get_channel_all_listener(b"channel1")
+            .is_none());
+
+        assert_eq!(
+            2,
+            handler.context.subscribed_channels.as_ref().unwrap().len()
+        );
+    }
+}

@@ -11,7 +11,6 @@ use crate::{
 };
 use bytes::{Bytes, BytesMut};
 use commands::*;
-use either::Either;
 use std::marker::PhantomData;
 use tracing::instrument;
 
@@ -157,11 +156,11 @@ pub struct Mutable;
 pub struct UnMutable;
 
 #[derive(Debug)]
-pub struct CmdUnparsed<S = UnMutable> {
+pub struct CmdUnparsed<T = UnMutable> {
     inner: Vec<RESP3>,
     start: usize,
     end: usize,
-    phantom: PhantomData<S>,
+    phantom: PhantomData<T>,
 }
 
 impl<S> CmdUnparsed<S> {
@@ -178,11 +177,8 @@ impl<S> CmdUnparsed<S> {
 impl CmdUnparsed<Mutable> {
     pub fn freeze(mut self) -> CmdUnparsed<UnMutable> {
         for i in 0..self.inner.len() {
-            if let RESP3::Bulk(either) = &mut self.inner[i] {
-                if let Either::Right(b) = either {
-                    let b = b.split().freeze();
-                    *either = Either::Left(b);
-                }
+            if let RESP3::Bulk(ei) = &mut self.inner[i] {
+                ei.freeze();
             }
         }
 
@@ -202,10 +198,7 @@ impl CmdUnparsed<Mutable> {
 
         self.start += 1;
         match &mut self.inner[self.start - 1] {
-            RESP3::Bulk(b) => match b {
-                Either::Right(b) => Some(b),
-                Either::Left(_) => unreachable!(),
-            },
+            RESP3::Bulk(ei) => ei.right_mut(),
             _ => None,
         }
     }
@@ -217,10 +210,7 @@ impl CmdUnparsed<Mutable> {
 
         self.end -= 1;
         match &mut self.inner[self.end + 1] {
-            RESP3::Bulk(b) => match b {
-                Either::Right(b) => Some(b),
-                Either::Left(_) => unreachable!(),
-            },
+            RESP3::Bulk(ei) => ei.right_mut(),
             _ => None,
         }
     }
@@ -232,14 +222,10 @@ impl CmdUnparsed<Mutable> {
 
         self.end -= 1;
         match &mut self.inner[self.end + 1] {
-            RESP3::Bulk(either) => match either {
-                Either::Right(b) => {
-                    let b = b.split().freeze();
-                    *either = Either::Left(b.clone());
-                    Some(b)
-                }
-                Either::Left(_) => unreachable!(),
-            },
+            RESP3::Bulk(ei) => {
+                ei.freeze();
+                ei.left().cloned()
+            }
             _ => None,
         }
     }
@@ -250,11 +236,19 @@ impl CmdUnparsed<Mutable> {
         }
 
         match &self.inner[self.start + idx] {
-            RESP3::Bulk(either) => match either {
-                Either::Left(b) => Some(b),
-                Either::Right(b) => Some(b),
-            },
+            RESP3::Bulk(ei) => Some(ei),
             _ => None,
+        }
+    }
+}
+
+impl<T> Default for CmdUnparsed<T> {
+    fn default() -> Self {
+        Self {
+            inner: Vec::new(),
+            start: 1,
+            end: 0,
+            phantom: PhantomData,
         }
     }
 }
@@ -270,14 +264,10 @@ impl Iterator for CmdUnparsed<Mutable> {
 
         self.start += 1;
         match &mut self.inner[self.start - 1] {
-            RESP3::Bulk(either) => match either {
-                Either::Right(b) => {
-                    let b = b.split().freeze();
-                    *either = Either::Left(b.clone());
-                    Some(b)
-                }
-                Either::Left(_) => unreachable!(),
-            },
+            RESP3::Bulk(ei) => {
+                ei.freeze();
+                ei.left().cloned()
+            }
             _ => None,
         }
     }
@@ -310,11 +300,13 @@ impl From<CmdUnparsed<Mutable>> for RESP3 {
     }
 }
 
-impl From<&[&'static str]> for CmdUnparsed<Mutable> {
-    fn from(value: &[&'static str]) -> Self {
+impl From<&[&str]> for CmdUnparsed<Mutable> {
+    fn from(value: &[&str]) -> Self {
         let mut inner = Vec::with_capacity(value.len());
         for s in value {
-            inner.push(RESP3::Bulk(Either::Right(BytesMut::from(s.as_bytes()))));
+            inner.push(RESP3::Bulk(crate::frame::EitherBytes::new_right(
+                s.as_bytes(),
+            )));
         }
 
         Self {
@@ -334,10 +326,7 @@ impl CmdUnparsed<UnMutable> {
 
         self.end -= 1;
         match &self.inner[self.end + 1] {
-            RESP3::Bulk(b) => match b {
-                Either::Left(b) => Some(b.clone()),
-                Either::Right(_) => unreachable!(),
-            },
+            RESP3::Bulk(b) => b.left().cloned(),
             _ => None,
         }
     }
@@ -353,11 +342,7 @@ impl Iterator for CmdUnparsed<UnMutable> {
 
         self.start += 1;
         match &self.inner[self.start - 1] {
-            RESP3::Bulk(b) => match b {
-                Either::Left(b) => Some(b.clone()),
-                Either::Right(_) => unreachable!(),
-            },
-
+            RESP3::Bulk(ei) => ei.left().cloned(),
             _ => None,
         }
     }
@@ -373,7 +358,8 @@ impl From<&[&'static str]> for CmdUnparsed<UnMutable> {
     fn from(value: &[&'static str]) -> Self {
         let mut inner = Vec::with_capacity(value.len());
         for s in value {
-            inner.push(RESP3::Bulk(Either::Left(Bytes::from_static(s.as_bytes()))));
+            let s: &'static str = s;
+            inner.push(RESP3::Bulk(s.into()));
         }
 
         Self {

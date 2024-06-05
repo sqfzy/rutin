@@ -550,208 +550,208 @@ pub mod db_tests {
         Ok(entry.event.clone())
     }
 
-    // #[tokio::test]
-    // async fn insert_object_test() {
-    //     test_init();
-    //
-    //     let db = Db::default();
-    //
-    //     // 无对象时插入对象
-    //     db.insert_object("key1".into(), Object::new_str("value1".into(), None));
-    //     let res = get_object(&db, "key1".as_bytes())
-    //         .unwrap()
-    //         .on_str()
-    //         .unwrap()
-    //         .to_bytes();
-    //     assert_eq!(res, "value1".as_bytes());
-    //
-    //     // 有对象时插入对象，触发旧对象的Update事件
-    //     let (tx, rx) = flume::unbounded();
-    //     db.add_event("key1".into(), tx.clone(), EventType::Update);
-    //
-    //     db.insert_object("key1".into(), Object::new_str("value2".into(), None));
-    //     let res = get_object(&db, "key1".as_bytes())
-    //         .unwrap()
-    //         .on_str()
-    //         .unwrap()
-    //         .to_bytes();
-    //     assert_eq!(res, "value2".as_bytes());
-    //
-    //     let res = rx.recv().unwrap();
-    //     assert_eq!(res.to_bulk().unwrap().as_ref(), b"key1");
-    //
-    //     // 存在空对象时插入对象，触发Update事件
-    //     db.add_event("key2".into(), tx.clone(), EventType::Update);
-    //
-    //     db.insert_object("key2".into(), Object::new_str("value2".into(), None));
-    //     let res = get_object(&db, "key1".as_bytes())
-    //         .unwrap()
-    //         .on_str()
-    //         .unwrap()
-    //         .to_bytes();
-    //     assert_eq!(res, "value2".as_bytes());
-    //
-    //     let res = rx.recv().unwrap();
-    //     assert_eq!(res.to_bulk().unwrap().as_ref(), b"key2");
-    // }
-    //
-    // #[tokio::test]
-    // async fn visit_object_test() {
-    //     test_init();
-    //
-    //     let db = Db::default();
-    //
-    //     db.insert_object("key1".into(), Object::new_str("value1".into(), None));
-    //
-    //     // 访问有效对象，应该成功
-    //     db.visit_object(&"key1".into(), |_| Ok(())).unwrap();
-    //
-    //     // 访问不存在的对象，应该失败
-    //     db.visit_object(&"key_not_exist".into(), |_| Ok(()))
-    //         .unwrap_err();
-    //
-    //     // 访问空对象时，应该失败
-    //     let (tx, _) = flume::unbounded();
-    //     db.add_event("key_none".into(), tx, EventType::Update); // 这会创建一个空对象
-    //     db.visit_object(&"key_none".into(), |_| Ok(())).unwrap_err();
-    //
-    //     // 访问过期对象时，应该失败，并且过期对象会被删除
-    //     db.insert_object(
-    //         "key_expired".into(),
-    //         Object::new_str("key_expired".into(), Some(Instant::now())),
-    //     );
-    //     db.visit_object(&"key_expired".into(), |_| Ok(()))
-    //         .unwrap_err();
-    //     get_object(&db, "key_expired".as_bytes()).unwrap_err();
-    // }
-    //
-    // #[tokio::test]
-    // async fn update_object_test() {
-    //     test_init();
-    //
-    //     let db = Db::default();
-    //     let (tx, rx) = flume::unbounded();
-    //
-    //     db.insert_object("key1".into(), Object::new_str("value1".into(), None));
-    //
-    //     // 更新有效对象，应该成功，并且触发Update事件
-    //     db.add_event("key1".into(), tx.clone(), EventType::Update);
-    //
-    //     db.update_object(&"key1".into(), |obj| {
-    //         obj.on_str_mut().unwrap().set("value2".into());
-    //         Ok(())
-    //     })
-    //     .unwrap();
-    //
-    //     let update_res = get_object(&db, "key1".as_bytes())
-    //         .unwrap()
-    //         .on_str()
-    //         .unwrap()
-    //         .to_bytes();
-    //     assert_eq!(update_res, "value2".as_bytes());
-    //
-    //     let event_res = rx.recv().unwrap();
-    //     assert_eq!(event_res.to_bulk().unwrap().as_ref(), b"key1");
-    //
-    //     // 更新不存在的对象，应该失败
-    //     db.update_object(&"key_not_exist".into(), |_| Ok(()))
-    //         .unwrap_err();
-    //
-    //     // 更新空对象时，应该失败
-    //     db.add_event("key_none".into(), tx, EventType::Update); // 这会创建一个空对象
-    //     db.update_object(&"key_none".into(), |_| Ok(()))
-    //         .unwrap_err();
-    //
-    //     // 更新过期对象时，应该失败，并且过期对象会被删除
-    //     db.insert_object(
-    //         "key_expired".into(),
-    //         Object::new_str("value".into(), Some(Instant::now())),
-    //     );
-    //     db.update_object(&"key_expired".into(), |_| Ok(()))
-    //         .unwrap_err();
-    //     get_object(&db, "key_expired".as_bytes()).unwrap_err();
-    // }
-    //
-    // #[tokio::test]
-    // async fn update_or_create_object_test() {
-    //     test_init();
-    //
-    //     let db = Db::default();
-    //     let (tx, rx) = flume::unbounded();
-    //
-    //     db.insert_object("key1".into(), Object::new_str("value1".into(), None));
-    //
-    //     // 更新或创建，更新有效象应该成功，并且触发Update事件
-    //     db.add_event("key1".into(), tx.clone(), EventType::Update);
-    //
-    //     db.update_or_create_object(&"key1".into(), ObjValueType::Str, |obj| {
-    //         obj.on_str_mut().unwrap().set("value2".into());
-    //         Ok(())
-    //     })
-    //     .unwrap();
-    //
-    //     let update_res = get_object(&db, "key1".as_bytes())
-    //         .unwrap()
-    //         .on_str()
-    //         .unwrap()
-    //         .to_bytes();
-    //     assert_eq!(update_res, "value2".as_bytes());
-    //
-    //     let event_res = rx.recv().unwrap();
-    //     assert_eq!(event_res.to_bulk().unwrap().as_ref(), b"key1");
-    //
-    //     // 更新或创建，更新不存在的对象，应该创建新对象
-    //     db.update_or_create_object(&"key_not_exist".into(), ObjValueType::Str, |obj| {
-    //         obj.on_str_mut().unwrap().set("value".into());
-    //         Ok(())
-    //     })
-    //     .unwrap();
-    //
-    //     let update_res = get_object(&db, "key_not_exist".as_bytes())
-    //         .unwrap()
-    //         .on_str()
-    //         .unwrap()
-    //         .to_bytes();
-    //     assert_eq!(update_res, "value".as_bytes());
-    //
-    //     // 更新或创建，更新空对象，应该创建新对象并触发空对象的Update事件
-    //     db.add_event("key_none".into(), tx, EventType::Update); // 这会创建一个空对象
-    //     db.update_or_create_object(&"key_none".into(), ObjValueType::Str, |obj| {
-    //         obj.on_str_mut().unwrap().set("value".into());
-    //         Ok(())
-    //     })
-    //     .unwrap();
-    //
-    //     let update_res = get_object(&db, "key_none".as_bytes())
-    //         .unwrap()
-    //         .on_str()
-    //         .unwrap()
-    //         .to_bytes();
-    //     assert_eq!(update_res, "value".as_bytes());
-    //
-    //     let event_res = rx.recv().unwrap();
-    //     assert_eq!(event_res.to_bulk().unwrap().as_ref(), b"key_none");
-    // }
-    //
-    // #[tokio::test]
-    // async fn remove_object_test() {
-    //     test_init();
-    //
-    //     let db = Db::default();
-    //     let (tx, rx) = flume::unbounded();
-    //
-    //     db.insert_object("key1".into(), Object::new_str("value1".into(), None));
-    //
-    //     // 移除有效对象，应该成功，并且触发Remove事件
-    //     db.add_event("key1".into(), tx.clone(), EventType::Remove);
-    //
-    //     db.remove_object(&"key1".into()).unwrap();
-    //     get_object(&db, "key1".as_bytes()).unwrap_err();
-    //
-    //     let event_res = rx.recv().unwrap();
-    //     assert_eq!(event_res.to_bulk().unwrap().as_ref(), b"key1");
-    //
-    //     // 移除不存在的对象，应该返回None
-    //     assert!(db.remove_object(&"key_not_exist".into()).is_none());
-    // }
+    #[tokio::test]
+    async fn insert_object_test() {
+        test_init();
+
+        let db = Db::default();
+
+        // 无对象时插入对象
+        db.insert_object("key1".into(), Object::new_str("value1".into(), None));
+        let res = get_object(&db, "key1".as_bytes())
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .to_bytes();
+        assert_eq!(res, "value1".as_bytes());
+
+        // 有对象时插入对象，触发旧对象的Update事件
+        let (tx, rx) = flume::unbounded();
+        db.add_event("key1".into(), tx.clone(), EventType::Update);
+
+        db.insert_object("key1".into(), Object::new_str("value2".into(), None));
+        let res = get_object(&db, "key1".as_bytes())
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .to_bytes();
+        assert_eq!(res, "value2".as_bytes());
+
+        let mut res = rx.recv().unwrap();
+        assert_eq!(res.as_bulk().unwrap().as_ref(), b"key1");
+
+        // 存在空对象时插入对象，触发Update事件
+        db.add_event("key2".into(), tx.clone(), EventType::Update);
+
+        db.insert_object("key2".into(), Object::new_str("value2".into(), None));
+        let res = get_object(&db, "key1".as_bytes())
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .to_bytes();
+        assert_eq!(res, "value2".as_bytes());
+
+        let mut res = rx.recv().unwrap();
+        assert_eq!(res.as_bulk().unwrap().as_ref(), b"key2");
+    }
+
+    #[tokio::test]
+    async fn visit_object_test() {
+        test_init();
+
+        let db = Db::default();
+
+        db.insert_object("key1".into(), Object::new_str("value1".into(), None));
+
+        // 访问有效对象，应该成功
+        db.visit_object(&"key1".into(), |_| Ok(())).unwrap();
+
+        // 访问不存在的对象，应该失败
+        db.visit_object(&"key_not_exist".into(), |_| Ok(()))
+            .unwrap_err();
+
+        // 访问空对象时，应该失败
+        let (tx, _) = flume::unbounded();
+        db.add_event("key_none".into(), tx, EventType::Update); // 这会创建一个空对象
+        db.visit_object(&"key_none".into(), |_| Ok(())).unwrap_err();
+
+        // 访问过期对象时，应该失败，并且过期对象会被删除
+        db.insert_object(
+            "key_expired".into(),
+            Object::new_str("key_expired".into(), Some(Instant::now())),
+        );
+        db.visit_object(&"key_expired".into(), |_| Ok(()))
+            .unwrap_err();
+        get_object(&db, "key_expired".as_bytes()).unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn update_object_test() {
+        test_init();
+
+        let db = Db::default();
+        let (tx, rx) = flume::unbounded();
+
+        db.insert_object("key1".into(), Object::new_str("value1".into(), None));
+
+        // 更新有效对象，应该成功，并且触发Update事件
+        db.add_event("key1".into(), tx.clone(), EventType::Update);
+
+        db.update_object(&"key1".into(), |obj| {
+            obj.on_str_mut().unwrap().set("value2".into());
+            Ok(())
+        })
+        .unwrap();
+
+        let update_res = get_object(&db, "key1".as_bytes())
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .to_bytes();
+        assert_eq!(update_res, "value2".as_bytes());
+
+        let mut event_res = rx.recv().unwrap();
+        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key1");
+
+        // 更新不存在的对象，应该失败
+        db.update_object(&"key_not_exist".into(), |_| Ok(()))
+            .unwrap_err();
+
+        // 更新空对象时，应该失败
+        db.add_event("key_none".into(), tx, EventType::Update); // 这会创建一个空对象
+        db.update_object(&"key_none".into(), |_| Ok(()))
+            .unwrap_err();
+
+        // 更新过期对象时，应该失败，并且过期对象会被删除
+        db.insert_object(
+            "key_expired".into(),
+            Object::new_str("value".into(), Some(Instant::now())),
+        );
+        db.update_object(&"key_expired".into(), |_| Ok(()))
+            .unwrap_err();
+        get_object(&db, "key_expired".as_bytes()).unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn update_or_create_object_test() {
+        test_init();
+
+        let db = Db::default();
+        let (tx, rx) = flume::unbounded();
+
+        db.insert_object("key1".into(), Object::new_str("value1".into(), None));
+
+        // 更新或创建，更新有效象应该成功，并且触发Update事件
+        db.add_event("key1".into(), tx.clone(), EventType::Update);
+
+        db.update_or_create_object(&"key1".into(), ObjValueType::Str, |obj| {
+            obj.on_str_mut().unwrap().set("value2".into());
+            Ok(())
+        })
+        .unwrap();
+
+        let update_res = get_object(&db, "key1".as_bytes())
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .to_bytes();
+        assert_eq!(update_res, "value2".as_bytes());
+
+        let mut event_res = rx.recv().unwrap();
+        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key1");
+
+        // 更新或创建，更新不存在的对象，应该创建新对象
+        db.update_or_create_object(&"key_not_exist".into(), ObjValueType::Str, |obj| {
+            obj.on_str_mut().unwrap().set("value".into());
+            Ok(())
+        })
+        .unwrap();
+
+        let update_res = get_object(&db, "key_not_exist".as_bytes())
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .to_bytes();
+        assert_eq!(update_res, "value".as_bytes());
+
+        // 更新或创建，更新空对象，应该创建新对象并触发空对象的Update事件
+        db.add_event("key_none".into(), tx, EventType::Update); // 这会创建一个空对象
+        db.update_or_create_object(&"key_none".into(), ObjValueType::Str, |obj| {
+            obj.on_str_mut().unwrap().set("value".into());
+            Ok(())
+        })
+        .unwrap();
+
+        let update_res = get_object(&db, "key_none".as_bytes())
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .to_bytes();
+        assert_eq!(update_res, "value".as_bytes());
+
+        let mut event_res = rx.recv().unwrap();
+        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key_none");
+    }
+
+    #[tokio::test]
+    async fn remove_object_test() {
+        test_init();
+
+        let db = Db::default();
+        let (tx, rx) = flume::unbounded();
+
+        db.insert_object("key1".into(), Object::new_str("value1".into(), None));
+
+        // 移除有效对象，应该成功，并且触发Remove事件
+        db.add_event("key1".into(), tx.clone(), EventType::Remove);
+
+        db.remove_object(&"key1".into()).unwrap();
+        get_object(&db, "key1".as_bytes()).unwrap_err();
+
+        let mut event_res = rx.recv().unwrap();
+        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key1");
+
+        // 移除不存在的对象，应该返回None
+        assert!(db.remove_object(&"key_not_exist".into()).is_none());
+    }
 }

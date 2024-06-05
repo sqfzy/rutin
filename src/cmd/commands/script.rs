@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{CmdError, CmdExecutor, CmdUnparsed, CmdType, Err},
+    cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err},
     frame::RESP3,
     shared::Shared,
     util::atoi,
