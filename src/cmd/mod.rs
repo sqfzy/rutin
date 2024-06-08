@@ -9,9 +9,8 @@ use crate::{
     server::{Handler, ServerError},
     shared::Shared,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use commands::*;
-use std::marker::PhantomData;
 use tracing::instrument;
 
 #[allow(async_fn_in_trait)]
@@ -20,7 +19,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
     #[inline]
     async fn apply(
-        mut args: CmdUnparsed<Mutable>,
+        mut args: CmdUnparsed,
         handler: &mut Handler<impl AsyncStream>,
     ) -> Result<Option<RESP3>, CmdError> {
         let cmd = Self::parse(&mut args)?;
@@ -49,7 +48,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError>;
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError>;
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError>;
 }
 
 #[derive(PartialEq)]
@@ -79,21 +78,22 @@ pub async fn _dispatch(
     cmd_frame: RESP3,
     handler: &mut Handler<impl AsyncStream>,
 ) -> Result<Option<RESP3>, CmdError> {
-    let mut cmd: CmdUnparsed<Mutable> = cmd_frame.try_into()?;
-    let cmd_name = cmd.next_mut().ok_or(Err::Syntax)?;
-    cmd_name.make_ascii_uppercase();
+    let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
+    let mut cmd_name = [0; 16];
+    let len = cmd.get_uppercase(0, &mut cmd_name).ok_or(Err::Syntax)?;
+    cmd.advance(1);
 
-    let res = match cmd_name.as_ref() {
+    let res = match &cmd_name[..len] {
         // commands::other
         // b"COMMAND" => _Command::apply(cmd_frame, handler).await?,
         b"BGSAVE" => BgSave::apply(cmd, handler).await,
         b"ECHO" => Echo::apply(cmd, handler).await,
         b"PING" => Ping::apply(cmd, handler).await,
         b"CLIENT" => {
-            let subname = cmd.next_mut().ok_or(Err::Syntax)?;
-            subname.make_ascii_uppercase();
+            let len = cmd.get_uppercase(0, &mut cmd_name).ok_or(Err::Syntax)?;
+            cmd.advance(1);
 
-            match subname.as_ref() {
+            match &cmd_name[..len] {
                 b"TRACKING" => ClientTracking::apply(cmd, handler).await,
                 _ => return Err(Err::UnknownCmd.into()),
             }
@@ -152,128 +152,77 @@ pub async fn _dispatch(
     res.map_err(Into::into)
 }
 
-pub struct Mutable;
-pub struct UnMutable;
-
 #[derive(Debug)]
-pub struct CmdUnparsed<T = UnMutable> {
-    inner: Vec<RESP3>,
+pub struct CmdUnparsed {
+    inner: Vec<RESP3<Bytes, String>>,
     start: usize,
     end: usize,
-    phantom: PhantomData<T>,
 }
 
-impl<S> CmdUnparsed<S> {
+impl CmdUnparsed {
     #[inline]
     pub fn len(&self) -> usize {
         self.end - self.start + 1
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.start > self.end
     }
-}
 
-impl CmdUnparsed<Mutable> {
-    pub fn freeze(mut self) -> CmdUnparsed<UnMutable> {
-        for i in 0..self.inner.len() {
-            if let RESP3::Bulk(ei) = &mut self.inner[i] {
-                ei.freeze();
+    pub fn get_uppercase(&self, index: usize, buf: &mut [u8]) -> Option<usize> {
+        match self.inner.get(self.start + index) {
+            Some(RESP3::Bulk(b)) => {
+                println!("b = {:?}", b);
+                buf[..b.len()].copy_from_slice(b);
+                buf.make_ascii_uppercase();
+                Some(b.len())
             }
-        }
-
-        CmdUnparsed {
-            inner: self.inner,
-            start: self.start,
-            end: self.end,
-            phantom: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn next_mut(&mut self) -> Option<&mut BytesMut> {
-        if self.start > self.end {
-            return None;
-        }
-
-        self.start += 1;
-        match &mut self.inner[self.start - 1] {
-            RESP3::Bulk(ei) => ei.right_mut(),
-            _ => None,
-        }
-    }
-
-    pub fn next_back_mut(&mut self) -> Option<&mut BytesMut> {
-        if self.start > self.end {
-            return None;
-        }
-
-        self.end -= 1;
-        match &mut self.inner[self.end + 1] {
-            RESP3::Bulk(ei) => ei.right_mut(),
             _ => None,
         }
     }
 
     pub fn next_back(&mut self) -> Option<Bytes> {
-        if self.start > self.end {
-            return None;
-        }
-
-        self.end -= 1;
-        match &mut self.inner[self.end + 1] {
-            RESP3::Bulk(ei) => {
-                ei.freeze();
-                ei.left().cloned()
+        match self.inner.get(self.end) {
+            Some(RESP3::Bulk(b)) => {
+                self.end -= 1;
+                Some(b.clone())
             }
             _ => None,
         }
     }
 
-    pub fn get(&self, idx: usize) -> Option<&[u8]> {
-        if idx > self.end {
-            return None;
-        }
-
-        match &self.inner[self.start + idx] {
-            RESP3::Bulk(ei) => Some(ei),
-            _ => None,
-        }
+    pub fn advance(&mut self, n: usize) {
+        self.start += n;
     }
 }
 
-impl<T> Default for CmdUnparsed<T> {
+impl Default for CmdUnparsed {
     fn default() -> Self {
         Self {
             inner: Vec::new(),
             start: 1,
             end: 0,
-            phantom: PhantomData,
         }
     }
 }
 
-impl Iterator for CmdUnparsed<Mutable> {
+impl Iterator for CmdUnparsed {
     type Item = Bytes;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start > self.end {
-            return None;
-        }
-
-        self.start += 1;
-        match &mut self.inner[self.start - 1] {
-            RESP3::Bulk(ei) => {
-                ei.freeze();
-                ei.left().cloned()
+        match self.inner.get(self.start) {
+            Some(RESP3::Bulk(b)) => {
+                self.start += 1;
+                Some(b.clone())
             }
             _ => None,
         }
     }
 }
 
-impl TryFrom<RESP3> for CmdUnparsed<Mutable> {
+impl TryFrom<RESP3> for CmdUnparsed {
     type Error = CmdError;
 
     #[inline]
@@ -284,7 +233,6 @@ impl TryFrom<RESP3> for CmdUnparsed<Mutable> {
                 end: arr.len() - 1,
                 // 不检查元素是否都为RESP3::Bulk，如果不是RESP3::Bulk，parse时会返回错误给客户端
                 inner: arr,
-                phantom: PhantomData,
             }),
             _ => Err(Err::Other {
                 message: "not an array frame".to_string(),
@@ -294,79 +242,23 @@ impl TryFrom<RESP3> for CmdUnparsed<Mutable> {
     }
 }
 
-impl From<CmdUnparsed<Mutable>> for RESP3 {
-    fn from(value: CmdUnparsed<Mutable>) -> Self {
-        RESP3::Array(value.inner)
-    }
-}
-
-impl From<&[&str]> for CmdUnparsed<Mutable> {
-    fn from(value: &[&str]) -> Self {
-        let mut inner = Vec::with_capacity(value.len());
-        for s in value {
-            inner.push(RESP3::Bulk(crate::frame::EitherBytes::new_right(
-                s.as_bytes(),
-            )));
-        }
-
+impl From<&[&str]> for CmdUnparsed {
+    fn from(val: &[&str]) -> Self {
+        let inner: Vec<_> = val
+            .iter()
+            .map(|s| RESP3::Bulk(Bytes::copy_from_slice(s.as_bytes())))
+            .collect();
         Self {
-            start: 0,
             end: inner.len() - 1,
             inner,
-            phantom: PhantomData,
+            start: 0,
         }
     }
 }
 
-impl CmdUnparsed<UnMutable> {
-    pub fn next_back(&mut self) -> Option<Bytes> {
-        if self.start > self.end {
-            return None;
-        }
-
-        self.end -= 1;
-        match &self.inner[self.end + 1] {
-            RESP3::Bulk(b) => b.left().cloned(),
-            _ => None,
-        }
-    }
-}
-
-impl Iterator for CmdUnparsed<UnMutable> {
-    type Item = Bytes;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.start > self.end {
-            return None;
-        }
-
-        self.start += 1;
-        match &self.inner[self.start - 1] {
-            RESP3::Bulk(ei) => ei.left().cloned(),
-            _ => None,
-        }
-    }
-}
-
-impl From<CmdUnparsed<UnMutable>> for RESP3 {
-    fn from(val: CmdUnparsed<UnMutable>) -> Self {
+impl From<CmdUnparsed> for RESP3 {
+    #[inline]
+    fn from(val: CmdUnparsed) -> Self {
         RESP3::Array(val.inner)
-    }
-}
-
-impl From<&[&'static str]> for CmdUnparsed<UnMutable> {
-    fn from(value: &[&'static str]) -> Self {
-        let mut inner = Vec::with_capacity(value.len());
-        for s in value {
-            let s: &'static str = s;
-            inner.push(RESP3::Bulk(s.into()));
-        }
-
-        Self {
-            start: 0,
-            end: inner.len() - 1,
-            inner,
-            phantom: PhantomData,
-        }
     }
 }

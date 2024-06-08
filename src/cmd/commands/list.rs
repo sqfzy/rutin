@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{error::Err, CmdError, CmdExecutor, CmdType, CmdUnparsed, Mutable, ServerErrSnafu},
+    cmd::{error::Err, CmdError, CmdExecutor, CmdType, CmdUnparsed, ServerErrSnafu},
     connection::AsyncStream,
     frame::RESP3,
     server::{Handler, ServerError},
@@ -63,7 +63,7 @@ impl CmdExecutor for BLMove {
                     Where::Right => list.push_back(elem.clone()),
                 }
 
-                res = Some(RESP3::Bulk(elem.into()));
+                res = Some(RESP3::Bulk(elem));
                 Ok(())
             })?;
 
@@ -89,7 +89,7 @@ impl CmdExecutor for BLMove {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 5 {
             return Err(Err::WrongArgNum.into());
         }
@@ -150,7 +150,7 @@ impl CmdExecutor for BLPop {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -250,7 +250,7 @@ impl CmdExecutor for LPos {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if !(args.len() == 2 || args.len() == 4 || args.len() == 6 || args.len() == 8) {
             return Err(Err::WrongArgNum.into());
         }
@@ -315,7 +315,7 @@ impl CmdExecutor for LLen {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -346,7 +346,7 @@ impl CmdExecutor for LPop {
 
             if self.count == 1 {
                 if let Some(value) = list.pop_front() {
-                    res = Some(RESP3::Bulk(value.into()));
+                    res = Some(RESP3::Bulk(value));
                 } else {
                     res = Some(RESP3::Null);
                 }
@@ -354,7 +354,7 @@ impl CmdExecutor for LPop {
                 let mut values = Vec::with_capacity(self.count as usize);
                 for _ in 0..self.count {
                     if let Some(value) = list.pop_front() {
-                        values.push(RESP3::Bulk(value.into()));
+                        values.push(RESP3::Bulk(value));
                     } else {
                         break;
                     }
@@ -373,7 +373,7 @@ impl CmdExecutor for LPop {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         let len = args.len();
         if len != 1 && len != 2 {
             return Err(Err::WrongArgNum.into());
@@ -422,7 +422,7 @@ impl CmdExecutor for LPush {
         Ok(Some(RESP3::Integer(len as Int)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -507,7 +507,7 @@ impl CmdExecutor for NBLPop {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -557,8 +557,8 @@ async fn first_round(keys: &[Key], shared: &Shared) -> Result<Option<RESP3>, Cmd
 
             if let Some(value) = list.pop_front() {
                 res = Some(RESP3::Array(vec![
-                    RESP3::Bulk(key.clone().into()),
-                    RESP3::Bulk(value.into()),
+                    RESP3::Bulk(key.clone()),
+                    RESP3::Bulk(value),
                 ]));
             }
 
@@ -593,19 +593,19 @@ async fn pop_timeout_at(
         // 存在超时时间
         if let Some(dl) = deadline {
             match tokio::time::timeout_at(dl, key_rx.recv_async()).await {
-                Ok(Ok(mut key)) => {
+                Ok(Ok(key)) => {
                     let key = key
-                        .as_bulk()
+                        .try_bulk()
                         .ok_or(ServerError::from("receive frame with invalid format"))
                         .context(ServerErrSnafu)?;
 
-                    let update_res = db.update_object(&key, |obj| {
+                    let update_res = db.update_object(key, |obj| {
                         let list = obj.on_list_mut()?;
 
                         if let Some(value) = list.pop_front() {
                             res = Some(RESP3::Array(vec![
-                                RESP3::Bulk(key.clone().into()),
-                                RESP3::Bulk(value.into()),
+                                RESP3::Bulk(key.clone()),
+                                RESP3::Bulk(value),
                             ]));
                         }
 
@@ -632,19 +632,19 @@ async fn pop_timeout_at(
         }
 
         // 不存在超时时间
-        if let Ok(mut key) = key_rx.recv_async().await {
+        if let Ok(key) = key_rx.recv_async().await {
             let key = key
-                .as_bulk()
+                .try_bulk()
                 .ok_or(ServerError::from("receive frame with invalid format"))
                 .context(ServerErrSnafu)?;
 
-            let update_res = shared.db().update_object(&key, |obj| {
+            let update_res = shared.db().update_object(key, |obj| {
                 let list = obj.on_list_mut()?;
 
                 if let Some(value) = list.pop_front() {
                     res = Some(RESP3::Array(vec![
-                        RESP3::Bulk(key.clone().into()),
-                        RESP3::Bulk(value.into()),
+                        RESP3::Bulk(key.clone()),
+                        RESP3::Bulk(value),
                     ]));
                 }
 
@@ -944,13 +944,13 @@ mod cmd_list_tests {
 
         let lpos = LPos::parse(&mut CmdUnparsed::from(["list", "1"].as_ref())).unwrap();
         let res = lpos._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res.as_integer().unwrap(), 1);
+        assert_eq!(res.try_integer().unwrap(), 1);
 
         let lpos =
             LPos::parse(&mut CmdUnparsed::from(["list", "2", "count", "0"].as_ref())).unwrap();
         let res = lpos._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
-            res.as_array().unwrap().to_vec(),
+            res.try_array().unwrap().to_vec(),
             vec![RESP3::Integer(2), RESP3::Integer(3), RESP3::Integer(4)]
         );
 
@@ -960,7 +960,7 @@ mod cmd_list_tests {
         .unwrap();
         let res = lpos._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
-            res.as_array().unwrap().to_vec(),
+            res.try_array().unwrap().to_vec(),
             vec![RESP3::Integer(3), RESP3::Integer(4)]
         );
 
@@ -970,7 +970,7 @@ mod cmd_list_tests {
         .unwrap();
         let res = lpos._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
-            res.as_array().unwrap().to_vec(),
+            res.try_array().unwrap().to_vec(),
             vec![RESP3::Integer(4), RESP3::Integer(3)]
         );
     }

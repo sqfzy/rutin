@@ -74,7 +74,7 @@ impl TryInto<RESP3> for CmdError {
             // 命令执行失败，向客户端返回空值
             CmdError::Null => RESP3::Null,
             // 命令执行失败，向客户端返回错误信息
-            CmdError::Err { source } => RESP3::SimpleError(source.to_string().into()),
+            CmdError::Err { source } => RESP3::SimpleError(source.to_string()),
         };
 
         Ok(frame)

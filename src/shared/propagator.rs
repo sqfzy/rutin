@@ -3,7 +3,7 @@ use kanal::{AsyncReceiver, AsyncSender};
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::{
-    cmd::{CmdUnparsed, Mutable},
+    cmd::CmdUnparsed,
     connection::AsyncStream,
     frame::RESP3,
     server::{Handler, ServerError},
@@ -44,11 +44,7 @@ impl Propagator {
     }
 
     #[inline]
-    pub async fn may_propagate(
-        &self,
-        cmd: CmdUnparsed<Mutable>,
-        handler: &mut Handler<impl AsyncStream>,
-    ) {
+    pub async fn may_propagate(&self, cmd: CmdUnparsed, handler: &mut Handler<impl AsyncStream>) {
         let existing_replicas = self.existing_replicas.load(Ordering::Relaxed);
 
         if existing_replicas != 0 || self.to_aof.is_some() {

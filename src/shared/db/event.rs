@@ -51,7 +51,7 @@ impl Event {
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
-            let res = e.send(RESP3::Bulk(key.into()));
+            let res = e.send(RESP3::Bulk(key.clone()));
 
             // 发送失败，证明连接已经断开，移除监听事件
             if res.is_err() {
@@ -71,7 +71,7 @@ impl Event {
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
-            let _ = e.send(RESP3::Bulk(key.into()));
+            let _ = e.send(RESP3::Bulk(key.clone()));
 
             // 该事件是一次性事件，无论是否有接收者，都需要移除该事件
             events.swap_remove(i);
@@ -89,7 +89,7 @@ impl Event {
 
         let mut i = 0;
         while let Some(e) = events.get(i) {
-            let _ = e.send(RESP3::Bulk(key.into()));
+            let _ = e.send(RESP3::Bulk(key.clone()));
 
             // 该事件是一次性事件，无论是否有接收者，都需要移除该事件
             events.swap_remove(i);

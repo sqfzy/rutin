@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed, Mutable,
+        CmdExecutor, CmdType, CmdUnparsed,
     },
     frame::RESP3,
     shared::{
@@ -44,7 +44,7 @@ impl CmdExecutor for Append {
         Ok(length)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -78,7 +78,7 @@ impl CmdExecutor for Decr {
         Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -112,7 +112,7 @@ impl CmdExecutor for DecrBy {
         Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -142,7 +142,7 @@ impl CmdExecutor for Get {
         let mut res = None;
 
         shared.db().visit_object(&self.key, |obj| {
-            res = Some(RESP3::Bulk(obj.on_str()?.to_bytes().into()));
+            res = Some(RESP3::Bulk(obj.on_str()?.to_bytes()));
             Ok(())
         })?;
 
@@ -150,7 +150,7 @@ impl CmdExecutor for Get {
     }
 
     #[inline]
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -186,10 +186,10 @@ impl CmdExecutor for GetRange {
             Ok(())
         })?;
 
-        Ok(Some(RESP3::Bulk(res.into())))
+        Ok(Some(RESP3::Bulk(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -229,10 +229,10 @@ impl CmdExecutor for GetSet {
             Ok(())
         })?;
 
-        Ok(Some(RESP3::Bulk(old.into())))
+        Ok(Some(RESP3::Bulk(old)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -268,7 +268,7 @@ impl CmdExecutor for Incr {
         Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -303,7 +303,7 @@ impl CmdExecutor for IncrBy {
         Ok(Some(RESP3::Integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -338,13 +338,13 @@ impl CmdExecutor for MGet {
                 Ok(())
             })?;
 
-            res.push(RESP3::Bulk(str.into()));
+            res.push(RESP3::Bulk(str));
         }
 
         Ok(Some(RESP3::Array(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -377,7 +377,7 @@ impl CmdExecutor for MSet {
         Ok(Some(RESP3::SimpleString("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 || args.len() % 2 != 0 {
             return Err(Err::WrongArgNum.into());
         }
@@ -421,7 +421,7 @@ impl CmdExecutor for MSetNx {
         Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 || args.len() % 2 != 0 {
             return Err(Err::WrongArgNum.into());
         }
@@ -541,13 +541,13 @@ impl CmdExecutor for Set {
         }
 
         if let Some(old_value) = old_value {
-            Ok(Some(RESP3::Bulk(old_value.into())))
+            Ok(Some(RESP3::Bulk(old_value)))
         } else {
             Ok(Some(RESP3::SimpleString("OK".into())))
         }
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -555,8 +555,10 @@ impl CmdExecutor for Set {
         let key = args.next().unwrap();
         let value = args.next().unwrap();
 
-        let mut next = args.next_mut();
-        let opt = match next {
+        let mut next = [0; 7];
+        let mut next_len = args.get_uppercase(0, &mut next);
+        args.advance(1);
+        let opt = match next_len {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -568,28 +570,26 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(opt) => {
-                opt.make_ascii_uppercase();
-
-                match opt.as_ref() {
+            Some(len) => {
+                let opt = &next[..len];
+                match opt {
                     b"NX" => {
-                        next = args.next_mut();
+                        next_len = args.get_uppercase(0, &mut next);
+                        args.advance(1);
                         Some(SetOpt::NX)
                     }
                     b"XX" => {
-                        next = args.next_mut();
+                        next_len = args.get_uppercase(0, &mut next);
+                        args.advance(1);
                         Some(SetOpt::XX)
                     }
                     // 该参数不是设置选项的参数
-                    _ => {
-                        next = Some(opt);
-                        None
-                    }
+                    _ => None,
                 }
             }
         };
 
-        let get = match next {
+        let get = match next_len {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -601,25 +601,22 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(get) => {
-                get.make_ascii_uppercase();
-
-                match get.as_ref() {
+            Some(len) => {
+                let get = &next[..len];
+                match get {
                     b"GET" => {
-                        next = args.next_mut();
+                        next_len = args.get_uppercase(0, &mut next);
+                        args.advance(1);
                         true
                     }
                     // 该参数不是设置GET的参数
-                    _ => {
-                        next = Some(get);
-                        false
-                    }
+                    _ => false,
                 }
             }
         };
 
         let mut keep_ttl = false;
-        let expire = match next {
+        let expire = match next_len {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -631,52 +628,31 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(ex) => {
-                ex.make_ascii_uppercase();
-
-                match ex.as_ref() {
+            Some(len) => {
+                let ex = &next[..len];
+                match ex {
                     b"KEEPTTL" => {
                         keep_ttl = true;
                         None
                     }
                     b"EX" => {
-                        let expire_value = if let Some(val) = args.next_mut() {
-                            val
-                        } else {
-                            return Err(Err::WrongArgNum.into());
-                        };
-
-                        Some(Instant::now() + Duration::from_secs(atoi(expire_value)?))
+                        let expire_value = args.next().ok_or(Err::WrongArgNum)?;
+                        Some(Instant::now() + Duration::from_secs(atoi(&expire_value)?))
                     }
                     // PX milliseconds -- 以毫秒为单位设置键的过期时间
                     b"PX" => {
-                        let expire_value = if let Some(val) = args.next_mut() {
-                            val
-                        } else {
-                            return Err(Err::WrongArgNum.into());
-                        };
-
-                        Some(Instant::now() + Duration::from_millis(atoi(expire_value)?))
+                        let expire_value = args.next().ok_or(Err::WrongArgNum)?;
+                        Some(Instant::now() + Duration::from_millis(atoi(&expire_value)?))
                     }
                     // EXAT timestamp -- timestamp是以秒为单位的Unix时间戳
                     b"EXAT" => {
-                        let expire_value = if let Some(val) = args.next_mut() {
-                            val
-                        } else {
-                            return Err(Err::WrongArgNum.into());
-                        };
-
-                        Some(*EPOCH + Duration::from_secs(atoi(expire_value)?))
+                        let expire_value = args.next().ok_or(Err::WrongArgNum)?;
+                        Some(*EPOCH + Duration::from_secs(atoi(&expire_value)?))
                     }
                     // PXAT timestamp -- timestamp是以毫秒为单位的Unix时间戳
                     b"PXAT" => {
-                        let expire_value = if let Some(val) = args.next_mut() {
-                            val
-                        } else {
-                            return Err(Err::WrongArgNum.into());
-                        };
-
-                        Some(*EPOCH + Duration::from_millis(atoi(expire_value)?))
+                        let expire_value = args.next().ok_or(Err::WrongArgNum)?;
+                        Some(*EPOCH + Duration::from_millis(atoi(&expire_value)?))
                     }
                     _ => return Err(Err::Syntax.into()),
                 }
@@ -721,7 +697,7 @@ impl CmdExecutor for SetEx {
         Ok(Some(RESP3::SimpleString("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -760,7 +736,7 @@ impl CmdExecutor for SetNx {
         Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -794,7 +770,7 @@ impl CmdExecutor for StrLen {
         Ok(Some(RESP3::Integer(len as Int)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -829,9 +805,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let get = Get::parse(&mut ["key_never_expire"].as_ref().into()).unwrap();
@@ -841,9 +817,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_never_expire".to_vec()
+            b"value_never_expire".as_ref()
         );
 
         /******************************/
@@ -855,9 +831,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let get = Get::parse(&mut ["key_nx"].as_ref().into()).unwrap();
@@ -866,9 +842,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_nx".to_vec()
+            b"value_nx".as_ref()
         );
 
         let set = Set::parse(&mut ["key_nx", "value_nx", "NX"].as_ref().into()).unwrap();
@@ -889,9 +865,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let get = Get::parse(&mut ["key_nx"].as_ref().into()).unwrap();
@@ -900,9 +876,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_xx".to_vec()
+            "value_xx".as_bytes()
         );
 
         /******************************/
@@ -919,9 +895,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_never_expire".to_vec()
+            "value_never_expire".as_bytes()
         );
 
         let set = Set::parse(
@@ -945,9 +921,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -956,9 +932,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_expire".to_vec()
+            "value_expire".as_bytes()
         );
 
         sleep(Duration::from_secs(1));
@@ -975,9 +951,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -986,9 +962,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_expire".to_vec()
+            "value_expire".as_bytes()
         );
 
         sleep(Duration::from_millis(500));
@@ -1019,9 +995,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -1030,9 +1006,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_expire".to_vec()
+            "value_expire".as_bytes()
         );
 
         sleep(Duration::from_millis(1000));
@@ -1064,9 +1040,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -1075,9 +1051,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .as_bulk()
+                .try_bulk()
                 .unwrap(),
-            b"value_expire".to_vec()
+            "value_expire".as_bytes()
         );
 
         sleep(Duration::from_millis(500));
@@ -1095,9 +1071,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let set = Set::parse(
@@ -1111,9 +1087,9 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .to_simple_string()
+                .try_simple_string()
                 .unwrap(),
-            "OK".to_string()
+            "OK"
         );
 
         let obj = get_object(shared.db(), b"key_expire").unwrap();

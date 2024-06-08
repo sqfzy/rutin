@@ -6,7 +6,6 @@ use crate::{
     Connection,
 };
 use anyhow::Result;
-use async_shutdown::ShutdownManager;
 use bytes::BytesMut;
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
@@ -19,15 +18,10 @@ pub struct AOF {
     file: File,
     shared: Shared,
     conf: Arc<Conf>,
-    shutdown: ShutdownManager<()>,
 }
 
 impl AOF {
-    pub async fn new(
-        shared: Shared,
-        conf: Arc<Conf>,
-        shutdown: ShutdownManager<()>,
-    ) -> Result<Self> {
+    pub async fn new(shared: Shared, conf: Arc<Conf>) -> Result<Self> {
         Ok(AOF {
             file: tokio::fs::OpenOptions::new()
                 .read(true)
@@ -37,7 +31,6 @@ impl AOF {
                 .await?,
             shared,
             conf,
-            shutdown,
         })
     }
 
@@ -77,8 +70,10 @@ impl AOF {
 impl AOF {
     pub async fn save(&mut self) -> anyhow::Result<()> {
         let aof_conf = &self.conf.aof;
+
         // 为了避免在shutdown的时候，还有数据没有写入到文件中，shutdown时必须等待该函数执行完毕
-        let _delay_token = self.shutdown.delay_shutdown_token()?;
+        let shutdown = self.shared.shutdown().clone();
+        let _delay_token = shutdown.delay_shutdown_token()?;
 
         let mut curr_aof_size = 0_u128; // 单位为byte
         let auto_aof_rewrite_min_size = (self.conf.aof.auto_aof_rewrite_min_size as u128) << 20;
@@ -95,7 +90,7 @@ impl AOF {
         match aof_conf.append_fsync {
             AppendFSync::Always => loop {
                 tokio::select! {
-                    _ = self.shutdown.wait_shutdown_triggered() => break,
+                    _ = shutdown.wait_shutdown_triggered() => break,
                     wcmd = wcmd_receiver.recv() => {
                         let mut wcmd = wcmd?;
 
@@ -120,7 +115,7 @@ impl AOF {
 
                 loop {
                     tokio::select! {
-                        _ = self.shutdown.wait_shutdown_triggered() => {
+                        _ = shutdown.wait_shutdown_triggered() => {
                             break
                         } ,
                         // 每隔一秒，同步文件
@@ -149,7 +144,7 @@ impl AOF {
             }
             AppendFSync::No => loop {
                 tokio::select! {
-                    _ = self.shutdown.wait_shutdown_triggered() => break,
+                    _ = shutdown.wait_shutdown_triggered() => break,
                     wcmd = wcmd_receiver.recv() => {
                         let mut wcmd = wcmd?;
 
@@ -174,7 +169,7 @@ impl AOF {
         }
 
         self.file.sync_data().await?;
-        self.rewrite().await?; // 最后再重写一次
+        self.rewrite().await?; // 最后再重写一次，确保数据完整
         println!("AOF file rewrited.");
         Ok(())
     }
@@ -189,6 +184,7 @@ impl AOF {
             rdb_load(&mut buf, self.shared.db(), false)?;
         }
 
+        // 将其余的内容发送给AOF server
         client.write_buf(&mut buf).await?;
         client.flush().await?;
 

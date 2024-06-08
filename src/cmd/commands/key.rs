@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed, Mutable,
+        CmdExecutor, CmdType, CmdUnparsed,
     },
     connection::AsyncStream,
     frame::RESP3,
@@ -63,7 +63,7 @@ impl CmdExecutor for Del {
         Ok(Some(RESP3::Integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -101,10 +101,10 @@ impl CmdExecutor for Dump {
             Ok(())
         })?;
 
-        Ok(Some(RESP3::Bulk(buf.freeze().into())))
+        Ok(Some(RESP3::Bulk(buf.freeze())))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -137,7 +137,7 @@ impl CmdExecutor for Exists {
         Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -218,7 +218,7 @@ impl CmdExecutor for Expire {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 && args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -298,7 +298,7 @@ impl CmdExecutor for ExpireAt {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 && args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
@@ -356,7 +356,7 @@ impl CmdExecutor for ExpireTime {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -388,20 +388,18 @@ impl CmdExecutor for Keys {
             db.entries()
                 .par_iter()
                 .filter_map(|entry| {
-                    std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                        re.is_match(key)
-                            .then(|| RESP3::Bulk(entry.key().clone().into()))
-                    })
+                    std::str::from_utf8(entry.key())
+                        .ok()
+                        .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
                 })
                 .collect::<Vec<RESP3>>()
         } else {
             db.entries()
                 .iter()
                 .filter_map(|entry| {
-                    std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                        re.is_match(key)
-                            .then(|| RESP3::Bulk(entry.key().clone().into()))
-                    })
+                    std::str::from_utf8(entry.key())
+                        .ok()
+                        .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
                 })
                 .collect::<Vec<RESP3>>()
         };
@@ -409,7 +407,7 @@ impl CmdExecutor for Keys {
         Ok(Some(RESP3::Array(matched_keys)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -456,8 +454,7 @@ impl CmdExecutor for NBKeys {
                     .par_iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key)
-                                .then(|| RESP3::Bulk(entry.key().clone().into()))
+                            re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
                         })
                     })
                     .collect::<Vec<RESP3>>()
@@ -466,8 +463,7 @@ impl CmdExecutor for NBKeys {
                     .iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key)
-                                .then(|| RESP3::Bulk(entry.key().clone().into()))
+                            re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
                         })
                     })
                     .collect::<Vec<RESP3>>()
@@ -482,7 +478,7 @@ impl CmdExecutor for NBKeys {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -523,7 +519,7 @@ impl CmdExecutor for Persist {
         Ok(Some(RESP3::Integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -567,7 +563,7 @@ impl CmdExecutor for Pttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -611,7 +607,7 @@ impl CmdExecutor for Ttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -645,7 +641,7 @@ impl CmdExecutor for Type {
         Ok(Some(RESP3::SimpleString(typ.into())))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -1006,7 +1002,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .as_array()
+            .try_array()
             .unwrap()
             .to_vec();
         assert!(
@@ -1022,7 +1018,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .as_array()
+            .try_array()
             .unwrap()
             .to_vec();
         assert!(
@@ -1038,7 +1034,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .as_array()
+            .try_array()
             .unwrap()
             .to_vec();
         assert!(result.contains(&RESP3::Bulk("key1".into())));
@@ -1109,7 +1105,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .as_integer()
+            .try_integer()
             .unwrap() as u64;
         assert!(dur.as_millis() as u64 - result < ALLOWED_DELTA);
     }
@@ -1145,7 +1141,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .as_integer()
+            .try_integer()
             .unwrap() as u64;
         assert!(dur.as_secs() - result < ALLOWED_DELTA);
     }
@@ -1168,8 +1164,9 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .to_simple_string()
-            .unwrap();
+            .try_simple_string()
+            .unwrap()
+            .to_string();
         assert_eq!(result, "string");
 
         let typ = Type::parse(&mut CmdUnparsed::from(["key2"].as_ref())).unwrap();
@@ -1178,8 +1175,9 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .to_simple_string()
-            .unwrap();
+            .try_simple_string()
+            .unwrap()
+            .to_string();
         assert_eq!(result, "list");
 
         let typ = Type::parse(&mut CmdUnparsed::from(["key3"].as_ref())).unwrap();
@@ -1188,8 +1186,9 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .to_simple_string()
-            .unwrap();
+            .try_simple_string()
+            .unwrap()
+            .to_string();
         assert_eq!(result, "set");
 
         let typ = Type::parse(&mut CmdUnparsed::from(["key4"].as_ref())).unwrap();
@@ -1198,8 +1197,9 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .to_simple_string()
-            .unwrap();
+            .try_simple_string()
+            .unwrap()
+            .to_string();
         assert_eq!(result, "hash");
 
         let typ = Type::parse(&mut CmdUnparsed::from(["key5"].as_ref())).unwrap();
@@ -1208,8 +1208,9 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .to_simple_string()
-            .unwrap();
+            .try_simple_string()
+            .unwrap()
+            .to_string();
         assert_eq!(result, "zset");
     }
 }

@@ -6,7 +6,7 @@
 use bytes::Bytes;
 
 use crate::{
-    cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err, Mutable},
+    cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err},
     frame::RESP3,
     shared::{db::ObjValueType::Hash, Shared},
     Key,
@@ -39,7 +39,7 @@ impl CmdExecutor for HDel {
         Ok(Some(RESP3::Integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -75,7 +75,7 @@ impl CmdExecutor for HExists {
         Ok(Some(RESP3::Integer(if exists { 1 } else { 0 })))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -108,10 +108,10 @@ impl CmdExecutor for HGet {
             Ok(())
         })?;
 
-        Ok(value.map(|b| RESP3::Bulk(b.into())))
+        Ok(value.map(|b| RESP3::Bulk(b.clone())))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -151,7 +151,7 @@ impl CmdExecutor for HSet {
         Ok(Some(RESP3::Integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() < 3 || args.len() % 2 != 1 {
             return Err(Err::WrongArgNum.into());
         }

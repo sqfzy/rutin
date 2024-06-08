@@ -1,5 +1,6 @@
 /target
 /benchmark/*
+/temp/*/*
 
 dump.rdb
 appendonly.aof

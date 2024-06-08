@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed, Mutable,
+        CmdExecutor, CmdType, CmdUnparsed,
     },
     connection::AsyncStream,
     frame::RESP3,
@@ -39,8 +39,8 @@ impl CmdExecutor for Publish {
             let res = listener
                 .send_async(RESP3::Array(vec![
                     RESP3::Bulk("message".into()),
-                    RESP3::Bulk(self.topic.clone().into()),
-                    RESP3::Bulk(self.msg.clone().into()),
+                    RESP3::Bulk(self.topic.clone()),
+                    RESP3::Bulk(self.msg.clone()),
                 ]))
                 .await;
 
@@ -55,7 +55,7 @@ impl CmdExecutor for Publish {
         Ok(Some(RESP3::Integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -108,7 +108,7 @@ impl CmdExecutor for Subscribe {
 
             conn.write_frame(&RESP3::Array(vec![
                 RESP3::Bulk("subscribe".into()),
-                RESP3::Bulk(topic.into()),
+                RESP3::Bulk(topic),
                 RESP3::Integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await
@@ -125,7 +125,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -169,7 +169,7 @@ impl CmdExecutor for Unsubscribe {
             for topic in self.topics {
                 conn.write_frame(&RESP3::Array(vec![
                     RESP3::Bulk("unsubscribe".into()),
-                    RESP3::Bulk(topic.into()),
+                    RESP3::Bulk(topic),
                     RESP3::Integer(0),
                 ]))
                 .await
@@ -192,7 +192,7 @@ impl CmdExecutor for Unsubscribe {
 
             conn.write_frame(&RESP3::Array(vec![
                 RESP3::Bulk("unsubscribe".into()),
-                RESP3::Bulk(topic.into()),
+                RESP3::Bulk(topic),
                 RESP3::Integer(subscribed_channels.len() as Int),
             ]))
             .await
@@ -209,7 +209,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -275,7 +275,7 @@ mod cmd_pub_sub_tests {
             .await
             .unwrap()
             .unwrap()
-            .as_integer()
+            .try_integer()
             .unwrap();
         assert_eq!(res, 1);
 
@@ -283,7 +283,7 @@ mod cmd_pub_sub_tests {
             .bg_task_channel
             .recv_from_bg_task()
             .await
-            .as_array()
+            .try_array()
             .unwrap()
             .to_vec();
         matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");
@@ -298,7 +298,7 @@ mod cmd_pub_sub_tests {
             .await
             .unwrap()
             .unwrap()
-            .as_integer()
+            .try_integer()
             .unwrap();
         assert_eq!(res, 1);
 
@@ -306,7 +306,7 @@ mod cmd_pub_sub_tests {
             .bg_task_channel
             .recv_from_bg_task()
             .await
-            .as_array()
+            .try_array()
             .unwrap()
             .to_vec();
         matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");

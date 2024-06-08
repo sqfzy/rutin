@@ -141,7 +141,6 @@ mod rdb_save {
         buf.put_u32(0);
 
         let max_buf_size = 2 << 28;
-        // TODO: 该size的大小不是经过性能比较测试得出的，之后需要进行性能测试来确定
         for entry in db.entries().iter() {
             let (key, obj) = (entry.key().clone(), entry.value().clone());
             let obj_inner = obj.inner();

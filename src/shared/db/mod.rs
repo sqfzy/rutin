@@ -577,8 +577,8 @@ pub mod db_tests {
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
 
-        let mut res = rx.recv().unwrap();
-        assert_eq!(res.as_bulk().unwrap().as_ref(), b"key1");
+        let res = rx.recv().unwrap();
+        assert_eq!(res.try_bulk().unwrap().as_ref(), b"key1");
 
         // 存在空对象时插入对象，触发Update事件
         db.add_event("key2".into(), tx.clone(), EventType::Update);
@@ -591,8 +591,8 @@ pub mod db_tests {
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
 
-        let mut res = rx.recv().unwrap();
-        assert_eq!(res.as_bulk().unwrap().as_ref(), b"key2");
+        let res = rx.recv().unwrap();
+        assert_eq!(res.try_bulk().unwrap().as_ref(), b"key2");
     }
 
     #[tokio::test]
@@ -650,8 +650,8 @@ pub mod db_tests {
             .to_bytes();
         assert_eq!(update_res, "value2".as_bytes());
 
-        let mut event_res = rx.recv().unwrap();
-        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key1");
+        let event_res = rx.recv().unwrap();
+        assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key1");
 
         // 更新不存在的对象，应该失败
         db.update_object(&"key_not_exist".into(), |_| Ok(()))
@@ -697,8 +697,8 @@ pub mod db_tests {
             .to_bytes();
         assert_eq!(update_res, "value2".as_bytes());
 
-        let mut event_res = rx.recv().unwrap();
-        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key1");
+        let event_res = rx.recv().unwrap();
+        assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key1");
 
         // 更新或创建，更新不存在的对象，应该创建新对象
         db.update_or_create_object(&"key_not_exist".into(), ObjValueType::Str, |obj| {
@@ -729,8 +729,8 @@ pub mod db_tests {
             .to_bytes();
         assert_eq!(update_res, "value".as_bytes());
 
-        let mut event_res = rx.recv().unwrap();
-        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key_none");
+        let event_res = rx.recv().unwrap();
+        assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key_none");
     }
 
     #[tokio::test]
@@ -748,8 +748,8 @@ pub mod db_tests {
         db.remove_object(&"key1".into()).unwrap();
         get_object(&db, "key1".as_bytes()).unwrap_err();
 
-        let mut event_res = rx.recv().unwrap();
-        assert_eq!(event_res.as_bulk().unwrap().as_ref(), b"key1");
+        let event_res = rx.recv().unwrap();
+        assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key1");
 
         // 移除不存在的对象，应该返回None
         assert!(db.remove_object(&"key_not_exist".into()).is_none());

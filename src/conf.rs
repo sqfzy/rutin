@@ -12,7 +12,6 @@ use crate::{
     server::{Handler, Listener},
     shared::Shared,
 };
-use async_shutdown::ShutdownManager;
 use clap::Parser;
 use crossbeam::atomic::AtomicCell;
 use rand::Rng;
@@ -231,7 +230,7 @@ impl Conf {
         /* 是否开启AOF持久化 */
         /*********************/
         if conf.aof.enable {
-            enable_aof(shared.clone(), conf.clone(), shutdown.clone()).await?;
+            enable_aof(shared.clone(), conf.clone()).await?;
         }
 
         /**********************/
@@ -290,12 +289,8 @@ impl Conf {
     }
 }
 
-async fn enable_aof(
-    shared: Shared,
-    conf: Arc<Conf>,
-    shutdown: ShutdownManager<()>,
-) -> anyhow::Result<()> {
-    let mut aof = AOF::new(shared.clone(), conf.clone(), shutdown.clone()).await?;
+async fn enable_aof(shared: Shared, conf: Arc<Conf>) -> anyhow::Result<()> {
+    let mut aof = AOF::new(shared.clone(), conf.clone()).await?;
 
     let (mut handler, client) = Handler::new_fake_with(shared, conf, None);
 
@@ -337,16 +332,35 @@ mod conf_tests {
     use crate::{
         frame::RESP3,
         shared::db::{db_tests::get_object, Db},
+        util::test_init,
     };
+    use std::io::Write;
 
     use super::*;
 
     #[tokio::test]
     async fn aof_test() {
+        test_init();
+
+        const INIT_CONTENT: &[u8; 315] = b"*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000042\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000003\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000025\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000010\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000004\r\n$3\r\nVXK\r\n";
+
         // 1. 测试写传播以及AOF save
         // 2. 测试AOF load
 
         let test_file_path = "tests/appendonly/test.aof";
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(test_file_path)
+            .unwrap_or_else(|e| {
+                eprintln!("Failed to open file: {}", e);
+                std::process::exit(1);
+            });
+        file.write_all(INIT_CONTENT).unwrap();
+        drop(file);
+
         let conf = Conf {
             aof: AOFConf {
                 enable: true,
@@ -359,12 +373,10 @@ mod conf_tests {
         };
 
         let conf = Arc::new(conf);
-        let shutdown = ShutdownManager::new();
+        let shutdown = async_shutdown::ShutdownManager::new();
         let shared = Shared::new(Db::default(), &conf, shutdown.clone());
         // 启用AOF，开始AOF save，将AOF文件中的命令加载到内存中
-        enable_aof(shared.clone(), conf.clone(), shutdown.clone())
-            .await
-            .unwrap();
+        enable_aof(shared.clone(), conf.clone()).await.unwrap();
 
         let db = shared.db();
         // 断言AOF文件中的内容已经加载到内存中

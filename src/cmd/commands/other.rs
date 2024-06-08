@@ -1,7 +1,7 @@
 use crate::{
     cmd::{
         error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed, Mutable,
+        CmdExecutor, CmdType, CmdUnparsed,
     },
     connection::AsyncStream,
     frame::RESP3,
@@ -47,14 +47,14 @@ impl CmdExecutor for Ping {
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let res = match self.msg {
-            Some(msg) => RESP3::SimpleString(String::from_utf8_lossy(&msg).to_string().into()),
+            Some(msg) => RESP3::SimpleString(String::from_utf8_lossy(&msg).to_string()),
             None => RESP3::SimpleString("PONG".into()),
         };
 
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if !args.is_empty() && args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -75,10 +75,10 @@ impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
-        Ok(Some(RESP3::Bulk(self.msg.into())))
+        Ok(Some(RESP3::Bulk(self.msg)))
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -226,7 +226,7 @@ impl CmdExecutor for BgSave {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if !args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -332,7 +332,7 @@ impl CmdExecutor for ClientTracking {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed<Mutable>) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
         if args.len() > 2 {
             return Err(Err::WrongArgNum.into());
         }
