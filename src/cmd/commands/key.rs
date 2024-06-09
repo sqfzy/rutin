@@ -10,8 +10,8 @@ use crate::{
     },
     server::Handler,
     shared::{db::ObjValueType, Shared},
-    util::atoi,
-    Id, Int, Key, EPOCH,
+    util::{atoi, epoch},
+    Id, Int, Key,
 };
 use bytes::{Bytes, BytesMut};
 use rayon::prelude::*;
@@ -52,7 +52,7 @@ pub struct Del {
 impl CmdExecutor for Del {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut count = 0;
         for key in self.keys {
             if shared.db().remove_object(&key).is_some() {
@@ -87,7 +87,7 @@ pub struct Dump {
 impl CmdExecutor for Dump {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut buf = BytesMut::with_capacity(1024);
         shared.db().visit_object(&self.key, |obj| {
             match obj.typ() {
@@ -127,7 +127,7 @@ pub struct Exists {
 impl CmdExecutor for Exists {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         for key in self.keys {
             if !shared.db().contains_object(&key) {
                 return Err(0.into());
@@ -163,7 +163,7 @@ pub struct Expire {
 impl CmdExecutor for Expire {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = None;
 
         let new_ex = Instant::now() + self.seconds;
@@ -248,7 +248,7 @@ pub struct ExpireAt {
 impl CmdExecutor for ExpireAt {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = None;
         shared.db().update_object(&self.key, |obj| {
             let ex = obj.expire();
@@ -305,7 +305,7 @@ impl CmdExecutor for ExpireAt {
 
         let key = args.next().unwrap();
         let timestamp = atoi::<u64>(&args.next().unwrap())?;
-        let timestamp = *EPOCH + Duration::from_secs(timestamp);
+        let timestamp = epoch() + Duration::from_secs(timestamp);
         if timestamp <= Instant::now() {
             return Err("ERR invalid timestamp".into());
         }
@@ -336,7 +336,7 @@ pub struct ExpireTime {
 impl CmdExecutor for ExpireTime {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut ex = None;
         shared
             .db()
@@ -348,7 +348,7 @@ impl CmdExecutor for ExpireTime {
 
         if let Some(ex) = ex {
             Ok(Some(RESP3::Integer(
-                ex.duration_since(*EPOCH).as_secs() as Int
+                ex.duration_since(epoch()).as_secs() as Int
             )))
         } else {
             // 无过期时间
@@ -379,7 +379,7 @@ pub struct Keys {
 impl CmdExecutor for Keys {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
             .map_err(|_| "ERR invalid pattern is given")?;
 
@@ -392,7 +392,7 @@ impl CmdExecutor for Keys {
                         .ok()
                         .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
                 })
-                .collect::<Vec<RESP3>>()
+                .collect::<Vec<Self::RESP3>>()
         } else {
             db.entries()
                 .iter()
@@ -401,7 +401,7 @@ impl CmdExecutor for Keys {
                         .ok()
                         .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
                 })
-                .collect::<Vec<RESP3>>()
+                .collect::<Vec<Self::RESP3>>()
         };
 
         Ok(Some(RESP3::Array(matched_keys)))
@@ -432,7 +432,7 @@ impl CmdExecutor for NBKeys {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Self::RESP3>, CmdError> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
             .map_err(|_| "ERR invalid pattern is given")?;
 
@@ -450,6 +450,7 @@ impl CmdExecutor for NBKeys {
             let db = shared.db();
 
             let matched_keys = if db.size() > (1024 << 32) {
+                // 并行
                 db.entries()
                     .par_iter()
                     .filter_map(|entry| {
@@ -457,7 +458,7 @@ impl CmdExecutor for NBKeys {
                             re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
                         })
                     })
-                    .collect::<Vec<RESP3>>()
+                    .collect::<Vec<Self::RESP3>>()
             } else {
                 db.entries()
                     .iter()
@@ -466,7 +467,7 @@ impl CmdExecutor for NBKeys {
                             re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
                         })
                     })
-                    .collect::<Vec<RESP3>>()
+                    .collect::<Vec<Self::RESP3>>()
             };
 
             let _ = bg_sender.send(RESP3::Array(matched_keys));
@@ -474,7 +475,7 @@ impl CmdExecutor for NBKeys {
 
         Ok(None)
     }
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         Ok(None)
     }
 
@@ -503,7 +504,7 @@ pub struct Persist {
 impl CmdExecutor for Persist {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         shared
             .db()
             .update_object(&self.key, |obj| {
@@ -544,7 +545,7 @@ pub struct Pttl {
 impl CmdExecutor for Pttl {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut ex = None;
 
         shared
@@ -588,7 +589,7 @@ pub struct Ttl {
 impl CmdExecutor for Ttl {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut ex = None;
 
         shared
@@ -630,7 +631,7 @@ pub struct Type {
 impl CmdExecutor for Type {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut typ = "";
 
         shared.db().visit_object(&self.key, |obj| {
@@ -655,9 +656,12 @@ impl CmdExecutor for Type {
 #[cfg(test)]
 mod cmd_key_tests {
     use super::*;
-    use crate::shared::{
-        db::{db_tests::get_object, Hash, List, Object, Set, Str, ZSet},
-        Shared,
+    use crate::{
+        shared::{
+            db::{Hash, List, ObjectInner, Set, Str, ZSet},
+            Shared,
+        },
+        util::epoch,
     };
 
     // 允许的时间误差
@@ -668,14 +672,17 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        assert!(db.contains_object(b"key1"));
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        assert!(db.contains_object(&"key1".into()));
 
         // case: 键存在
         let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key1"].as_ref())).unwrap();
         let result = del._execute(&shared).await.unwrap().unwrap();
         assert_eq!(result, RESP3::Integer(1));
-        assert!(!db.contains_object(b"key1"));
+        assert!(!db.contains_object(&"key1".into()));
 
         // case: 键不存在
         let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key_nil"].as_ref())).unwrap();
@@ -688,8 +695,11 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        assert!(db.contains_object(b"key1"));
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        assert!(db.contains_object(&"key1".into()));
 
         // case: 键存在
         let exists = Exists::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
@@ -707,14 +717,29 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        assert!(db
+            .get_object_entry(&"key1".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_none());
 
         // case: 键存在，设置过期时间
         let expire = Expire::parse(&mut CmdUnparsed::from(["key1", "10"].as_ref())).unwrap();
         let result = expire._execute(&shared).await.unwrap().unwrap();
         assert_eq!(result, RESP3::Integer(1));
-        assert!(get_object(db, b"key1").unwrap().expire().is_some());
+        assert!(db
+            .get_object_entry(&"key1".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_some());
 
         // case: 键不存在
         let expire = Expire::parse(&mut CmdUnparsed::from(["key_nil", "10"].as_ref())).unwrap();
@@ -723,14 +748,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
         // case: with EX option
         let expire =
@@ -747,14 +772,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: with NX option
@@ -772,14 +797,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: with GT option
@@ -795,14 +820,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: with LT option
@@ -822,8 +847,17 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        assert!(db
+            .get_object_entry(&"key1".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_none());
 
         // case: 键存在，设置过期时间
         let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
@@ -836,7 +870,13 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire_at._execute(&shared).await.unwrap().unwrap();
         assert_eq!(result, RESP3::Integer(1));
-        assert!(get_object(db, b"key1").unwrap().expire().is_some());
+        assert!(db
+            .get_object_entry(&"key1".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_some());
 
         // case: 键不存在
         let expire_at =
@@ -846,14 +886,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
-                Some(*EPOCH + Duration::from_secs(1893427200)),
+                Some(epoch() + Duration::from_secs(1893427200)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: with EX option
@@ -873,14 +913,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
-                Some(*EPOCH + Duration::from_secs(1893427200)),
+                Some(epoch() + Duration::from_secs(1893427200)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: with NX option
@@ -900,14 +940,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
-                Some(*EPOCH + Duration::from_secs(1893427200)),
+                Some(epoch() + Duration::from_secs(1893427200)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: with GT option
@@ -927,14 +967,14 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
-                Some(*EPOCH + Duration::from_secs(1893427200)),
+                Some(epoch() + Duration::from_secs(1893427200)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: with LT option
@@ -958,12 +998,21 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        assert!(db
+            .get_object_entry(&"key1".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_none());
         let expire = Instant::now() + Duration::from_secs(10);
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str("value_with_ex".into(), Some(expire)),
+            ObjectInner::new_str("value_with_ex".into(), Some(expire)),
         );
 
         // case: 键存在，但没有过期时间
@@ -982,7 +1031,7 @@ mod cmd_key_tests {
         let result = expire_time._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
             result,
-            RESP3::Integer(expire.duration_since(*EPOCH).as_secs() as Int)
+            RESP3::Integer(expire.duration_since(epoch()).as_secs() as Int)
         );
     }
 
@@ -991,10 +1040,22 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        db.insert_object(Key::from("key2"), Object::new_str("value2".into(), None));
-        db.insert_object(Key::from("key3"), Object::new_str("value3".into(), None));
-        db.insert_object(Key::from("key4"), Object::new_str("value4".into(), None));
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        db.insert_object(
+            Key::from("key2"),
+            ObjectInner::new_str("value2".into(), None),
+        );
+        db.insert_object(
+            Key::from("key3"),
+            ObjectInner::new_str("value3".into(), None),
+        );
+        db.insert_object(
+            Key::from("key4"),
+            ObjectInner::new_str("value4".into(), None),
+        );
 
         let keys = Keys::parse(&mut CmdUnparsed::from([".*"].as_ref())).unwrap();
         let result = keys
@@ -1047,21 +1108,27 @@ mod cmd_key_tests {
 
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str(
+            ObjectInner::new_str(
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         );
         db.insert_object(
             Key::from("key_without_ex"),
-            Object::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex".into(), None),
         );
 
         // case: 键存在，有过期时间
         let persist = Persist::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
         let result = persist._execute(&shared).await.unwrap().unwrap();
         assert_eq!(result, RESP3::Integer(1));
-        assert!(get_object(db, b"key_with_ex").unwrap().expire().is_none());
+        assert!(db
+            .get_object_entry(&"key_with_ex".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_none());
 
         // case: 键存在，没有过期时间
         let persist = Persist::parse(&mut CmdUnparsed::from(["key_without_ex"].as_ref())).unwrap();
@@ -1079,13 +1146,22 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        assert!(db
+            .get_object_entry(&"key1".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_none());
         let dur = Duration::from_secs(10);
         let expire = Instant::now() + dur;
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str("value_with_ex".into(), Some(expire)),
+            ObjectInner::new_str("value_with_ex".into(), Some(expire)),
         );
 
         // case: 键存在，但没有过期时间
@@ -1115,13 +1191,22 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str("value1".into(), None));
-        assert!(get_object(db, b"key1").unwrap().expire().is_none());
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str("value1".into(), None),
+        );
+        assert!(db
+            .get_object_entry(&"key1".into())
+            .unwrap()
+            .value()
+            .inner()
+            .expire()
+            .is_none());
         let dur = Duration::from_secs(10);
         let expire = Instant::now() + dur;
         db.insert_object(
             Key::from("key_with_ex"),
-            Object::new_str("value_with_ex".into(), Some(expire)),
+            ObjectInner::new_str("value_with_ex".into(), Some(expire)),
         );
 
         // case: 键存在，但没有过期时间
@@ -1151,11 +1236,26 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(Key::from("key1"), Object::new_str(Str::default(), None));
-        db.insert_object(Key::from("key2"), Object::new_list(List::default(), None));
-        db.insert_object(Key::from("key3"), Object::new_set(Set::default(), None));
-        db.insert_object(Key::from("key4"), Object::new_hash(Hash::default(), None));
-        db.insert_object(Key::from("key5"), Object::new_zset(ZSet::default(), None));
+        db.insert_object(
+            Key::from("key1"),
+            ObjectInner::new_str(Str::default(), None),
+        );
+        db.insert_object(
+            Key::from("key2"),
+            ObjectInner::new_list(List::default(), None),
+        );
+        db.insert_object(
+            Key::from("key3"),
+            ObjectInner::new_set(Set::default(), None),
+        );
+        db.insert_object(
+            Key::from("key4"),
+            ObjectInner::new_hash(Hash::default(), None),
+        );
+        db.insert_object(
+            Key::from("key5"),
+            ObjectInner::new_zset(ZSet::default(), None),
+        );
 
         // case: 键存在
         let typ = Type::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();

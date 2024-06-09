@@ -33,7 +33,7 @@ pub struct BLMove {
 impl CmdExecutor for BLMove {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let db = shared.db();
 
         let mut elem = None;
@@ -76,7 +76,7 @@ impl CmdExecutor for BLMove {
 
         let (key_tx, key_rx) = flume::bounded(1);
         // 监听该键的Update事件
-        db.add_event(self.destination, key_tx.clone(), EventType::Update);
+        db.add_event(self.destination, key_tx.clone(), EventType::MayUpdate);
 
         let deadline = if self.timeout == 0 {
             None
@@ -117,7 +117,7 @@ pub struct BLPop {
 impl CmdExecutor for BLPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let db = shared.db();
 
         match first_round(&self.keys, shared).await {
@@ -136,7 +136,7 @@ impl CmdExecutor for BLPop {
         // 加入监听事件
         let (key_tx, key_rx) = flume::bounded(1);
         for key in self.keys {
-            db.add_event(key.clone(), key_tx.clone(), EventType::Update);
+            db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate);
         }
 
         let deadline = if self.timeout == 0 {
@@ -181,7 +181,7 @@ pub struct LPos {
 impl CmdExecutor for LPos {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         // 找到一个匹配元素，则rank-1(或+1)，当rank为0时，则表明开始收入
         // 一共要收入count个，但最长只能找max_len个元素
         // 如果count == 1，返回Integer
@@ -300,7 +300,7 @@ pub struct LLen {
 impl CmdExecutor for LLen {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = None;
         shared
             .db()
@@ -339,7 +339,7 @@ pub struct LPop {
 impl CmdExecutor for LPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = None;
         shared.db().update_object(&self.key, |obj| {
             let list = obj.on_list_mut()?;
@@ -404,7 +404,7 @@ pub struct LPush {
 impl CmdExecutor for LPush {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut len = 0;
         shared
             .db()
@@ -451,7 +451,7 @@ impl CmdExecutor for NBLPop {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Self::RESP3>, CmdError> {
         let Handler { shared, .. } = handler;
 
         match first_round(&self.keys, shared).await {
@@ -472,7 +472,7 @@ impl CmdExecutor for NBLPop {
         for key in self.keys {
             shared
                 .db()
-                .add_event(key, key_tx.clone(), EventType::Update);
+                .add_event(key, key_tx.clone(), EventType::MayUpdate);
         }
 
         let deadline = if self.timeout == 0 {
@@ -503,7 +503,7 @@ impl CmdExecutor for NBLPop {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         Ok(None)
     }
 
@@ -548,7 +548,10 @@ impl TryFrom<&[u8]> for Where {
     }
 }
 
-async fn first_round(keys: &[Key], shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+async fn first_round<S: AsRef<str>>(
+    keys: &[Key],
+    shared: &Shared,
+) -> Result<Option<RESP3<Bytes, S>>, CmdError> {
     let mut res = None;
     // 先尝试一轮pop
     for key in keys.iter() {
@@ -618,7 +621,7 @@ async fn pop_timeout_at(
                     }
 
                     // 如果next失败了，则重新加入事件
-                    db.add_event(key.clone(), key_tx.clone(), EventType::Update);
+                    db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate);
 
                     // 忽略空键的错误
                     if !matches!(update_res, Err(CmdError::Null)) {
@@ -656,7 +659,7 @@ async fn pop_timeout_at(
                 break Ok(res);
             }
 
-            db.add_event(key.clone(), key_tx.clone(), EventType::Update);
+            db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate);
 
             // 忽略空键的错误
             if !matches!(update_res, Err(CmdError::Null)) {
@@ -669,7 +672,7 @@ async fn pop_timeout_at(
 #[cfg(test)]
 mod cmd_list_tests {
     use super::*;
-    use crate::{cmd::Ping, shared::db::db_tests::get_event, util::test_init};
+    use crate::{cmd::Ping, util::test_init};
     use tokio::time::sleep;
 
     #[tokio::test]
@@ -875,12 +878,17 @@ mod cmd_list_tests {
         /**************/
         let nblpop = NBLPop::parse(&mut CmdUnparsed::from(["list3", "2", "0"].as_ref())).unwrap();
         nblpop.execute(&mut handler).await.unwrap();
-        println!("{:?}", get_event(handler.shared.db(), b"list3").unwrap());
 
         let ping = Ping::parse(&mut CmdUnparsed::default()).unwrap();
         assert_eq!(
-            RESP3::SimpleString("PONG".into()),
-            ping._execute(&handler.shared).await.unwrap().unwrap()
+            "PONG".to_string(),
+            ping._execute(&handler.shared)
+                .await
+                .unwrap()
+                .unwrap()
+                .try_simple_string()
+                .unwrap()
+                .to_string()
         );
 
         sleep(Duration::from_millis(500)).await;
@@ -914,8 +922,14 @@ mod cmd_list_tests {
 
         let ping = Ping::parse(&mut CmdUnparsed::default()).unwrap();
         assert_eq!(
-            RESP3::SimpleString("PONG".into()),
-            ping._execute(&handler.shared).await.unwrap().unwrap()
+            "PONG".to_string(),
+            ping._execute(&handler.shared)
+                .await
+                .unwrap()
+                .unwrap()
+                .try_simple_string()
+                .unwrap()
+                .to_string()
         );
 
         sleep(Duration::from_millis(500)).await;

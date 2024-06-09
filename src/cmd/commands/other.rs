@@ -22,7 +22,7 @@ use bytes::Bytes;
 //     const CMD_TYPE: CmdType = CmdType::Other;
 //
 //     // TODO: 返回命令字典，以便支持客户端的命令补全
-// async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError>{
+// async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError>{
 //
 //         Ok(None)
 //     }
@@ -39,27 +39,34 @@ use bytes::Bytes;
 /// **Bulk string reply**: the provided argument.
 #[derive(Debug)]
 pub struct Ping {
-    msg: Option<Bytes>,
+    // msg: Option<Bytes>,
 }
 
 impl CmdExecutor for Ping {
     const CMD_TYPE: CmdType = CmdType::Other;
+    type RESP3 = RESP3<Bytes, &'static str>;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
-        let res = match self.msg {
-            Some(msg) => RESP3::SimpleString(String::from_utf8_lossy(&msg).to_string()),
-            None => RESP3::SimpleString("PONG".into()),
-        };
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+        // let res = match self.msg {
+        //     // Some(msg) => RESP3::SimpleString(Right(String::from_utf8_lossy(&msg).to_string())),
+        //     None => RESP3::SimpleString(Left("PONG")),
+        // };
 
-        Ok(Some(res))
+        Ok(Some(RESP3::SimpleString("PONG")))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
-        if !args.is_empty() && args.len() != 1 {
+        // if !args.is_empty() && args.len() != 1 {
+        //     return Err(Err::WrongArgNum.into());
+        // }
+        //
+        // Ok(Ping { msg: args.next() })
+
+        if !args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Ping { msg: args.next() })
+        Ok(Ping {})
     }
 }
 
@@ -74,7 +81,7 @@ pub struct Echo {
 impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         Ok(Some(RESP3::Bulk(self.msg)))
     }
 
@@ -199,7 +206,7 @@ impl CmdExecutor for BgSave {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Self::RESP3>, CmdError> {
         let rdb_conf = &handler.conf.rdb;
         let shared = &handler.shared;
 
@@ -222,7 +229,7 @@ impl CmdExecutor for BgSave {
         )))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         Ok(None)
     }
 
@@ -242,7 +249,7 @@ impl CmdExecutor for BgSave {
 //     pub password: String,
 // }
 //
-// impl TryFrom<RESP3> for Auth {
+// impl TryFrom<Self::RESP3> for Auth {
 //     type Error = CmdError;
 //
 //     fn try_from(cmd_frame: RESP3) -> Result<Self, CmdError> {
@@ -303,15 +310,16 @@ pub struct ClientTracking {
 
 impl CmdExecutor for ClientTracking {
     const CMD_TYPE: CmdType = CmdType::Other;
+    type RESP3 = RESP3<Bytes, &'static str>;
 
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Self::RESP3>, CmdError> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
-            return Ok(Some(RESP3::SimpleString("OK".into())));
+            return Ok(Some(RESP3::SimpleString("OK")));
         }
 
         if let Some(redirect) = self.redirect {
@@ -325,10 +333,10 @@ impl CmdExecutor for ClientTracking {
             handler.context.client_track = Some(handler.bg_task_channel.new_sender());
         }
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(RESP3::SimpleString("OK")))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         Ok(None)
     }
 

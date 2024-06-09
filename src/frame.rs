@@ -4,6 +4,7 @@ use crate::{
 };
 use ahash::{AHashMap, AHashSet};
 use bytes::{Buf, Bytes, BytesMut};
+use mlua::prelude::*;
 use num_bigint::BigInt;
 use std::{hash::Hash, io, iter::Iterator};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -732,6 +733,29 @@ impl RESP3<BytesMut, String> {
     }
 }
 
+impl From<RESP3<Bytes, &'static str>> for RESP3<Bytes, String> {
+    fn from(value: RESP3<Bytes, &'static str>) -> Self {
+        match value {
+            RESP3::SimpleString(s) => RESP3::SimpleString(s.to_string()),
+            RESP3::SimpleError(e) => RESP3::SimpleError(e.to_string()),
+            RESP3::Integer(n) => RESP3::Integer(n),
+            RESP3::Bulk(b) => RESP3::Bulk(b),
+            RESP3::Array(frames) => RESP3::Array(frames.into_iter().map(Into::into).collect()),
+            RESP3::Null => RESP3::Null,
+            RESP3::Boolean(b) => RESP3::Boolean(b),
+            RESP3::Double { double, exponent } => RESP3::Double { double, exponent },
+            RESP3::BigNumber(n) => RESP3::BigNumber(n),
+            RESP3::BulkError(e) => RESP3::BulkError(e),
+            RESP3::VerbatimString { encoding, data } => RESP3::VerbatimString { encoding, data },
+            RESP3::Map(map) => {
+                RESP3::Map(map.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
+            }
+            RESP3::Set(set) => RESP3::Set(set.into_iter().map(Into::into).collect()),
+            RESP3::Push(frames) => RESP3::Push(frames.into_iter().map(Into::into).collect()),
+        }
+    }
+}
+
 impl<B, S> Hash for RESP3<B, S>
 where
     B: AsRef<[u8]>,
@@ -813,6 +837,241 @@ where
             (RESP3::Set(set1), RESP3::Set(set2)) => set1 == set2,
             (RESP3::Push(frames1), RESP3::Push(frames2)) => frames1 == frames2,
             _ => false,
+        }
+    }
+}
+
+impl<S: AsRef<str>> mlua::IntoLua<'_> for RESP3<Bytes, S> {
+    fn into_lua(self, lua: &'_ Lua) -> LuaResult<LuaValue<'_>> {
+        match self {
+            // SimpleString -> Lua Table { ok: Lua String }
+            RESP3::SimpleString(s) => {
+                let table = lua.create_table()?;
+                table.set("ok", s.as_ref())?;
+                Ok(LuaValue::Table(table))
+            }
+            // SimpleError -> Lua Table { err: Lua String }
+            RESP3::SimpleError(e) => {
+                let table = lua.create_table()?;
+                table.set("err", e.as_ref())?;
+                Ok(LuaValue::Table(table))
+            }
+            // Integer -> Lua Integer
+            RESP3::Integer(n) => n.into_lua(lua),
+            // Bulk -> Lua String
+            RESP3::Bulk(b) => std::str::from_utf8(&b)
+                .map_err(|_| mlua::Error::FromLuaConversionError {
+                    from: "Bulk",
+                    to: "String",
+                    message: Some("invalid utf-8 string".to_string()),
+                })?
+                .into_lua(lua),
+            // Array -> Lua Table(Array)
+            RESP3::Array(frames) => frames.into_lua(lua),
+            // Null -> Lua Nil
+            RESP3::Null => Ok(LuaValue::Nil),
+            // Boolean -> Lua Boolean
+            RESP3::Boolean(b) => b.into_lua(lua),
+            // Lua table with a single double field containing a Lua number representing the double value.
+            // Double -> Lua Table { double: Lua Number }
+            RESP3::Double {
+                mut double,
+                exponent,
+            } => {
+                if let Some(exp) = exponent {
+                    double *= 10_f64.powi(exp as i32);
+                }
+
+                let table = lua.create_table()?;
+                table.set("double", double)?;
+                Ok(LuaValue::Table(table))
+            }
+            // Lua table with a single big_number field containing a Lua string representing the big number value.
+            // BigNumber -> Lua Table { big_number: Lua String }
+            RESP3::BigNumber(n) => {
+                let n = n.to_str_radix(10);
+
+                let table = lua.create_table()?;
+                table.set("big_number", n)?;
+                Ok(LuaValue::Table(table))
+            }
+            // BulkError -> Lua String
+            RESP3::BulkError(e) => e.into_lua(lua),
+            // Lua table with a single verbatim_string field containing a Lua table with two fields, string and format, representing the verbatim string and its format, respectively.
+            // VerbatimString -> Lua Table { verbatim_string: Lua Table { string: Lua String, format: Lua String } }
+            RESP3::VerbatimString { encoding, data } => {
+                let data = data.into_lua(lua)?;
+                let encoding = encoding.into_lua(lua)?;
+
+                let verbatim_string = lua.create_table()?;
+                verbatim_string.set("string", data)?;
+                verbatim_string.set("format", encoding)?;
+
+                let table = lua.create_table()?;
+                table.set("verbatim_string", verbatim_string)?;
+                Ok(LuaValue::Table(table))
+            }
+            // Lua table with a single map field containing a Lua table representing the fields and values of the map.
+            // Map -> Lua Table { map: Lua Table }
+            RESP3::Map(map) => {
+                let map_table = lua.create_table()?;
+
+                for (k, v) in map {
+                    let k = k.into_lua(lua)?;
+                    let v = v.into_lua(lua)?;
+                    map_table.set(k, v)?;
+                }
+
+                let table = lua.create_table()?;
+                table.set("map", map_table)?;
+                Ok(LuaValue::Table(table))
+            }
+            // Lua table with a single set field containing a Lua table representing the elements of the set as fields, each with the Lua Boolean value of true.
+            // Set -> Lua Table { set: Lua Table }
+            RESP3::Set(set) => {
+                let set_table = lua.create_table()?;
+
+                for f in set {
+                    let f = f.into_lua(lua)?;
+                    set_table.set(f, true)?;
+                }
+
+                let table = lua.create_table()?;
+                table.set("set", set_table)?;
+                Ok(mlua::Value::Table(table))
+            }
+            // Lua table with a single push field containing a Lua table representing the frames of the push message.
+            // Push -> Lua Table { push: Lua Table }
+            RESP3::Push(push) => {
+                let push_table = push.into_lua(lua)?;
+
+                let table = lua.create_table()?;
+                table.set("push", push_table)?;
+                Ok(mlua::Value::Table(table))
+            }
+        }
+    }
+}
+
+impl FromLua<'_> for RESP3 {
+    fn from_lua(value: LuaValue<'_>, _lua: &'_ Lua) -> LuaResult<Self> {
+        match value {
+            // Lua String -> SimpleString
+            LuaValue::String(s) => Ok(RESP3::SimpleString(s.to_str()?.to_string())),
+            // Lua String -> SimpleError
+            LuaValue::Integer(n) => Ok(RESP3::Integer(n)),
+            // Lua Number -> Double
+            LuaValue::Number(n) => Ok(RESP3::Double {
+                double: n,
+                exponent: None,
+            }),
+            // Lua Nil -> Null
+            LuaValue::Nil => Ok(RESP3::Null),
+            // Lua Boolean -> Boolean
+            LuaValue::Boolean(b) => Ok(RESP3::Boolean(b)),
+            // Lua Table { ok: Lua String } -> SimpleString
+            // Lua Table { err: Lua String } -> SimpleError
+            // Lua Table { verbatim_string: Lua Table { string: Lua String, format: Lua String } } -> VerbatimString
+            // Lua Table { map: Lua Table } -> Map
+            // Lua Table { set: Lua Table } -> Set
+            // Lua Table { push: Lua Table } -> Push
+            // Lua Table -> Array
+            LuaValue::Table(table) => {
+                let ok = table.raw_get("ok")?;
+
+                if let LuaValue::String(state) = ok {
+                    return Ok(RESP3::SimpleString(state.to_str()?.to_string()));
+                }
+
+                let err = table.raw_get("err")?;
+
+                if let LuaValue::String(e) = err {
+                    return Ok(RESP3::SimpleError(e.to_str()?.to_string()));
+                }
+
+                let verbatim_string = table.raw_get("verbatim_string")?;
+
+                if let LuaValue::Table(verbatim_string) = verbatim_string {
+                    let encoding_table: mlua::Table = verbatim_string.raw_get("format")?;
+                    if encoding_table.raw_len() != 3 {
+                        return Err(mlua::Error::FromLuaConversionError {
+                            from: "table",
+                            to: "RESP3::VerbatimString",
+                            message: Some("invalid encoding format".to_string()),
+                        });
+                    }
+
+                    let mut encoding = [0; 3];
+                    for (i, pair) in encoding_table.pairs::<usize, u8>().enumerate() {
+                        let ele = pair?.1;
+                        encoding[i] = ele;
+                    }
+
+                    let data_table: mlua::Table = verbatim_string.raw_get("string")?;
+                    let mut data = BytesMut::with_capacity(data_table.raw_len());
+                    for pair in data_table.pairs::<usize, u8>() {
+                        let ele = pair?.1;
+                        data.put_u8(ele);
+                    }
+
+                    return Ok(RESP3::VerbatimString {
+                        encoding,
+                        data: data.freeze(),
+                    });
+                }
+
+                let map = table.raw_get("map")?;
+
+                if let LuaValue::Table(map) = map {
+                    let mut map_table = AHashMap::new();
+                    for pair in map.pairs::<LuaValue, LuaValue>() {
+                        let (k, v) = pair?;
+                        let k = RESP3::from_lua(k, _lua)?;
+                        let v = RESP3::from_lua(v, _lua)?;
+                        map_table.insert(k, v);
+                    }
+
+                    return Ok(RESP3::Map(map_table));
+                }
+
+                let set = table.raw_get("set")?;
+
+                if let LuaValue::Table(set) = set {
+                    let mut set_table = AHashSet::new();
+                    for pair in set.pairs::<LuaValue, bool>() {
+                        let (f, _) = pair?;
+                        let f = RESP3::from_lua(f, _lua)?;
+                        set_table.insert(f);
+                    }
+
+                    return Ok(RESP3::Set(set_table));
+                }
+
+                let push = table.raw_get("push")?;
+
+                if let LuaValue::Table(push) = push {
+                    let mut push_table = Vec::with_capacity(push.raw_len());
+                    for pair in push.pairs::<usize, LuaValue>() {
+                        let ele = pair?.1;
+                        push_table.push(RESP3::from_lua(ele, _lua)?);
+                    }
+
+                    return Ok(RESP3::Push(push_table));
+                }
+
+                let mut array = Vec::with_capacity(table.raw_len());
+                for pair in table.pairs::<usize, mlua::Value>() {
+                    let ele = pair?.1;
+                    array.push(RESP3::from_lua(ele, _lua)?);
+                }
+
+                Ok(RESP3::Array(array))
+            }
+            _ => Err(mlua::Error::FromLuaConversionError {
+                from: value.type_name(),
+                to: "RESP3",
+                message: Some("invalid value type".to_string()),
+            }),
         }
     }
 }

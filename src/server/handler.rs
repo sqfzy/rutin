@@ -8,6 +8,7 @@ use crate::{
     Id, Key,
 };
 use bytes::BytesMut;
+use either::for_both;
 use std::sync::Arc;
 use tracing::{debug, instrument};
 
@@ -57,9 +58,11 @@ impl<S: AsyncStream> Handler<S> {
                 frames =  self.conn.read_frames() => {
                     if let Some(frames) = frames? {
                         for f in frames.into_iter() {
-                           if let Some(respond) = dispatch(f, self).await? {
-                                 self.conn.write_frame(&respond).await?;
-                           }
+                            for_both!(dispatch(f, self).await?, resp => {
+                                if let Some(respond) = resp {
+                                    self.conn.write_frame(&respond).await?;
+                                }
+                            });
                         }
                     } else {
                         return Ok(());

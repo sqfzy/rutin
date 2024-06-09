@@ -1,6 +1,9 @@
 mod test;
 
+use std::time::SystemTime;
+
 pub use test::*;
+use tokio::time::Instant;
 
 use crate::Int;
 use anyhow::anyhow;
@@ -75,6 +78,14 @@ pub async fn fake_client() {
     if let Some(res) = res {
         println!("{:?}", res);
     }
+}
+
+#[inline]
+pub fn epoch() -> Instant {
+    Instant::now()
+        - SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
 }
 
 pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, &str> {

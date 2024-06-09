@@ -36,38 +36,32 @@ impl Object {
     }
 
     pub fn new_str(s: Str, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner {
-            value: ObjValue::Str(s),
-            expire,
-        })
+        Object::new(ObjectInner::new_str(s, expire))
     }
 
     pub fn new_list(l: List, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner {
-            value: ObjValue::List(l),
-            expire,
-        })
+        Object::new(ObjectInner::new_list(l, expire))
     }
 
     pub fn new_set(s: Set, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner {
-            value: ObjValue::Set(s),
-            expire,
-        })
+        Object::new(ObjectInner::new_set(s, expire))
     }
 
     pub fn new_hash(h: Hash, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner {
-            value: ObjValue::Hash(h),
-            expire,
-        })
+        Object::new(ObjectInner::new_hash(h, expire))
     }
 
     pub fn new_zset(z: ZSet, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner {
-            value: ObjValue::ZSet(z),
-            expire,
-        })
+        Object::new(ObjectInner::new_zset(z, expire))
+    }
+}
+
+impl From<ObjectInner> for Object {
+    fn from(value: ObjectInner) -> Self {
+        Object {
+            inner: Some(value),
+            event: Default::default(),
+        }
     }
 }
 
@@ -78,6 +72,41 @@ pub struct ObjectInner {
 }
 
 impl ObjectInner {
+    pub fn new_str(s: Str, expire: Option<Instant>) -> Self {
+        ObjectInner {
+            value: ObjValue::Str(s),
+            expire,
+        }
+    }
+
+    pub fn new_list(l: List, expire: Option<Instant>) -> Self {
+        ObjectInner {
+            value: ObjValue::List(l),
+            expire,
+        }
+    }
+
+    pub fn new_set(s: Set, expire: Option<Instant>) -> Self {
+        ObjectInner {
+            value: ObjValue::Set(s),
+            expire,
+        }
+    }
+
+    pub fn new_hash(h: Hash, expire: Option<Instant>) -> Self {
+        ObjectInner {
+            value: ObjValue::Hash(h),
+            expire,
+        }
+    }
+
+    pub fn new_zset(z: ZSet, expire: Option<Instant>) -> Self {
+        ObjectInner {
+            value: ObjValue::ZSet(z),
+            expire,
+        }
+    }
+
     pub fn is_expired(&self) -> bool {
         if let Some(ex) = self.expire {
             if ex <= Instant::now() {
@@ -117,13 +146,13 @@ impl ObjectInner {
         self.expire
     }
 
-    pub fn set_expire(&mut self, expire: Option<Instant>) -> Result<Option<Instant>, &'static str> {
-        if let Some(ex) = expire {
+    pub fn set_expire(&mut self, new_ex: Option<Instant>) -> Result<Option<Instant>, &'static str> {
+        if let Some(ex) = new_ex {
             if ex <= Instant::now() {
                 return Err("invalid expire time");
             }
         }
-        Ok(std::mem::replace(&mut self.expire, expire))
+        Ok(std::mem::replace(&mut self.expire, new_ex))
     }
 
     pub fn on_str(&self) -> Result<&Str, DbError> {

@@ -5,11 +5,11 @@ use crate::{
     },
     frame::RESP3,
     shared::{
-        db::{ObjValueType, Object},
+        db::{ObjValueType, ObjectInner},
         Shared,
     },
-    util::atoi,
-    Int, Key, EPOCH,
+    util::{atoi, epoch},
+    Int, Key,
 };
 use bytes::Bytes;
 use std::time::Duration;
@@ -28,7 +28,7 @@ pub struct Append {
 impl CmdExecutor for Append {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut length = None;
 
         shared
@@ -67,7 +67,7 @@ pub struct Decr {
 impl CmdExecutor for Decr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -101,7 +101,7 @@ pub struct DecrBy {
 impl CmdExecutor for DecrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -138,7 +138,7 @@ impl CmdExecutor for Get {
     const CMD_TYPE: crate::cmd::CmdType = CmdType::Read;
 
     #[inline]
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = None;
 
         shared.db().visit_object(&self.key, |obj| {
@@ -175,7 +175,7 @@ pub struct GetRange {
 impl CmdExecutor for GetRange {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = "".into();
 
         shared.db().visit_object(&self.key, |obj| {
@@ -220,7 +220,7 @@ pub struct GetSet {
 impl CmdExecutor for GetSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut old = "".into();
 
         shared.db().update_object(&self.key, |obj| {
@@ -256,7 +256,7 @@ pub struct Incr {
 impl CmdExecutor for Incr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
 
         shared.db().update_object(&self.key, |obj| {
@@ -292,7 +292,7 @@ pub struct IncrBy {
 impl CmdExecutor for IncrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
         shared.db().update_object(&self.key, |obj| {
             let str = obj.on_str_mut()?;
@@ -328,7 +328,7 @@ pub struct MGet {
 impl CmdExecutor for MGet {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = Vec::with_capacity(self.keys.len());
         for key in self.keys.iter() {
             let mut str = "".into();
@@ -366,15 +366,16 @@ pub struct MSet {
 
 impl CmdExecutor for MSet {
     const CMD_TYPE: CmdType = CmdType::Write;
+    type RESP3 = RESP3<Bytes, &'static str>;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, Object::new_str(value.into(), None));
+                .insert_object(key, ObjectInner::new_str(value.into(), None));
         }
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(RESP3::SimpleString("OK")))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -405,7 +406,7 @@ pub struct MSetNx {
 impl CmdExecutor for MSetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         for (key, _) in &self.pairs {
             if shared.db().contains_object(key) {
                 return Err(0.into());
@@ -415,7 +416,7 @@ impl CmdExecutor for MSetNx {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, Object::new_str(value.into(), None));
+                .insert_object(key, ObjectInner::new_str(value.into(), None));
         }
 
         Ok(Some(RESP3::Integer(1)))
@@ -448,8 +449,7 @@ pub struct Set {
     value: Bytes,
     opt: Option<SetOpt>,
     get: bool,
-    keep_ttl: bool,
-    expire: Option<Instant>,
+    expire: Option<Instant>, // None代表无要求，Some(EPOCH)代表保持原expire
 }
 
 #[derive(Debug)]
@@ -462,88 +462,55 @@ enum SetOpt {
 
 impl CmdExecutor for Set {
     const CMD_TYPE: CmdType = CmdType::Write;
+    type RESP3 = RESP3<Bytes, &'static str>;
 
     #[inline]
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         // 1. 是否要求键存在？
         // 2. 满足命令对键的要求后，更新值
         // 3. 是否需要更新expire?
 
-        let mut key_should_exist = match self.opt {
+        let mut key_flag = match self.opt {
             Some(SetOpt::NX) => Some(false),
             Some(SetOpt::XX) => Some(true),
             _ => None,
         };
         if self.get {
-            key_should_exist = Some(true);
+            key_flag = Some(true);
         }
-        if self.keep_ttl {
-            key_should_exist = Some(true);
-        }
-
-        let mut old_value = None;
-
-        match (key_should_exist, self.keep_ttl) {
-            (None, true) => {
-                shared.db().update_object(&self.key, |obj| {
-                    let str = obj.on_str_mut()?;
-                    let old = str.set(self.value);
-
-                    if self.get {
-                        old_value = Some(old.to_bytes());
-                    }
-
-                    Ok(())
-                })?;
-            }
-            (None, false) => {
-                let old = shared
-                    .db()
-                    .insert_object(self.key, Object::new_str(self.value.into(), self.expire));
-
-                if let (Some(old), true) = (old, self.get) {
-                    old_value = Some(old.on_str()?.to_bytes());
-                }
-            }
-            (Some(false), true) => return Err(CmdError::Null),
-            (Some(false), false) => {
-                let old = shared.db().insert_object_if_nx(
-                    self.key,
-                    Object::new_str(self.value.into(), self.expire),
-                )?;
-
-                if let (Some(old), true) = (old, self.get) {
-                    old_value = Some(old.on_str()?.to_bytes());
-                }
-            }
-            (Some(true), true) => {
-                shared.db().update_object(&self.key, |obj| {
-                    let str = obj.on_str_mut()?;
-                    let old = str.set(self.value);
-
-                    if self.get {
-                        old_value = Some(old.to_bytes());
-                    }
-
-                    Ok(())
-                })?;
-            }
-            (Some(true), false) => {
-                let old = shared.db().insert_object_if_xx(
-                    self.key,
-                    Object::new_str(self.value.into(), self.expire),
-                )?;
-
-                if let (Some(old), true) = (old, self.get) {
-                    old_value = Some(old.on_str()?.to_bytes());
-                }
+        if let Some(ex) = self.expire {
+            if ex == epoch() {
+                key_flag = Some(true);
             }
         }
 
-        if let Some(old_value) = old_value {
-            Ok(Some(RESP3::Bulk(old_value)))
+        let entry = shared.db().get_object_entry_mut(self.key);
+        if let Some(flag) = key_flag {
+            if flag != entry.is_object_existed() {
+                return Err(CmdError::Null);
+            }
+        }
+
+        let new_ex = if let Some(ex) = self.expire {
+            if ex.duration_since(epoch()) < Duration::from_millis(10) {
+                // 保持不变
+                entry.value().unwrap().expire()
+            } else {
+                // 更新
+                Some(ex)
+            }
         } else {
-            Ok(Some(RESP3::SimpleString("OK".into())))
+            // 永不过期
+            None
+        };
+
+        let new_obj = ObjectInner::new_str(self.value.into(), new_ex);
+        let (_, old) = entry.insert_object(new_obj);
+
+        if self.get {
+            Ok(Some(RESP3::Bulk(old.unwrap().on_str()?.to_bytes())))
+        } else {
+            Ok(Some(RESP3::SimpleString("OK")))
         }
     }
 
@@ -566,7 +533,6 @@ impl CmdExecutor for Set {
                     value,
                     opt: None,
                     get: false,
-                    keep_ttl: false,
                     expire: None,
                 });
             }
@@ -597,7 +563,6 @@ impl CmdExecutor for Set {
                     value,
                     opt,
                     get: false,
-                    keep_ttl: false,
                     expire: None,
                 });
             }
@@ -615,7 +580,6 @@ impl CmdExecutor for Set {
             }
         };
 
-        let mut keep_ttl = false;
         let expire = match next_len {
             None => {
                 // 已经没有参数了
@@ -624,17 +588,13 @@ impl CmdExecutor for Set {
                     value,
                     opt,
                     get,
-                    keep_ttl: false,
                     expire: None,
                 });
             }
             Some(len) => {
                 let ex = &next[..len];
                 match ex {
-                    b"KEEPTTL" => {
-                        keep_ttl = true;
-                        None
-                    }
+                    b"KEEPTTL" => Some(epoch()),
                     b"EX" => {
                         let expire_value = args.next().ok_or(Err::WrongArgNum)?;
                         Some(Instant::now() + Duration::from_secs(atoi(&expire_value)?))
@@ -647,12 +607,12 @@ impl CmdExecutor for Set {
                     // EXAT timestamp -- timestamp是以秒为单位的Unix时间戳
                     b"EXAT" => {
                         let expire_value = args.next().ok_or(Err::WrongArgNum)?;
-                        Some(*EPOCH + Duration::from_secs(atoi(&expire_value)?))
+                        Some(epoch() + Duration::from_secs(atoi(&expire_value)?))
                     }
                     // PXAT timestamp -- timestamp是以毫秒为单位的Unix时间戳
                     b"PXAT" => {
                         let expire_value = args.next().ok_or(Err::WrongArgNum)?;
-                        Some(*EPOCH + Duration::from_millis(atoi(&expire_value)?))
+                        Some(epoch() + Duration::from_millis(atoi(&expire_value)?))
                     }
                     _ => return Err(Err::Syntax.into()),
                 }
@@ -668,7 +628,6 @@ impl CmdExecutor for Set {
             value,
             opt,
             get,
-            keep_ttl,
             expire,
         })
     }
@@ -687,14 +646,15 @@ pub struct SetEx {
 
 impl CmdExecutor for SetEx {
     const CMD_TYPE: CmdType = CmdType::Write;
+    type RESP3 = RESP3<Bytes, &'static str>;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         shared.db().insert_object(
             self.key,
-            Object::new_str(self.value.into(), Some(Instant::now() + self.expire)),
+            ObjectInner::new_str(self.value.into(), Some(Instant::now() + self.expire)),
         );
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(RESP3::SimpleString("OK")))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -724,14 +684,14 @@ pub struct SetNx {
 impl CmdExecutor for SetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         if shared.db().contains_object(&self.key) {
             return Err(0.into());
         }
 
         shared
             .db()
-            .insert_object(self.key, Object::new_str(self.value.into(), None));
+            .insert_object(self.key, ObjectInner::new_str(self.value.into(), None));
 
         Ok(Some(RESP3::Integer(1)))
     }
@@ -760,7 +720,7 @@ pub struct StrLen {
 impl CmdExecutor for StrLen {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut len = 0;
         shared.db().visit_object(&self.key, |obj| {
             len = obj.on_str()?.len();
@@ -784,7 +744,7 @@ impl CmdExecutor for StrLen {
 #[cfg(test)]
 mod cmd_str_tests {
     use super::*;
-    use crate::{shared::db::db_tests::get_object, util::test_init};
+    use crate::util::test_init;
     use std::{
         thread::sleep,
         time::{Duration, SystemTime},
@@ -807,7 +767,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let get = Get::parse(&mut ["key_never_expire"].as_ref().into()).unwrap();
@@ -833,7 +793,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let get = Get::parse(&mut ["key_nx"].as_ref().into()).unwrap();
@@ -867,7 +827,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let get = Get::parse(&mut ["key_nx"].as_ref().into()).unwrap();
@@ -923,7 +883,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -953,7 +913,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -997,7 +957,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -1042,7 +1002,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let get = Get::parse(&mut ["key_expire"].as_ref().into()).unwrap();
@@ -1064,8 +1024,12 @@ mod cmd_str_tests {
         /* 测试KEEPTTL */
         /***************/
         let now = Instant::now();
-        let set =
-            Set::parse(&mut ["key_expire", "value_expire", "PX", "1000"].as_ref().into()).unwrap();
+        let set = Set::parse(
+            &mut ["key_expire", "value_expire", "PX", "100000"]
+                .as_ref()
+                .into(),
+        )
+        .unwrap();
         assert_eq!(
             set._execute(&shared)
                 .await
@@ -1073,7 +1037,7 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
         let set = Set::parse(
@@ -1089,17 +1053,18 @@ mod cmd_str_tests {
                 .unwrap()
                 .try_simple_string()
                 .unwrap(),
-            "OK"
+            &"OK"
         );
 
-        let obj = get_object(shared.db(), b"key_expire").unwrap();
+        let obj = shared.db().get_object_entry(&"key_expire".into()).unwrap();
         assert_eq!(
-            obj.on_str().unwrap().to_bytes().as_ref(),
+            obj.value().inner().on_str().unwrap().to_bytes().as_ref(),
             b"value_expire_modified"
         );
         assert!(
             // 误差在10ms以内
-            (obj.expire().unwrap() - now) - Duration::from_millis(1000) < Duration::from_millis(10)
+            (obj.value().inner().expire().unwrap() - now) - Duration::from_millis(100000)
+                < Duration::from_millis(10)
         );
     }
 }

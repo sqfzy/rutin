@@ -26,7 +26,7 @@ pub struct Publish {
 impl CmdExecutor for Publish {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         // 获取正在监听的订阅者
         let listeners = shared
             .db()
@@ -78,7 +78,7 @@ impl CmdExecutor for Subscribe {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Self::RESP3>, CmdError> {
         use snafu::Location;
 
         let Handler {
@@ -106,7 +106,7 @@ impl CmdExecutor for Subscribe {
                     .add_channel_listener(topic.clone(), bg_task_channel.new_sender());
             }
 
-            conn.write_frame(&RESP3::Array(vec![
+            conn.write_frame::<Bytes, String>(&RESP3::Array(vec![
                 RESP3::Bulk("subscribe".into()),
                 RESP3::Bulk(topic),
                 RESP3::Integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
@@ -121,7 +121,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         Ok(None)
     }
 
@@ -152,7 +152,7 @@ impl CmdExecutor for Unsubscribe {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Self::RESP3>, CmdError> {
         use snafu::Location;
 
         let Handler {
@@ -167,7 +167,7 @@ impl CmdExecutor for Unsubscribe {
             sub
         } else {
             for topic in self.topics {
-                conn.write_frame(&RESP3::Array(vec![
+                conn.write_frame::<Bytes, String>(&RESP3::Array(vec![
                     RESP3::Bulk("unsubscribe".into()),
                     RESP3::Bulk(topic),
                     RESP3::Integer(0),
@@ -190,7 +190,7 @@ impl CmdExecutor for Unsubscribe {
                     .remove_channel_listener(&topic, bg_task_channel.get_sender());
             }
 
-            conn.write_frame(&RESP3::Array(vec![
+            conn.write_frame::<Bytes, String>(&RESP3::Array(vec![
                 RESP3::Bulk("unsubscribe".into()),
                 RESP3::Bulk(topic),
                 RESP3::Integer(subscribed_channels.len() as Int),
@@ -205,7 +205,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         Ok(None)
     }
 

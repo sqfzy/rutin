@@ -127,7 +127,11 @@ impl<S: AsyncStream> Connection<S> {
 
     #[inline]
     #[instrument(level = "trace", skip(self), err)]
-    pub async fn write_frame(&mut self, frame: &RESP3) -> io::Result<()> {
+    pub async fn write_frame<B, St>(&mut self, frame: &RESP3<B, St>) -> io::Result<()>
+    where
+        B: AsRef<[u8]> + std::fmt::Debug,
+        St: AsRef<str> + std::fmt::Debug,
+    {
         frame.encode_buf(&mut self.writer_buf);
 
         if self.batch_count > 0 {
@@ -165,22 +169,22 @@ impl Connection<FakeStream> {
         Ok(())
     }
 
-    // pub fn read_frame_blocking(&mut self) -> io::Result<Option<RESP3>> {
-    //     let mut buf = BytesMut::new();
-    //     let data = self
-    //         .stream
-    //         .rx
-    //         .recv()
-    //         .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
-    //
-    //     if data.is_empty() {
-    //         return Ok(None);
-    //     }
-    //
-    //     buf.extend_from_slice(&data);
-    //
-    //     Ok(Some(RESP3::from_raw(&mut buf)?))
-    // }
+    pub fn read_frame_blocking(&mut self) -> io::Result<Option<RESP3>> {
+        let mut buf = BytesMut::new();
+        let data = self
+            .stream
+            .rx
+            .recv()
+            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
+
+        if data.is_empty() {
+            return Ok(None);
+        }
+
+        buf.extend_from_slice(&data);
+
+        Ok(Some(RESP3::Bulk(buf.freeze())))
+    }
 }
 
 pub struct ShutdownSignal(Sender<BytesMut>);
@@ -344,6 +348,7 @@ impl PinnedDrop for FakeStream {
 mod fake_cs_tests {
     use super::*;
     use crate::util::test_init;
+    use bytes::Bytes;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -361,23 +366,29 @@ mod fake_cs_tests {
 
             // 测试简单字符串
             let _ = server_conn
-                .write_frame(&RESP3::SimpleString("OK".into()))
+                .write_frame::<Bytes, String>(&RESP3::SimpleString("OK".into()))
                 .await;
             // 测试错误消息
             let _ = server_conn
-                .write_frame(&RESP3::SimpleError("Error message".into()))
+                .write_frame::<Bytes, String>(&RESP3::SimpleError("Error message".into()))
                 .await;
             // 测试整数
-            let _ = server_conn.write_frame(&RESP3::Integer(1000)).await;
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&RESP3::Integer(1000))
+                .await;
             // 测试大容量字符串
-            let _ = server_conn.write_frame(&RESP3::Bulk("foobar".into())).await;
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&RESP3::Bulk("foobar".into()))
+                .await;
             // 测试空字符串
-            let _ = server_conn.write_frame(&RESP3::Bulk("".into())).await;
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&RESP3::Bulk("".into()))
+                .await;
             // 测试空值
-            let _ = server_conn.write_frame(&RESP3::Null).await;
+            let _ = server_conn.write_frame::<Bytes, String>(&RESP3::Null).await;
             // 测试数组
             let _ = server_conn
-                .write_frame(&RESP3::Array(vec![
+                .write_frame::<Bytes, String>(&RESP3::Array(vec![
                     RESP3::SimpleString("simple".into()),
                     RESP3::SimpleError("error".into()),
                     RESP3::Integer(1000),
@@ -387,7 +398,9 @@ mod fake_cs_tests {
                 ]))
                 .await;
             // 测试空数组
-            let _ = server_conn.write_frame(&RESP3::Array(vec![])).await;
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&RESP3::Array(vec![]))
+                .await;
 
             tx.send(()).unwrap();
         });
@@ -472,22 +485,30 @@ mod fake_cs_tests {
 
         tokio::spawn(async move {
             // 测试简单字符串
-            let _ = client.write_frame(&RESP3::SimpleString("OK".into())).await;
+            let _ = client
+                .write_frame::<Bytes, String>(&RESP3::SimpleString("OK".into()))
+                .await;
             // 测试错误消息
             let _ = client
-                .write_frame(&RESP3::SimpleError("Error message".into()))
+                .write_frame::<Bytes, String>(&RESP3::SimpleError("Error message".into()))
                 .await;
             // 测试整数
-            let _ = client.write_frame(&RESP3::Integer(1000)).await;
+            let _ = client
+                .write_frame::<Bytes, String>(&RESP3::Integer(1000))
+                .await;
             // 测试大容量字符串
-            let _ = client.write_frame(&RESP3::Bulk("foobar".into())).await;
+            let _ = client
+                .write_frame::<Bytes, String>(&RESP3::Bulk("foobar".into()))
+                .await;
             // 测试空字符串
-            let _ = client.write_frame(&RESP3::Bulk("".into())).await;
+            let _ = client
+                .write_frame::<Bytes, String>(&RESP3::Bulk("".into()))
+                .await;
             // 测试空值
-            let _ = client.write_frame(&RESP3::Null).await;
+            let _ = client.write_frame::<Bytes, String>(&RESP3::Null).await;
             // 测试数组
             let _ = client
-                .write_frame(&RESP3::Array(vec![
+                .write_frame::<Bytes, String>(&RESP3::Array(vec![
                     RESP3::SimpleString("simple".into()),
                     RESP3::SimpleError("error".into()),
                     RESP3::Integer(1000),
@@ -497,7 +518,9 @@ mod fake_cs_tests {
                 ]))
                 .await;
             // 测试空数组
-            let _ = client.write_frame(&RESP3::Array(vec![])).await;
+            let _ = client
+                .write_frame::<Bytes, String>(&RESP3::Array(vec![]))
+                .await;
         });
 
         let mut res = vec![];

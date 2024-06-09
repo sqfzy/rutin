@@ -329,11 +329,7 @@ async fn enable_aof(shared: Shared, conf: Arc<Conf>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod conf_tests {
-    use crate::{
-        frame::RESP3,
-        shared::db::{db_tests::get_object, Db},
-        util::test_init,
-    };
+    use crate::{frame::RESP3, shared::db::Db, util::test_init};
     use std::io::Write;
 
     use super::*;
@@ -381,24 +377,30 @@ mod conf_tests {
         let db = shared.db();
         // 断言AOF文件中的内容已经加载到内存中
         assert_eq!(
-            get_object(db, b"key:000000000015")
+            db.get_object_entry(&"key:000000000015".into())
                 .unwrap()
+                .value()
+                .inner()
                 .on_str()
                 .unwrap()
                 .to_vec(),
             b"VXK"
         );
         assert_eq!(
-            get_object(db, b"key:000000000003")
+            db.get_object_entry(&"key:000000000003".into())
                 .unwrap()
+                .value()
+                .inner()
                 .on_str()
                 .unwrap()
                 .to_vec(),
             b"VXK"
         );
         assert_eq!(
-            get_object(db, b"key:000000000025")
+            db.get_object_entry(&"key:000000000025".into())
                 .unwrap()
+                .value()
+                .inner()
                 .on_str()
                 .unwrap()
                 .to_vec(),

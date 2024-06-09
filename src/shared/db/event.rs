@@ -11,23 +11,25 @@ pub struct Event(EventInner);
 #[derive(Default, Debug, Clone)]
 struct EventInner {
     track: Vec<Sender<RESP3>>,
-    update: Vec<Sender<RESP3>>,
-    remove: Vec<Sender<RESP3>>,
+    may_update: Vec<Sender<RESP3>>,
+    // remove: Vec<Sender<RESP3>>,
 }
 
+// WARN: 过多的事件类型会导致内存占用过大
 #[derive(Debug, Clone)]
 pub enum EventType {
     Track,
-    Update,
-    Remove,
+    /// 触发该事件代表对象的值(不包括expire)可能被修改了
+    MayUpdate,
+    // Remove,
 }
 
 impl Event {
     pub(super) fn add_event(&mut self, sender: Sender<RESP3>, event: EventType) {
         match event {
             EventType::Track => self.0.track.push(sender),
-            EventType::Update => self.0.update.push(sender),
-            EventType::Remove => self.0.remove.push(sender),
+            EventType::MayUpdate => self.0.may_update.push(sender),
+            // EventType::Remove => self.0.remove.push(sender),
         }
     }
 
@@ -36,8 +38,8 @@ impl Event {
         for e in event {
             match e {
                 EventType::Track => self.trigger_track_event(key),
-                EventType::Update => self.trigger_update_event(key),
-                EventType::Remove => self.trigger_remove_event(key),
+                EventType::MayUpdate => self.trigger_update_event(key),
+                // EventType::Remove => self.trigger_remove_event(key),
             }
         }
     }
@@ -64,7 +66,7 @@ impl Event {
 
     #[inline]
     fn trigger_update_event(&mut self, key: &Key) {
-        let events = &mut self.0.update;
+        let events = &mut self.0.may_update;
         if events.is_empty() {
             return;
         }
@@ -80,21 +82,21 @@ impl Event {
         }
     }
 
-    #[inline]
-    fn trigger_remove_event(&mut self, key: &Key) {
-        let events = &mut self.0.remove;
-        if events.is_empty() {
-            return;
-        }
-
-        let mut i = 0;
-        while let Some(e) = events.get(i) {
-            let _ = e.send(RESP3::Bulk(key.clone()));
-
-            // 该事件是一次性事件，无论是否有接收者，都需要移除该事件
-            events.swap_remove(i);
-
-            i += 1;
-        }
-    }
+    // #[inline]
+    // fn trigger_remove_event(&mut self, key: &Key) {
+    //     let events = &mut self.0.remove;
+    //     if events.is_empty() {
+    //         return;
+    //     }
+    //
+    //     let mut i = 0;
+    //     while let Some(e) = events.get(i) {
+    //         let _ = e.send(RESP3::Bulk(key.clone()));
+    //
+    //         // 该事件是一次性事件，无论是否有接收者，都需要移除该事件
+    //         events.swap_remove(i);
+    //
+    //         i += 1;
+    //     }
+    // }
 }
