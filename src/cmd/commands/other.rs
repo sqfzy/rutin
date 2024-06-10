@@ -214,7 +214,6 @@ impl CmdExecutor for BgSave {
             shared.clone(),
             rdb_conf.file_path.clone(),
             rdb_conf.enable_checksum,
-            shared.shutdown().clone(),
         );
         tokio::spawn(async move {
             if let Err(e) = rdb.save().await {

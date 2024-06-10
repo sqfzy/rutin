@@ -1,4 +1,5 @@
 #![feature(associated_type_defaults)]
+#![feature(never_type)]
 
 use mimalloc::MiMalloc;
 

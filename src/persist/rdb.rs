@@ -5,7 +5,6 @@ use crate::shared::{
 };
 use ahash::{AHashMap, AHashSet};
 use anyhow::bail;
-use async_shutdown::ShutdownManager;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use skiplist::OrderedSkipList;
 use std::collections::VecDeque;
@@ -65,21 +64,14 @@ pub struct RDB {
     path: String,
     enable_checksum: bool,
     shared: Shared,
-    shutdown_manager: ShutdownManager<()>,
 }
 
 impl RDB {
-    pub fn new(
-        shared: Shared,
-        path: String,
-        enable_checksum: bool,
-        shutdown_manager: ShutdownManager<()>,
-    ) -> Self {
+    pub fn new(shared: Shared, path: String, enable_checksum: bool) -> Self {
         Self {
             path,
             enable_checksum,
             shared,
-            shutdown_manager,
         }
     }
 }
@@ -89,7 +81,8 @@ impl RDB {
         let mut file = tokio::fs::File::create(&self.path).await?;
 
         if let Ok(fut) = self
-            .shutdown_manager
+            .shared
+            .shutdown()
             .wrap_delay_shutdown(rdb_save::rdb_save(
                 &mut file,
                 self.shared.db(),
@@ -926,21 +919,11 @@ mod rdb_test {
         db.insert_object("zs3".into(), zs3.inner().clone());
         db.insert_object("zs4".into(), zs4.inner().clone());
 
-        let mut rdb = RDB::new(
-            shared.clone(),
-            "tests/dump/dump_temp.rdb".into(),
-            true,
-            ShutdownManager::new(),
-        );
+        let mut rdb = RDB::new(shared.clone(), "tests/dump/dump_temp.rdb".into(), true);
         rdb.save().await.unwrap();
 
         let shared = Shared::default();
-        let mut rdb = RDB::new(
-            shared,
-            "tests/dump/dump_temp.rdb".into(),
-            true,
-            ShutdownManager::new(),
-        );
+        let mut rdb = RDB::new(shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.load().await.unwrap();
 
         assert_eq!(

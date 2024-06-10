@@ -92,7 +92,6 @@ impl Listener {
                 self.shared.clone(),
                 self.conf.rdb.file_path.clone(),
                 self.conf.rdb.enable_checksum,
-                self.shared.shutdown().clone(),
             );
             let start = tokio::time::Instant::now();
             rdb.save().await.ok();

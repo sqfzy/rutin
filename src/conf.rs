@@ -204,7 +204,6 @@ impl Conf {
 
     pub async fn prepare(listener: &mut Listener) -> anyhow::Result<()> {
         let Listener { shared, conf, .. } = listener;
-        let shutdown = shared.shutdown();
 
         /*********************/
         /* 是否开启RDB持久化 */
@@ -214,7 +213,6 @@ impl Conf {
                 shared.clone(),
                 conf.rdb.file_path.clone(),
                 conf.rdb.enable_checksum,
-                shutdown.clone(),
             );
 
             let start = std::time::Instant::now();

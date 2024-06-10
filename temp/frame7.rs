@@ -6,7 +6,14 @@ use ahash::{AHashMap, AHashSet};
 use bytes::{Buf, Bytes, BytesMut};
 use mlua::prelude::*;
 use num_bigint::BigInt;
-use std::{hash::Hash, io, iter::Iterator, ptr::slice_from_raw_parts};
+use std::{
+    convert::Infallible,
+    fmt::Display,
+    hash::Hash,
+    io,
+    iter::Iterator,
+    ptr::{addr_of, slice_from_raw_parts, NonNull},
+};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::{
     bytes::BufMut,
@@ -734,11 +741,40 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
-    fn decode_line(src: &mut BytesMut) -> io::Result<BytesMut> {
+    fn decode_line(consume: &mut BytesMut, src: &mut BytesMut) -> io::Result<BytesMut> {
+        if !consume.is_empty() {
+            // 如果再consume中找到完整行，则返回
+            if let Some(i) = memchr::memchr(b'\n', consume) {
+                if i > 0 && consume[i - 1] == b'\r' {
+                    let line = consume.split_to(i - 1);
+                    consume.advance(2);
+
+                    return Ok(line);
+                }
+            }
+
+            // 尝试在src中找到完整行
+            if let Some(i) = memchr::memchr(b'\n', src) {
+                if i > 0 && src[i - 1] == b'\r' {
+                    let mut line = consume.split();
+                    line.unsplit(src.split_to(i - 1));
+
+                    src.advance(2);
+
+                    return Ok(line);
+                }
+            }
+
+            // 都没有找到，则frame不完整
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "incomplete frame",
+            ));
+        }
+
         if let Some(i) = memchr::memchr(b'\n', src) {
             if i > 0 && src[i - 1] == b'\r' {
                 let line = src.split_to(i - 1);
-                println!("debug1");
                 src.advance(2);
 
                 return Ok(line);
@@ -752,24 +788,24 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
-    fn decode_decimal(src: &mut BytesMut) -> io::Result<Int> {
-        let line = RESP3::decode_line(src)?;
+    fn decode_decimal(consume: &mut BytesMut, src: &mut BytesMut) -> io::Result<Int> {
+        let line = RESP3::decode_line(consume, src)?;
         let decimal = util::atoi(&line)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid integer"))?;
         Ok(decimal)
     }
 
     #[inline]
-    fn decode_length(src: &mut BytesMut) -> io::Result<usize> {
-        let line = RESP3::decode_line(src)?;
+    fn decode_length(consume: &mut BytesMut, src: &mut BytesMut) -> io::Result<usize> {
+        let line = RESP3::decode_line(consume, src)?;
         let len = util::atoi(&line)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid length"))?;
         Ok(len)
     }
 
     #[inline]
-    fn decode_string(src: &mut BytesMut) -> io::Result<String> {
-        let line = RESP3::decode_line(src)?;
+    fn decode_string(consume: &mut BytesMut, src: &mut BytesMut) -> io::Result<String> {
+        let line = RESP3::decode_line(consume, src)?;
         let string = String::from_utf8(line.to_vec())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid string"))?;
         Ok(string)
@@ -791,13 +827,13 @@ impl Encoder<RESP3> for RESP3Encoder {
 
 #[derive(Debug, Clone)]
 pub struct RESP3Decoder {
-    buf: BytesMut,
+    consume: BytesMut,
 }
 
 impl Default for RESP3Decoder {
     fn default() -> Self {
         Self {
-            buf: BytesMut::with_capacity(1024),
+            consume: BytesMut::new(),
         }
     }
 }
@@ -808,30 +844,55 @@ impl Decoder for RESP3Decoder {
 
     // 如果src中的数据不完整，会引发io::ErrorKind::UnexpectedEof错误
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        self.buf.unsplit(src.split());
-
-        if self.buf.is_empty() {
+        if src.is_empty() {
             return Ok(None);
         }
 
-        let origin = self.buf.as_ptr();
+        let origin = src.as_ptr();
 
         fn _decode(
             decoder: &mut RESP3Decoder,
+            src: &mut BytesMut,
         ) -> Result<Option<<RESP3Decoder as Decoder>::Item>, <RESP3Decoder as Decoder>::Error>
         {
-            let src = &mut decoder.buf;
+            let consume = &mut decoder.consume;
 
-            if src.is_empty() {
-                return Ok(None);
-            }
+            let prefix = if consume.has_remaining() {
+                consume.get_u8()
+            } else {
+                src.get_u8()
+            };
 
-            let res = match src.get_u8() {
-                b'+' => RESP3::SimpleString(RESP3::decode_string(src)?),
-                b'-' => RESP3::SimpleError(RESP3::decode_string(src)?),
-                b':' => RESP3::Integer(RESP3::decode_decimal(src)?),
+            let res = match prefix {
+                b'+' => RESP3::SimpleString(RESP3::decode_string(consume, src)?),
+                b'-' => RESP3::SimpleError(RESP3::decode_string(consume, src)?),
+                b':' => RESP3::Integer(RESP3::decode_decimal(consume, src)?),
                 b'$' => {
-                    let len = RESP3::decode_length(src)?;
+                    let len = RESP3::decode_length(consume, src)?;
+
+                    if consume.has_remaining() {
+                        if consume.remaining() < len + 2 {
+                            let need = len + 2 - consume.remaining();
+
+                            if src.remaining() < need {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::UnexpectedEof,
+                                    "incomplete frame",
+                                ));
+                            }
+
+                            let mut res = consume.split();
+                            res.unsplit(src.split_to(need - 2));
+                            src.advance(2);
+
+                            return Ok(Some(RESP3::Bulk(res.freeze())));
+                        }
+
+                        let res = consume.split_to(len);
+                        consume.advance(2);
+
+                        return Ok(Some(RESP3::Bulk(res.freeze())));
+                    }
 
                     if src.remaining() < len + 2 {
                         return Err(io::Error::new(
@@ -846,11 +907,11 @@ impl Decoder for RESP3Decoder {
                     RESP3::Bulk(res.freeze())
                 }
                 b'*' => {
-                    let len = RESP3::decode_decimal(src)? as usize;
+                    let len = RESP3::decode_decimal(consume, src)? as usize;
 
                     let mut frames = Vec::with_capacity(len);
                     for _ in 0..len {
-                        let frame = _decode(decoder)?.ok_or(io::Error::new(
+                        let frame = _decode(decoder, src)?.ok_or(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "incomplete frame",
                         ))?;
@@ -860,6 +921,26 @@ impl Decoder for RESP3Decoder {
                     RESP3::Array(frames)
                 }
                 b'_' => {
+                    if consume.has_remaining() {
+                        if consume.remaining() >= 2 {
+                            consume.advance(2);
+
+                            return Ok(Some(RESP3::Null));
+                        }
+
+                        if consume.remaining() == 1 && src.remaining() > 1 {
+                            consume.advance(1);
+                            src.advance(1);
+
+                            return Ok(Some(RESP3::Null));
+                        }
+
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "incomplete frame",
+                        ));
+                    }
+
                     if src.remaining() < 2 {
                         return Err(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
@@ -870,6 +951,48 @@ impl Decoder for RESP3Decoder {
                     RESP3::Null
                 }
                 b'#' => {
+                    if consume.has_remaining() {
+                        if consume.remaining() >= 3 {
+                            let b = match consume.get_u8() {
+                                b't' => true,
+                                b'f' => false,
+                                _ => {
+                                    return Err(io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        "invalid boolean value",
+                                    ));
+                                }
+                            };
+
+                            consume.advance(2);
+
+                            return Ok(Some(RESP3::Boolean(b)));
+                        }
+
+                        if consume.remaining() == 2 && src.remaining() > 1 {
+                            let b = match src.get_u8() {
+                                b't' => true,
+                                b'f' => false,
+                                _ => {
+                                    return Err(io::Error::new(
+                                        io::ErrorKind::InvalidData,
+                                        "invalid boolean value",
+                                    ));
+                                }
+                            };
+
+                            consume.advance(1);
+                            src.advance(2);
+
+                            return Ok(Some(RESP3::Boolean(b)));
+                        }
+
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "incomplete frame",
+                        ));
+                    }
+
                     if src.remaining() < 3 {
                         return Err(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
@@ -892,7 +1015,7 @@ impl Decoder for RESP3Decoder {
                     RESP3::Boolean(b)
                 }
                 b',' => {
-                    let line = RESP3::decode_line(src)?;
+                    let line = RESP3::decode_line(consume, src)?;
 
                     let mut exp_pos = line.len();
                     if let Some(i) = memchr::memchr2(b'e', b'E', &line) {
@@ -915,7 +1038,7 @@ impl Decoder for RESP3Decoder {
                     RESP3::Double { double, exponent }
                 }
                 b'(' => {
-                    let line = RESP3::decode_line(src)?;
+                    let line = RESP3::decode_line(consume, src)?;
                     let n = BigInt::parse_bytes(&line, 10).ok_or(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "invalid big number",
@@ -923,7 +1046,7 @@ impl Decoder for RESP3Decoder {
                     RESP3::BigNumber(n)
                 }
                 b'!' => {
-                    let len = RESP3::decode_length(src)?;
+                    let len = RESP3::decode_length(consume, src)?;
 
                     if src.remaining() < len + 2 {
                         return Err(io::Error::new(
@@ -938,7 +1061,7 @@ impl Decoder for RESP3Decoder {
                     RESP3::BulkError(e.freeze())
                 }
                 b'=' => {
-                    let len = RESP3::decode_length(src)?;
+                    let len = RESP3::decode_length(consume, src)?;
 
                     if src.remaining() < len + 2 {
                         return Err(io::Error::new(
@@ -956,15 +1079,15 @@ impl Decoder for RESP3Decoder {
                     RESP3::VerbatimString { encoding, data }
                 }
                 b'%' => {
-                    let len = RESP3::decode_decimal(src)? as usize;
+                    let len = RESP3::decode_decimal(consume, src)? as usize;
 
                     let mut map = AHashMap::with_capacity(len);
                     for _ in 0..len {
-                        let k = _decode(decoder)?.ok_or(io::Error::new(
+                        let k = _decode(decoder, src)?.ok_or(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "incomplete frame",
                         ))?;
-                        let v = _decode(decoder)?.ok_or(io::Error::new(
+                        let v = _decode(decoder, src)?.ok_or(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "incomplete frame",
                         ))?;
@@ -975,11 +1098,11 @@ impl Decoder for RESP3Decoder {
                     RESP3::Map(map)
                 }
                 b'~' => {
-                    let len = RESP3::decode_decimal(src)? as usize;
+                    let len = RESP3::decode_decimal(consume, src)? as usize;
 
                     let mut set = AHashSet::with_capacity(len);
                     for _ in 0..len {
-                        let frame = _decode(decoder)?.ok_or(io::Error::new(
+                        let frame = _decode(decoder, src)?.ok_or(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "incomplete frame",
                         ))?;
@@ -990,11 +1113,11 @@ impl Decoder for RESP3Decoder {
                     RESP3::Set(set)
                 }
                 b'>' => {
-                    let len = RESP3::decode_decimal(src)? as usize;
+                    let len = RESP3::decode_decimal(consume, src)? as usize;
 
                     let mut frames = Vec::with_capacity(len);
                     for _ in 0..len {
-                        let frame = _decode(decoder)?.ok_or(io::Error::new(
+                        let frame = _decode(decoder, src)?.ok_or(io::Error::new(
                             io::ErrorKind::UnexpectedEof,
                             "incomplete frame",
                         ))?;
@@ -1014,17 +1137,15 @@ impl Decoder for RESP3Decoder {
             Ok(Some(res))
         }
 
-        let res = _decode(self);
+        let res = _decode(self, src);
         if res.is_err() {
-            // 恢复消耗的数据
             let consume = unsafe {
-                slice_from_raw_parts(origin, self.buf.as_ptr() as usize - origin as usize)
+                slice_from_raw_parts(origin, src.as_ptr() as usize - origin as usize)
                     .as_ref()
                     .unwrap()
             };
-            let temp = self.buf.split();
-            self.buf.put_slice(consume);
-            self.buf.unsplit(temp);
+            // 存储被消耗的数据
+            self.consume.put_slice(consume);
         }
 
         res
@@ -1387,6 +1508,6 @@ mod frame_tests {
 
         decoder.decode(&mut src).unwrap_err();
 
-        assert_eq!(decoder.buf, src_clone);
+        assert_eq!(src, src_clone);
     }
 }

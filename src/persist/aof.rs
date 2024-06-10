@@ -6,12 +6,12 @@ use crate::{
     Connection,
 };
 use anyhow::Result;
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncBufRead, AsyncReadExt, AsyncWriteExt},
 };
 
 pub struct AOF {
@@ -183,6 +183,8 @@ impl AOF {
         if buf.starts_with(b"REDIS") {
             rdb_load(&mut buf, self.shared.db(), false)?;
         }
+
+        // TODO: 直接decode buf为frame，然后dispatch
 
         // 将其余的内容发送给AOF server
         client.write_buf(&mut buf).await?;
