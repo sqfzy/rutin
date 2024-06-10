@@ -4,12 +4,11 @@
 /// 4. 如果环境变量有 SERVER_ADDR 之类配置，进行 merge
 use crate::{
     cli::Cli,
-    cmd::dispatch,
     persist::{
         aof::{AppendFSync, AOF},
         rdb::RDB,
     },
-    server::{Handler, Listener},
+    server::Listener,
     shared::Shared,
 };
 use clap::Parser;
@@ -290,18 +289,19 @@ impl Conf {
 async fn enable_aof(shared: Shared, conf: Arc<Conf>) -> anyhow::Result<()> {
     let mut aof = AOF::new(shared.clone(), conf.clone()).await?;
 
-    let (mut handler, client) = Handler::new_fake_with(shared, conf, None);
-
+    let (tx, rx) = tokio::sync::oneshot::channel();
     let handle = Handle::current();
     std::thread::spawn(move || {
         handle.block_on(async move {
             let start = std::time::Instant::now();
             println!("Loading AOF file...");
-            if let Err(e) = aof.load(client).await {
+            if let Err(e) = aof.load().await {
                 println!("Failed to load AOF file: {:?}", e);
             } else {
                 println!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
             }
+
+            tx.send(()).unwrap();
 
             if let Err(e) = aof.save().await {
                 println!("Failed to save AOF file: {:?}", e);
@@ -309,25 +309,15 @@ async fn enable_aof(shared: Shared, conf: Arc<Conf>) -> anyhow::Result<()> {
         });
     });
 
-    loop {
-        // 处理AOF client请求，但是不返回响应
-        let frames = handler.conn.read_frames().await?;
-        if let Some(frames) = frames {
-            for f in frames.into_iter() {
-                let _ = dispatch(f, &mut handler).await?;
-            }
-        } else {
-            // AOF client已经关闭连接
-            break;
-        }
-    }
+    // 等待AOF文件加载完成
+    rx.await?;
 
     Ok(())
 }
 
 #[cfg(test)]
 mod conf_tests {
-    use crate::{frame::RESP3, shared::db::Db, util::test_init};
+    use crate::{cmd::dispatch, frame::RESP3, server::Handler, shared::db::Db, util::test_init};
     use std::io::Write;
 
     use super::*;

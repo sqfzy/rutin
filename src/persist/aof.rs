@@ -1,18 +1,20 @@
 use crate::{
+    cmd::dispatch,
     conf::Conf,
-    connection::FakeStream,
+    frame::RESP3Decoder,
     persist::rdb::{rdb_load, rdb_save},
+    server::Handler,
     shared::Shared,
-    Connection,
 };
 use anyhow::Result;
-use bytes::{Buf, BytesMut};
+use bytes::BytesMut;
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
 use tokio::{
     fs::File,
-    io::{AsyncBufRead, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
 };
+use tokio_util::codec::Decoder;
 
 pub struct AOF {
     file: File,
@@ -174,8 +176,7 @@ impl AOF {
         Ok(())
     }
 
-    pub async fn load(&mut self, mut client: Connection<FakeStream>) -> anyhow::Result<()> {
-        // 读取AOF文件内容并发送给AOF server
+    pub async fn load(&mut self) -> anyhow::Result<()> {
         let mut buf = BytesMut::with_capacity(self.file.metadata().await?.size() as usize);
         while self.file.read_buf(&mut buf).await? != 0 {}
 
@@ -184,11 +185,11 @@ impl AOF {
             rdb_load(&mut buf, self.shared.db(), false)?;
         }
 
-        // TODO: 直接decode buf为frame，然后dispatch
-
-        // 将其余的内容发送给AOF server
-        client.write_buf(&mut buf).await?;
-        client.flush().await?;
+        let (mut handler, _) = Handler::new_fake_with(self.shared.clone(), self.conf.clone(), None);
+        let mut decoder = RESP3Decoder::default();
+        while let Some(cmd_frame) = decoder.decode(&mut buf)? {
+            dispatch(cmd_frame, &mut handler).await?;
+        }
 
         debug_assert!(buf.is_empty());
 
