@@ -386,8 +386,8 @@ pub mod db_tests {
         let res = db
             .get_object_entry(&"key1".into())
             .unwrap()
-            .inner()
             .on_str()
+            .unwrap()
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value1".as_bytes());
@@ -400,8 +400,8 @@ pub mod db_tests {
         let res = db
             .get_object_entry(&"key1".into())
             .unwrap()
-            .inner()
             .on_str()
+            .unwrap()
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
@@ -416,8 +416,8 @@ pub mod db_tests {
         let res = db
             .get_object_entry(&"key1".into())
             .unwrap()
-            .inner()
             .on_str()
+            .unwrap()
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
@@ -477,8 +477,8 @@ pub mod db_tests {
         let update_res = db
             .get_object_entry(&"key1".into())
             .unwrap()
-            .inner()
             .on_str()
+            .unwrap()
             .unwrap()
             .to_bytes();
         assert_eq!(update_res, "value2".as_bytes());
@@ -526,8 +526,8 @@ pub mod db_tests {
         let update_res = db
             .get_object_entry(&"key1".into())
             .unwrap()
-            .inner()
             .on_str()
+            .unwrap()
             .unwrap()
             .to_bytes();
         assert_eq!(update_res, "value2".as_bytes());
@@ -545,8 +545,8 @@ pub mod db_tests {
         let update_res = db
             .get_object_entry(&"key_not_exist".into())
             .unwrap()
-            .inner()
             .on_str()
+            .unwrap()
             .unwrap()
             .to_bytes();
         assert_eq!(update_res, "value".as_bytes());
@@ -562,8 +562,8 @@ pub mod db_tests {
         let update_res = db
             .get_object_entry(&"key_none".into())
             .unwrap()
-            .inner()
             .on_str()
+            .unwrap()
             .unwrap()
             .to_bytes();
         assert_eq!(update_res, "value".as_bytes());

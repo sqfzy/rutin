@@ -128,7 +128,14 @@ mod rdb_save {
         let max_buf_size = 2 << 28;
         for entry in db.entries().iter() {
             let (key, obj) = (entry.key().clone(), entry.value().clone());
-            let obj_inner = obj.inner();
+            let obj_inner = if let Some(inner) = obj.inner() {
+                if inner.is_expired() {
+                    continue;
+                }
+                inner
+            } else {
+                continue;
+            };
 
             if let Some(ex) = obj_inner.expire() {
                 let ex = ex.duration_since(epoch());
@@ -762,7 +769,7 @@ mod rdb_test {
     use super::rdb_load::*;
     use super::rdb_save::*;
     use super::*;
-    use crate::shared::db::Object;
+    use crate::shared::db::ObjectInner;
     use crate::{shared::Shared, util::test_init};
     use bytes::BytesMut;
     use tokio::time::Instant;
@@ -842,82 +849,83 @@ mod rdb_test {
         let shared = Shared::default();
         let db = shared.db();
 
-        let str1 = Object::new_str("hello".into(), None);
-        let str2 = Object::new_str("10".into(), None);
-        let str3 = Object::new_str("200".into(), Some(Instant::now() + Duration::from_secs(10)));
-        let str4 = Object::new_str(
+        let str1 = ObjectInner::new_str("hello".into(), None);
+        let str2 = ObjectInner::new_str("10".into(), None);
+        let str3 =
+            ObjectInner::new_str("200".into(), Some(Instant::now() + Duration::from_secs(10)));
+        let str4 = ObjectInner::new_str(
             "hello".into(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("str1".into(), str1.inner().clone());
-        db.insert_object("str2".into(), str2.inner().clone());
-        db.insert_object("str3".into(), str3.inner().clone());
-        db.insert_object("str4".into(), str4.inner().clone());
+        db.insert_object("str1".into(), str1.clone());
+        db.insert_object("str2".into(), str2.clone());
+        db.insert_object("str3".into(), str3.clone());
+        db.insert_object("str4".into(), str4.clone());
 
-        let l1 = Object::new_list(List::default(), None);
-        let l2 = Object::new_list(vec!["v1", "v2"].into(), None);
-        let l3 = Object::new_list(
+        let l1 = ObjectInner::new_list(List::default(), None);
+        let l2 = ObjectInner::new_list(vec!["v1", "v2"].into(), None);
+        let l3 = ObjectInner::new_list(
             List::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
-        let l4 = Object::new_list(
+        let l4 = ObjectInner::new_list(
             vec!["v1", "v2"].into(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("l1".into(), l1.inner().clone());
-        db.insert_object("l2".into(), l2.inner().clone());
-        db.insert_object("l3".into(), l3.inner().clone());
-        db.insert_object("l4".into(), l4.inner().clone());
+        db.insert_object("l1".into(), l1.clone());
+        db.insert_object("l2".into(), l2.clone());
+        db.insert_object("l3".into(), l3.clone());
+        db.insert_object("l4".into(), l4.clone());
 
-        let s1 = Object::new_set(Set::default(), None);
-        let s2 = Object::new_set(vec!["v1", "v2"].into(), None);
-        let s3 = Object::new_set(
+        let s1 = ObjectInner::new_set(Set::default(), None);
+        let s2 = ObjectInner::new_set(vec!["v1", "v2"].into(), None);
+        let s3 = ObjectInner::new_set(
             Set::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
-        let s4 = Object::new_set(
+        let s4 = ObjectInner::new_set(
             vec!["v1", "v2"].into(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("s1".into(), s1.inner().clone());
-        db.insert_object("s2".into(), s2.inner().clone());
-        db.insert_object("s3".into(), s3.inner().clone());
-        db.insert_object("s4".into(), s4.inner().clone());
+        db.insert_object("s1".into(), s1.clone());
+        db.insert_object("s2".into(), s2.clone());
+        db.insert_object("s3".into(), s3.clone());
+        db.insert_object("s4".into(), s4.clone());
 
-        let h1 = Object::new_hash(Hash::default(), None);
-        let h2 = Object::new_hash(vec![("f1", "v1"), ("f2", "v2")].into(), None);
-        let h3 = Object::new_hash(
+        let h1 = ObjectInner::new_hash(Hash::default(), None);
+        let h2 = ObjectInner::new_hash(vec![("f1", "v1"), ("f2", "v2")].into(), None);
+        let h3 = ObjectInner::new_hash(
             Hash::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
-        let h4 = Object::new_hash(
+        let h4 = ObjectInner::new_hash(
             vec![("f1", "v1"), ("f2", "v2")].into(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("h1".into(), h1.inner().clone());
-        db.insert_object("h2".into(), h2.inner().clone());
-        db.insert_object("h3".into(), h3.inner().clone());
-        db.insert_object("h4".into(), h4.inner().clone());
+        db.insert_object("h1".into(), h1.clone());
+        db.insert_object("h2".into(), h2.clone());
+        db.insert_object("h3".into(), h3.clone());
+        db.insert_object("h4".into(), h4.clone());
 
-        let zs1 = Object::new_zset(ZSet::default(), None);
-        let zs2 = Object::new_zset(vec![(1_f64, "v1"), (2_f64, "v2")].into(), None);
-        let zs3 = Object::new_zset(
+        let zs1 = ObjectInner::new_zset(ZSet::default(), None);
+        let zs2 = ObjectInner::new_zset(vec![(1_f64, "v1"), (2_f64, "v2")].into(), None);
+        let zs3 = ObjectInner::new_zset(
             ZSet::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
-        let zs4 = Object::new_zset(
+        let zs4 = ObjectInner::new_zset(
             vec![(1_f64, "v1"), (2_f64, "v2")].into(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("zs1".into(), zs1.inner().clone());
-        db.insert_object("zs2".into(), zs2.inner().clone());
-        db.insert_object("zs3".into(), zs3.inner().clone());
-        db.insert_object("zs4".into(), zs4.inner().clone());
+        db.insert_object("zs1".into(), zs1.clone());
+        db.insert_object("zs2".into(), zs2.clone());
+        db.insert_object("zs3".into(), zs3.clone());
+        db.insert_object("zs4".into(), zs4.clone());
 
         let mut rdb = RDB::new(shared.clone(), "tests/dump/dump_temp.rdb".into(), true);
         rdb.save().await.unwrap();
@@ -927,88 +935,168 @@ mod rdb_test {
         rdb.load().await.unwrap();
 
         assert_eq!(
-            db.get_object_entry(&"str1".into()).unwrap().value().inner(),
-            str1.inner()
+            db.get_object_entry(&"str1".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &str1
         );
         assert_eq!(
-            db.get_object_entry(&"str2".into()).unwrap().value().inner(),
-            str2.inner()
+            db.get_object_entry(&"str2".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &str2
         );
         assert_eq!(
-            db.get_object_entry(&"str3".into()).unwrap().value().inner(),
-            str3.inner()
+            db.get_object_entry(&"str3".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &str3
         );
         assert_eq!(
-            db.get_object_entry(&"str4".into()).unwrap().value().inner(),
-            str4.inner()
-        );
-
-        assert_eq!(
-            db.get_object_entry(&"l1".into()).unwrap().value().inner(),
-            l1.inner()
-        );
-        assert_eq!(
-            db.get_object_entry(&"l2".into()).unwrap().value().inner(),
-            l2.inner()
-        );
-        assert_eq!(
-            db.get_object_entry(&"l3".into()).unwrap().value().inner(),
-            l3.inner()
-        );
-        assert_eq!(
-            db.get_object_entry(&"l4".into()).unwrap().value().inner(),
-            l4.inner()
-        );
-
-        assert_eq!(
-            db.get_object_entry(&"s1".into()).unwrap().value().inner(),
-            s1.inner()
-        );
-        assert_eq!(
-            db.get_object_entry(&"s2".into()).unwrap().value().inner(),
-            s2.inner()
-        );
-        assert_eq!(
-            db.get_object_entry(&"s3".into()).unwrap().value().inner(),
-            s3.inner()
-        );
-        assert_eq!(
-            db.get_object_entry(&"s4".into()).unwrap().value().inner(),
-            s4.inner()
+            db.get_object_entry(&"str4".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &str4
         );
 
         assert_eq!(
-            db.get_object_entry(&"h1".into()).unwrap().value().inner(),
-            h1.inner()
+            db.get_object_entry(&"l1".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &l1
         );
         assert_eq!(
-            db.get_object_entry(&"h2".into()).unwrap().value().inner(),
-            h2.inner()
+            db.get_object_entry(&"l2".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &l2
         );
         assert_eq!(
-            db.get_object_entry(&"h3".into()).unwrap().value().inner(),
-            h3.inner()
+            db.get_object_entry(&"l3".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &l3
         );
         assert_eq!(
-            db.get_object_entry(&"h4".into()).unwrap().value().inner(),
-            h4.inner()
+            db.get_object_entry(&"l4".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &l4
         );
 
         assert_eq!(
-            db.get_object_entry(&"zs1".into()).unwrap().value().inner(),
-            zs1.inner()
+            db.get_object_entry(&"s1".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &s1
         );
         assert_eq!(
-            db.get_object_entry(&"zs2".into()).unwrap().value().inner(),
-            zs2.inner()
+            db.get_object_entry(&"s2".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &s2
         );
         assert_eq!(
-            db.get_object_entry(&"zs3".into()).unwrap().value().inner(),
-            zs3.inner()
+            db.get_object_entry(&"s3".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &s3
         );
         assert_eq!(
-            db.get_object_entry(&"zs4".into()).unwrap().value().inner(),
-            zs4.inner()
+            db.get_object_entry(&"s4".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &s4
+        );
+
+        assert_eq!(
+            db.get_object_entry(&"h1".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &h1
+        );
+        assert_eq!(
+            db.get_object_entry(&"h2".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &h2
+        );
+        assert_eq!(
+            db.get_object_entry(&"h3".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &h3
+        );
+        assert_eq!(
+            db.get_object_entry(&"h4".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &h4
+        );
+
+        assert_eq!(
+            db.get_object_entry(&"zs1".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &zs1
+        );
+        assert_eq!(
+            db.get_object_entry(&"zs2".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &zs2
+        );
+        assert_eq!(
+            db.get_object_entry(&"zs3".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &zs3
+        );
+        assert_eq!(
+            db.get_object_entry(&"zs4".into())
+                .unwrap()
+                .value()
+                .inner()
+                .unwrap(),
+            &zs4
         );
     }
 }

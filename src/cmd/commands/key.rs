@@ -726,6 +726,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_none());
 
@@ -738,6 +739,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_some());
 
@@ -856,6 +858,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_none());
 
@@ -875,6 +878,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_some());
 
@@ -1007,6 +1011,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_none());
         let expire = Instant::now() + Duration::from_secs(10);
@@ -1127,6 +1132,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_none());
 
@@ -1155,6 +1161,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_none());
         let dur = Duration::from_secs(10);
@@ -1200,6 +1207,7 @@ mod cmd_key_tests {
             .unwrap()
             .value()
             .inner()
+            .unwrap()
             .expire()
             .is_none());
         let dur = Duration::from_secs(10);

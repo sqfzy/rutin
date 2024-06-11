@@ -1058,12 +1058,12 @@ mod cmd_str_tests {
 
         let obj = shared.db().get_object_entry(&"key_expire".into()).unwrap();
         assert_eq!(
-            obj.value().inner().on_str().unwrap().to_bytes().as_ref(),
+            obj.on_str().unwrap().unwrap().to_bytes().as_ref(),
             b"value_expire_modified"
         );
         assert!(
             // 误差在10ms以内
-            (obj.value().inner().expire().unwrap() - now) - Duration::from_millis(100000)
+            (obj.value().inner().unwrap().expire().unwrap() - now) - Duration::from_millis(100000)
                 < Duration::from_millis(10)
         );
     }

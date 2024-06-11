@@ -17,8 +17,8 @@ use tokio::time::Instant;
 // 对象可以为空对象(不存储对象值)，只存储事件
 #[derive(Debug, Clone)]
 pub struct Object {
-    pub(super) inner: Option<ObjectInner>,
-    pub(super) event: Event,
+    pub inner: Option<ObjectInner>,
+    pub event: Event,
 }
 
 // 在db模块以外创建的Entry的inner字段一定不为None
@@ -31,8 +31,8 @@ impl Object {
     }
 
     #[inline]
-    pub fn inner(&self) -> &ObjectInner {
-        self.inner.as_ref().unwrap()
+    pub fn inner(&self) -> Option<&ObjectInner> {
+        self.inner.as_ref()
     }
 
     pub fn new_str(s: Str, expire: Option<Instant>) -> Self {
@@ -53,6 +53,181 @@ impl Object {
 
     pub fn new_zset(z: ZSet, expire: Option<Instant>) -> Self {
         Object::new(ObjectInner::new_zset(z, expire))
+    }
+
+    pub fn on_str(&self) -> Option<Result<&Str, DbError>> {
+        let inner = if let Some(inner) = &self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        if let ObjValue::Str(s) = &inner.value {
+            Some(Ok(s))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "string",
+                found: inner.type_str(),
+            }))
+        }
+    }
+
+    pub fn on_list(&self) -> Option<Result<&List, DbError>> {
+        let inner = if let Some(inner) = &self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        if let ObjValue::List(l) = &inner.value {
+            Some(Ok(l))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "list",
+                found: inner.type_str(),
+            }))
+        }
+    }
+
+    pub fn on_set(&self) -> Option<Result<&Set, DbError>> {
+        let inner = if let Some(inner) = &self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        if let ObjValue::Set(s) = &inner.value {
+            Some(Ok(s))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "set",
+                found: inner.type_str(),
+            }))
+        }
+    }
+
+    pub fn on_hash(&self) -> Option<Result<&Hash, DbError>> {
+        let inner = if let Some(inner) = &self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        if let ObjValue::Hash(h) = &inner.value {
+            Some(Ok(h))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "hash",
+                found: inner.type_str(),
+            }))
+        }
+    }
+
+    pub fn on_zset(&self) -> Option<Result<&ZSet, DbError>> {
+        let inner = if let Some(inner) = &self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        if let ObjValue::ZSet(z) = &inner.value {
+            Some(Ok(z))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "zset",
+                found: inner.type_str(),
+            }))
+        }
+    }
+
+    pub fn on_str_mut(&mut self) -> Option<Result<&mut Str, DbError>> {
+        let inner = if let Some(inner) = &mut self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        let typ = inner.type_str();
+        if let ObjValue::Str(s) = &mut inner.value {
+            Some(Ok(s))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "string",
+                found: typ,
+            }))
+        }
+    }
+
+    pub fn on_list_mut(&mut self) -> Option<Result<&mut List, DbError>> {
+        let inner = if let Some(inner) = &mut self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        let typ = inner.type_str();
+        if let ObjValue::List(l) = &mut inner.value {
+            Some(Ok(l))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "list",
+                found: typ,
+            }))
+        }
+    }
+
+    pub fn on_set_mut(&mut self) -> Option<Result<&mut Set, DbError>> {
+        let inner = if let Some(inner) = &mut self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        let typ = inner.type_str();
+        if let ObjValue::Set(s) = &mut inner.value {
+            Some(Ok(s))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "set",
+                found: typ,
+            }))
+        }
+    }
+
+    pub fn on_hash_mut(&mut self) -> Option<Result<&mut Hash, DbError>> {
+        let inner = if let Some(inner) = &mut self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        let typ = inner.type_str();
+        if let ObjValue::Hash(h) = &mut inner.value {
+            Some(Ok(h))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "hash",
+                found: typ,
+            }))
+        }
+    }
+
+    pub fn on_zset_mut(&mut self) -> Option<Result<&mut ZSet, DbError>> {
+        let inner = if let Some(inner) = &mut self.inner {
+            inner
+        } else {
+            return None;
+        };
+
+        let typ = inner.type_str();
+        if let ObjValue::ZSet(z) = &mut inner.value {
+            Some(Ok(z))
+        } else {
+            Some(Err(DbError::TypeErr {
+                expected: "zset",
+                found: typ,
+            }))
+        }
     }
 }
 

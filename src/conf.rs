@@ -367,9 +367,8 @@ mod conf_tests {
         assert_eq!(
             db.get_object_entry(&"key:000000000015".into())
                 .unwrap()
-                .value()
-                .inner()
                 .on_str()
+                .unwrap()
                 .unwrap()
                 .to_vec(),
             b"VXK"
@@ -377,9 +376,8 @@ mod conf_tests {
         assert_eq!(
             db.get_object_entry(&"key:000000000003".into())
                 .unwrap()
-                .value()
-                .inner()
                 .on_str()
+                .unwrap()
                 .unwrap()
                 .to_vec(),
             b"VXK"
@@ -387,9 +385,8 @@ mod conf_tests {
         assert_eq!(
             db.get_object_entry(&"key:000000000025".into())
                 .unwrap()
-                .value()
-                .inner()
                 .on_str()
+                .unwrap()
                 .unwrap()
                 .to_vec(),
             b"VXK"
