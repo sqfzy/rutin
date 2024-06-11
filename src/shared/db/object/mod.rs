@@ -17,42 +17,104 @@ use tokio::time::Instant;
 // 对象可以为空对象(不存储对象值)，只存储事件
 #[derive(Debug, Clone)]
 pub struct Object {
-    pub(super) inner: Option<ObjectInner>,
-    pub(super) event: Event,
+    inner: Option<ObjectInner>,
+    event: Event,
+    locked: bool,
 }
 
 // 在db模块以外创建的Entry的inner字段一定不为None
 impl Object {
-    pub(super) fn new(object: ObjectInner) -> Self {
+    pub(super) fn new(inner: Option<ObjectInner>, event: Event) -> Self {
         Object {
-            inner: Some(object),
-            event: Event::default(),
+            inner,
+            event,
+            locked: false,
         }
     }
 
     #[inline]
-    pub fn inner(&self) -> &ObjectInner {
-        self.inner.as_ref().unwrap()
+    pub async fn to_inner(self) -> Option<ObjectInner> {
+        self.inner
     }
 
+    #[inline]
+    pub async fn inner(&self) -> Option<&ObjectInner> {
+        self.inner.as_ref()
+    }
+
+    #[inline]
+    pub async fn inner_mut(&mut self) -> Option<&mut ObjectInner> {
+        self.inner.as_mut()
+    }
+
+    #[inline]
+    pub async fn event(&self) -> &Event {
+        &self.event
+    }
+
+    #[inline]
+    pub(super) async fn event_mut(&mut self) -> &mut Event {
+        &mut self.event
+    }
+
+    #[inline]
     pub fn new_str(s: Str, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner::new_str(s, expire))
+        Self {
+            inner: Some(ObjectInner {
+                value: ObjValue::Str(s),
+                expire,
+            }),
+            event: Default::default(),
+            locked: false,
+        }
     }
 
+    #[inline]
     pub fn new_list(l: List, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner::new_list(l, expire))
+        Self {
+            inner: Some(ObjectInner {
+                value: ObjValue::List(l),
+                expire,
+            }),
+            event: Default::default(),
+            locked: false,
+        }
     }
 
+    #[inline]
     pub fn new_set(s: Set, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner::new_set(s, expire))
+        Self {
+            inner: Some(ObjectInner {
+                value: ObjValue::Set(s),
+                expire,
+            }),
+            event: Default::default(),
+            locked: false,
+        }
     }
 
+    #[inline]
     pub fn new_hash(h: Hash, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner::new_hash(h, expire))
+        Self {
+            inner: Some(ObjectInner {
+                value: ObjValue::Hash(h),
+                expire,
+            }),
+            event: Default::default(),
+            locked: false,
+        }
     }
 
+    #[inline]
     pub fn new_zset(z: ZSet, expire: Option<Instant>) -> Self {
-        Object::new(ObjectInner::new_zset(z, expire))
+        Self {
+            inner: Some(ObjectInner {
+                value: ObjValue::ZSet(z),
+                expire,
+            }),
+            event: Default::default(),
+            locked: false,
+        }
     }
 }
 
@@ -61,6 +123,7 @@ impl From<ObjectInner> for Object {
         Object {
             inner: Some(value),
             event: Default::default(),
+            locked: false,
         }
     }
 }

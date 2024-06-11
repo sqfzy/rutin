@@ -37,15 +37,17 @@ impl CmdExecutor for BLMove {
         let db = shared.db();
 
         let mut elem = None;
-        let update_res = db.update_object(&self.source, |obj| {
-            let list = obj.on_list_mut()?;
-            elem = match self.wherefrom {
-                Where::Left => list.pop_front(),
-                Where::Right => list.pop_back(),
-            };
+        let update_res = db
+            .update_object(&self.source, |obj| {
+                let list = obj.on_list_mut()?;
+                elem = match self.wherefrom {
+                    Where::Left => list.pop_front(),
+                    Where::Right => list.pop_back(),
+                };
 
-            Ok(())
-        });
+                Ok(())
+            })
+            .await;
 
         // 忽略空键的错误
         if !matches!(update_res, Err(CmdError::Null)) {
@@ -65,7 +67,8 @@ impl CmdExecutor for BLMove {
 
                 res = Some(RESP3::Bulk(elem));
                 Ok(())
-            })?;
+            })
+            .await?;
 
             if let Some(res) = res {
                 // 如果确实拿到了弹出的元素，则返回响应
@@ -76,7 +79,8 @@ impl CmdExecutor for BLMove {
 
         let (key_tx, key_rx) = flume::bounded(1);
         // 监听该键的Update事件
-        db.add_event(self.destination, key_tx.clone(), EventType::MayUpdate);
+        db.add_event(self.destination, key_tx.clone(), EventType::MayUpdate)
+            .await;
 
         let deadline = if self.timeout == 0 {
             None
@@ -136,7 +140,8 @@ impl CmdExecutor for BLPop {
         // 加入监听事件
         let (key_tx, key_rx) = flume::bounded(1);
         for key in self.keys {
-            db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate);
+            db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate)
+                .await;
         }
 
         let deadline = if self.timeout == 0 {
@@ -196,47 +201,50 @@ impl CmdExecutor for LPos {
             Vec::with_capacity(count)
         };
 
-        shared.db().visit_object(&self.key, |obj| {
-            let list = obj.on_list()?;
-            if rank >= 0 {
-                for i in 0..self.max_len.unwrap_or(list.len()) {
-                    if list[i] != self.element {
-                        continue;
-                    }
-                    // 只有当rank减为0时，才开始收入元素
-                    if rank > 1 {
-                        rank -= 1;
-                        continue;
-                    }
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                let list = obj.on_list()?;
+                if rank >= 0 {
+                    for i in 0..self.max_len.unwrap_or(list.len()) {
+                        if list[i] != self.element {
+                            continue;
+                        }
+                        // 只有当rank减为0时，才开始收入元素
+                        if rank > 1 {
+                            rank -= 1;
+                            continue;
+                        }
 
-                    res.push(RESP3::Integer(i as Int));
-                    if res.len() == count {
-                        return Ok(());
+                        res.push(RESP3::Integer(i as Int));
+                        if res.len() == count {
+                            return Ok(());
+                        }
+                    }
+                } else {
+                    let list_len = list.len();
+                    let lower_bound = list_len.saturating_sub(self.max_len.unwrap_or(list_len));
+                    let upper_bound = list_len - 1;
+                    for i in (lower_bound..=upper_bound).rev() {
+                        if list[i] != self.element {
+                            continue;
+                        }
+                        // 只有当rank增为0时，才开始收入元素
+                        if rank > 1 {
+                            rank += 1;
+                            continue;
+                        }
+
+                        res.push(RESP3::Integer(i as Int));
+                        if res.len() == count {
+                            return Ok(());
+                        }
                     }
                 }
-            } else {
-                let list_len = list.len();
-                let lower_bound = list_len.saturating_sub(self.max_len.unwrap_or(list_len));
-                let upper_bound = list_len - 1;
-                for i in (lower_bound..=upper_bound).rev() {
-                    if list[i] != self.element {
-                        continue;
-                    }
-                    // 只有当rank增为0时，才开始收入元素
-                    if rank > 1 {
-                        rank += 1;
-                        continue;
-                    }
 
-                    res.push(RESP3::Integer(i as Int));
-                    if res.len() == count {
-                        return Ok(());
-                    }
-                }
-            }
-
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .await?;
 
         let count = res.len();
         let res = if count == 0 {
@@ -310,6 +318,7 @@ impl CmdExecutor for LLen {
 
                 Ok(())
             })
+            .await
             .map_err(|_| CmdError::from(0))?;
 
         Ok(res)
@@ -341,34 +350,37 @@ impl CmdExecutor for LPop {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = None;
-        shared.db().update_object(&self.key, |obj| {
-            let list = obj.on_list_mut()?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let list = obj.on_list_mut()?;
 
-            if self.count == 1 {
-                if let Some(value) = list.pop_front() {
-                    res = Some(RESP3::Bulk(value));
-                } else {
-                    res = Some(RESP3::Null);
-                }
-            } else {
-                let mut values = Vec::with_capacity(self.count as usize);
-                for _ in 0..self.count {
+                if self.count == 1 {
                     if let Some(value) = list.pop_front() {
-                        values.push(RESP3::Bulk(value));
+                        res = Some(RESP3::Bulk(value));
                     } else {
-                        break;
+                        res = Some(RESP3::Null);
+                    }
+                } else {
+                    let mut values = Vec::with_capacity(self.count as usize);
+                    for _ in 0..self.count {
+                        if let Some(value) = list.pop_front() {
+                            values.push(RESP3::Bulk(value));
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if values.is_empty() {
+                        res = Some(RESP3::Null);
+                    } else {
+                        res = Some(RESP3::Array(values));
                     }
                 }
 
-                if values.is_empty() {
-                    res = Some(RESP3::Null);
-                } else {
-                    res = Some(RESP3::Array(values));
-                }
-            }
-
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .await?;
 
         Ok(res)
     }
@@ -417,7 +429,8 @@ impl CmdExecutor for LPush {
 
                 len = list.len();
                 Ok(())
-            })?;
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(len as Int)))
     }
@@ -472,7 +485,8 @@ impl CmdExecutor for NBLPop {
         for key in self.keys {
             shared
                 .db()
-                .add_event(key, key_tx.clone(), EventType::MayUpdate);
+                .add_event(key, key_tx.clone(), EventType::MayUpdate)
+                .await;
         }
 
         let deadline = if self.timeout == 0 {
@@ -555,18 +569,21 @@ async fn first_round<S: AsRef<str>>(
     let mut res = None;
     // 先尝试一轮pop
     for key in keys.iter() {
-        let update_res = shared.db().update_object(key, |obj| {
-            let list = obj.on_list_mut()?;
+        let update_res = shared
+            .db()
+            .update_object(key, |obj| {
+                let list = obj.on_list_mut()?;
 
-            if let Some(value) = list.pop_front() {
-                res = Some(RESP3::Array(vec![
-                    RESP3::Bulk(key.clone()),
-                    RESP3::Bulk(value),
-                ]));
-            }
+                if let Some(value) = list.pop_front() {
+                    res = Some(RESP3::Array(vec![
+                        RESP3::Bulk(key.clone()),
+                        RESP3::Bulk(value),
+                    ]));
+                }
 
-            Ok(())
-        });
+                Ok(())
+            })
+            .await;
 
         // pop成功
         if res.is_some() {
@@ -602,18 +619,20 @@ async fn pop_timeout_at(
                         .ok_or(ServerError::from("receive frame with invalid format"))
                         .context(ServerErrSnafu)?;
 
-                    let update_res = db.update_object(key, |obj| {
-                        let list = obj.on_list_mut()?;
+                    let update_res = db
+                        .update_object(key, |obj| {
+                            let list = obj.on_list_mut()?;
 
-                        if let Some(value) = list.pop_front() {
-                            res = Some(RESP3::Array(vec![
-                                RESP3::Bulk(key.clone()),
-                                RESP3::Bulk(value),
-                            ]));
-                        }
+                            if let Some(value) = list.pop_front() {
+                                res = Some(RESP3::Array(vec![
+                                    RESP3::Bulk(key.clone()),
+                                    RESP3::Bulk(value),
+                                ]));
+                            }
 
-                        Ok(())
-                    });
+                            Ok(())
+                        })
+                        .await;
 
                     if let Some(res) = res {
                         // 如果next确实成功了，则退出循环
@@ -621,7 +640,8 @@ async fn pop_timeout_at(
                     }
 
                     // 如果next失败了，则重新加入事件
-                    db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate);
+                    db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate)
+                        .await;
 
                     // 忽略空键的错误
                     if !matches!(update_res, Err(CmdError::Null)) {
@@ -641,25 +661,29 @@ async fn pop_timeout_at(
                 .ok_or(ServerError::from("receive frame with invalid format"))
                 .context(ServerErrSnafu)?;
 
-            let update_res = shared.db().update_object(key, |obj| {
-                let list = obj.on_list_mut()?;
+            let update_res = shared
+                .db()
+                .update_object(key, |obj| {
+                    let list = obj.on_list_mut()?;
 
-                if let Some(value) = list.pop_front() {
-                    res = Some(RESP3::Array(vec![
-                        RESP3::Bulk(key.clone()),
-                        RESP3::Bulk(value),
-                    ]));
-                }
+                    if let Some(value) = list.pop_front() {
+                        res = Some(RESP3::Array(vec![
+                            RESP3::Bulk(key.clone()),
+                            RESP3::Bulk(value),
+                        ]));
+                    }
 
-                Ok(())
-            });
+                    Ok(())
+                })
+                .await;
 
             if let Some(res) = res {
                 // 如果next确实成功了，则退出循环
                 break Ok(res);
             }
 
-            db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate);
+            db.add_event(key.clone(), key_tx.clone(), EventType::MayUpdate)
+                .await;
 
             // 忽略空键的错误
             if !matches!(update_res, Err(CmdError::Null)) {

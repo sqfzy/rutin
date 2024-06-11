@@ -738,7 +738,6 @@ impl RESP3<BytesMut, String> {
         if let Some(i) = memchr::memchr(b'\n', src) {
             if i > 0 && src[i - 1] == b'\r' {
                 let line = src.split_to(i - 1);
-                println!("debug1");
                 src.advance(2);
 
                 return Some(line);
@@ -1063,7 +1062,7 @@ impl Decoder for RESP3Decoder {
         }
 
         let res = _decode(self);
-        if res.is_err() {
+        if let Ok(None) = res {
             // 恢复消耗的数据
             let consume = unsafe {
                 slice_from_raw_parts(origin, self.buf.as_ptr() as usize - origin as usize)
@@ -1433,7 +1432,7 @@ mod frame_tests {
         let mut src = BytesMut::from("*2\r\n");
         let src_clone = src.clone();
 
-        decoder.decode(&mut src).unwrap_err();
+        assert!(decoder.decode(&mut src).unwrap().is_none());
 
         assert_eq!(decoder.buf, src_clone);
     }

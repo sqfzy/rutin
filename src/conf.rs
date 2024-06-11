@@ -234,6 +234,7 @@ impl Conf {
         /* 开启过期键定时检查 */
         /**********************/
         let period = Duration::from_secs(conf.server.expire_check_interval_secs);
+        let handle = Handle::current();
         std::thread::spawn({
             let shared = shared.clone();
             move || {
@@ -254,7 +255,7 @@ impl Conf {
                         tracing::trace!("key {:?} is expired", key);
                         // 删除过期键，该过程会自动删除对应的expire_record
                         // WARN: 执行remove_object时，不应该持有entry_expire_records元素的引用，否则会导致死锁
-                        shared.db().remove_object(&key);
+                        handle.block_on(shared.db().remove_object(&key));
                     }
                 }
             }
@@ -317,7 +318,13 @@ async fn enable_aof(shared: Shared, conf: Arc<Conf>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod conf_tests {
-    use crate::{cmd::dispatch, frame::RESP3, server::Handler, shared::db::Db, util::test_init};
+    use crate::{
+        cmd::dispatch,
+        frame::RESP3,
+        server::Handler,
+        shared::db::{db_tests::get_object_inner, Db},
+        util::test_init,
+    };
     use std::io::Write;
 
     use super::*;
@@ -365,30 +372,27 @@ mod conf_tests {
         let db = shared.db();
         // 断言AOF文件中的内容已经加载到内存中
         assert_eq!(
-            db.get_object_entry(&"key:000000000015".into())
+            get_object_inner(db, &"key:000000000015".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
                 .on_str()
                 .unwrap()
                 .to_vec(),
             b"VXK"
         );
         assert_eq!(
-            db.get_object_entry(&"key:000000000003".into())
+            get_object_inner(db, &"key:000000000003".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
                 .on_str()
                 .unwrap()
                 .to_vec(),
             b"VXK"
         );
         assert_eq!(
-            db.get_object_entry(&"key:000000000025".into())
+            get_object_inner(db, &"key:000000000025".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
                 .on_str()
                 .unwrap()
                 .to_vec(),

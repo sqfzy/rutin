@@ -39,7 +39,8 @@ impl CmdExecutor for Append {
 
                 length = Some(RESP3::Integer(str.len() as Int));
                 Ok(())
-            })?;
+            })
+            .await?;
 
         Ok(length)
     }
@@ -69,11 +70,14 @@ impl CmdExecutor for Decr {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.decr_by(1)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.decr_by(1)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -103,11 +107,14 @@ impl CmdExecutor for DecrBy {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.decr_by(self.decrement)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.decr_by(self.decrement)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -141,10 +148,13 @@ impl CmdExecutor for Get {
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = None;
 
-        shared.db().visit_object(&self.key, |obj| {
-            res = Some(RESP3::Bulk(obj.on_str()?.to_bytes()));
-            Ok(())
-        })?;
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                res = Some(RESP3::Bulk(obj.on_str()?.to_bytes()));
+                Ok(())
+            })
+            .await?;
 
         Ok(res)
     }
@@ -178,13 +188,16 @@ impl CmdExecutor for GetRange {
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut res = "".into();
 
-        shared.db().visit_object(&self.key, |obj| {
-            let str = obj.on_str()?;
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                let str = obj.on_str()?;
 
-            let mut buf = itoa::Buffer::new();
-            res = Bytes::copy_from_slice(str.get_range(&mut buf, self.start, self.end));
-            Ok(())
-        })?;
+                let mut buf = itoa::Buffer::new();
+                res = Bytes::copy_from_slice(str.get_range(&mut buf, self.start, self.end));
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Bulk(res)))
     }
@@ -223,11 +236,14 @@ impl CmdExecutor for GetSet {
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut old = "".into();
 
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            old = str.set(self.new_value).to_bytes();
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                old = str.set(self.new_value).to_bytes();
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Bulk(old)))
     }
@@ -259,11 +275,14 @@ impl CmdExecutor for Incr {
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
 
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.incr_by(1)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.incr_by(1)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -294,11 +313,14 @@ impl CmdExecutor for IncrBy {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut new_i = 0;
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.incr_by(self.increment)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.incr_by(self.increment)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -333,10 +355,13 @@ impl CmdExecutor for MGet {
         for key in self.keys.iter() {
             let mut str = "".into();
 
-            shared.db().visit_object(key, |obj| {
-                str = obj.on_str()?.to_bytes();
-                Ok(())
-            })?;
+            shared
+                .db()
+                .visit_object(key, |obj| {
+                    str = obj.on_str()?.to_bytes();
+                    Ok(())
+                })
+                .await?;
 
             res.push(RESP3::Bulk(str));
         }
@@ -372,7 +397,8 @@ impl CmdExecutor for MSet {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, ObjectInner::new_str(value.into(), None));
+                .insert_object(key, ObjectInner::new_str(value.into(), None))
+                .await;
         }
 
         Ok(Some(RESP3::SimpleString("OK")))
@@ -408,7 +434,7 @@ impl CmdExecutor for MSetNx {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         for (key, _) in &self.pairs {
-            if shared.db().contains_object(key) {
+            if shared.db().contains_object(key).await {
                 return Err(0.into());
             }
         }
@@ -416,7 +442,8 @@ impl CmdExecutor for MSetNx {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, ObjectInner::new_str(value.into(), None));
+                .insert_object(key, ObjectInner::new_str(value.into(), None))
+                .await;
         }
 
         Ok(Some(RESP3::Integer(1)))
@@ -486,7 +513,7 @@ impl CmdExecutor for Set {
 
         let entry = shared.db().get_object_entry_mut(self.key);
         if let Some(flag) = key_flag {
-            if flag != entry.is_object_existed() {
+            if flag != entry.is_object_existed().await {
                 return Err(CmdError::Null);
             }
         }
@@ -494,7 +521,7 @@ impl CmdExecutor for Set {
         let new_ex = if let Some(ex) = self.expire {
             if ex.duration_since(epoch()) < Duration::from_millis(10) {
                 // 保持不变
-                entry.value().unwrap().expire()
+                entry.value().await.unwrap().expire()
             } else {
                 // 更新
                 Some(ex)
@@ -505,7 +532,7 @@ impl CmdExecutor for Set {
         };
 
         let new_obj = ObjectInner::new_str(self.value.into(), new_ex);
-        let (_, old) = entry.insert_object(new_obj);
+        let (_, old) = entry.insert_object(new_obj).await;
 
         if self.get {
             Ok(Some(RESP3::Bulk(old.unwrap().on_str()?.to_bytes())))
@@ -649,10 +676,13 @@ impl CmdExecutor for SetEx {
     type RESP3 = RESP3<Bytes, &'static str>;
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
-        shared.db().insert_object(
-            self.key,
-            ObjectInner::new_str(self.value.into(), Some(Instant::now() + self.expire)),
-        );
+        shared
+            .db()
+            .insert_object(
+                self.key,
+                ObjectInner::new_str(self.value.into(), Some(Instant::now() + self.expire)),
+            )
+            .await;
 
         Ok(Some(RESP3::SimpleString("OK")))
     }
@@ -685,13 +715,14 @@ impl CmdExecutor for SetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
-        if shared.db().contains_object(&self.key) {
+        if shared.db().contains_object(&self.key).await {
             return Err(0.into());
         }
 
         shared
             .db()
-            .insert_object(self.key, ObjectInner::new_str(self.value.into(), None));
+            .insert_object(self.key, ObjectInner::new_str(self.value.into(), None))
+            .await;
 
         Ok(Some(RESP3::Integer(1)))
     }
@@ -722,10 +753,13 @@ impl CmdExecutor for StrLen {
 
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut len = 0;
-        shared.db().visit_object(&self.key, |obj| {
-            len = obj.on_str()?.len();
-            Ok(())
-        })?;
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                len = obj.on_str()?.len();
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(len as Int)))
     }
@@ -744,7 +778,7 @@ impl CmdExecutor for StrLen {
 #[cfg(test)]
 mod cmd_str_tests {
     use super::*;
-    use crate::util::test_init;
+    use crate::{shared::db::db_tests::get_object_inner, util::test_init};
     use std::{
         thread::sleep,
         time::{Duration, SystemTime},
@@ -1056,14 +1090,16 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let obj = shared.db().get_object_entry(&"key_expire".into()).unwrap();
+        let obj = get_object_inner(shared.db(), &"key_expire".into())
+            .await
+            .unwrap();
         assert_eq!(
-            obj.value().inner().on_str().unwrap().to_bytes().as_ref(),
+            obj.on_str().unwrap().to_bytes().as_ref(),
             b"value_expire_modified"
         );
         assert!(
             // 误差在10ms以内
-            (obj.value().inner().expire().unwrap() - now) - Duration::from_millis(100000)
+            (obj.expire().unwrap() - now) - Duration::from_millis(100000)
                 < Duration::from_millis(10)
         );
     }

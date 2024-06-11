@@ -25,16 +25,19 @@ impl CmdExecutor for HDel {
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut count = 0;
 
-        shared.db().update_object(&self.key, |obj| {
-            let hash = obj.on_hash_mut()?;
-            for field in self.fields {
-                if hash.remove(&field).is_some() {
-                    count += 1;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let hash = obj.on_hash_mut()?;
+                for field in self.fields {
+                    if hash.remove(&field).is_some() {
+                        count += 1;
+                    }
                 }
-            }
 
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(count)))
     }
@@ -65,12 +68,15 @@ impl CmdExecutor for HExists {
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut exists = false;
 
-        shared.db().visit_object(&self.key, |obj| {
-            let hash = obj.on_hash()?;
-            exists = hash.contains_key(&self.field);
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                let hash = obj.on_hash()?;
+                exists = hash.contains_key(&self.field);
 
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(if exists { 1 } else { 0 })))
     }
@@ -101,12 +107,15 @@ impl CmdExecutor for HGet {
     async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
         let mut value = None;
 
-        shared.db().visit_object(&self.key, |obj| {
-            let hash = obj.on_hash()?;
-            value.clone_from(&hash.get(&self.field));
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                let hash = obj.on_hash()?;
+                value.clone_from(&hash.get(&self.field));
 
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .await?;
 
         Ok(value.map(|b| RESP3::Bulk(b.clone())))
     }
@@ -146,7 +155,8 @@ impl CmdExecutor for HSet {
                 }
 
                 Ok(())
-            })?;
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(count)))
     }

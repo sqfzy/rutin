@@ -1,50 +1,36 @@
 use crate::{
     cmd::{dispatch, CmdError},
     conf::Conf,
-    connection::{AsyncStream, FakeStream, ShutdownSignal},
     frame::RESP3,
     server::{Handler, ServerError},
     shared::Shared,
     Key,
 };
 use ahash::RandomState;
-use bytes::{Bytes, BytesMut};
-use dashmap::{mapref::entry::Entry, DashMap, DashSet};
+use bytes::Bytes;
+use dashmap::{mapref::entry::Entry, DashMap};
 use either::for_both;
-use futures::{
-    pin_mut,
-    task::{noop_waker_ref, WakerRef},
-    Future, FutureExt,
-};
 use mlua::{prelude::*, StdLib};
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    task::{ready, Context, Poll, Waker},
     time::Duration,
 };
 use tracing::debug;
 use try_lock::{Locked, TryLock};
 
-// 创建全局redis表格，redis.call, redis.pacll执行Redis命令, redis.sha1hex, redis.error_reply, redis.status_reply
-// 更换random函数
-// 新增排序辅助函数
-// sandbox: 不允许增删全局变量，不允许require module
+// TODO: 新增排序辅助函数
 //
-struct LuaScript {
+pub struct LuaScript {
     shared: Shared,
     conf: Arc<Conf>,
     max: usize,
     index: AtomicUsize,
-    // ShutdownSignal用于通知Handler伪客户端已经传输消息完毕
     luas: Vec<TryLock<Lua>>,
-    lua_scripts: DashMap<Bytes, Bytes, RandomState>, // sha1hex -> script
+    lua_scripts: DashMap<Bytes, Bytes, RandomState>, // script_name -> script
 }
-
-// TODO: 创建脚本
-// 删除脚本
 
 impl LuaScript {
     pub fn new(shared: Shared, conf: Arc<Conf>) -> Self {
@@ -119,6 +105,12 @@ impl LuaScript {
             global.set("KEYS", keys)?; // 全局变量KEYS，用于存储Redis的键
             global.set("ARGV", argv)?; // 全局变量ARGV，用于存储Redis的参数
 
+            // 使用固定的随机数种子
+            let seed = 0;
+            lua.load(format!("math.randomseed({})", seed).as_str())
+                .exec()?;
+
+            // 创建全局redis表格
             let redis = lua.create_table()?;
 
             // redis.call
@@ -233,6 +225,17 @@ impl LuaScript {
             redis.set("log", log)?;
 
             global.set("redis", redis)?; // 创建全局redis表格
+
+            // 设置元方法 __newindex 禁止增删全局变量
+            let metatable = lua.create_table()?;
+            metatable.set(
+                "__newindex",
+                lua.create_function(|_, (_t, _n, _v): (LuaValue, LuaValue, LuaValue)| {
+                    Err::<(), _>(LuaError::external("global variable is readonly"))
+                })?,
+            )?;
+
+            global.set_metatable(Some(metatable));
         }
 
         self.luas.push(TryLock::new(lua));
@@ -385,6 +388,30 @@ async fn lua_tests() {
     crate::util::test_init();
 
     let mut lua_script = LuaScript::new(Shared::default(), Arc::new(Conf::default()));
+
+    {
+        let lua = lua_script.get_lua().unwrap();
+
+        // 不允许require module
+        lua.load(
+            r#"
+        -- 测试 require (应该失败)
+        require("module")
+    "#,
+        )
+        .exec()
+        .unwrap_err();
+
+        // 不允许增加新的全局变量
+        lua.load(
+            r#"
+        -- 测试增加新的全局变量 (应该失败)
+        x = 10
+    "#,
+        )
+        .exec()
+        .unwrap_err();
+    }
 
     lua_script
         .eval_ro(r#"print("exec")"#.into(), vec![], vec![])
