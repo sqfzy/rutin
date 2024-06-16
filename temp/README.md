@@ -1,4 +1,4 @@
-Rutin是使用rust构建的redis-like数据库。该项目仍处于早期阶段，但单机功能的框架已经大体确立（日后会追加多机功能，包括主从复制，哨兵机制等）。目前，数据库支持TLS连接，部分Key，String，List操作，Subcribe/Publish功能，以及RDB与AOF持久化操作。Rutin支持且仅支持RESP3协议。
+Rutin是使用rust构建的redis-like数据库。该项目仍处于早期阶段，但单机功能的框架已经大体确立（日后会追加多机功能，包括主从复制，哨兵机制等）。目前，数据库支持客户端缓存功能，TLS连接，部分Key，String，List操作，Subcribe/Publish功能，以及RDB与AOF持久化操作。Rutin支持且仅支持RESP3协议。
 
 
 
@@ -30,17 +30,13 @@ Rutin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 ## 5）事件机制（几乎0成本的抽象）
 
-​	在Rutin中，每个键都可以被绑定任意数量的事件，目前事件分为Track，MayUpdate，IntentionLock三类。
+​	在Rutin中，每个键都可以被绑定任意数量的事件，目前事件分为Track，Update，Remove三类。
 
-​	例如某一连接处理`BLPop list1`请求时，如果`list1`为空，**线程不会轮询，而是向`list1`映射的object注册MayUpdate事件**（实际上是保存一个用于向当前连接通信的Sender（这里使用的是`flume`库的通道，克隆Sender几乎没有开销，只是简单地增加引用计数）），然后`.await`等待消息传来。当另一个客户端处理`BLPush list1 v1`时，会检查该键是否有update事件，如果没有，则什么都不做；如果有（即当前的情况），则遍历所有Sender（不同的Sender对应着不同的连接）并发送该键（即发送`list1`），然后清空事件。处理`BLPop list1`的连接收到键后，再次查看数据库中`list1`，返回弹出的值。
+​	例如某一连接处理`BLPop list1`请求时，如果`list1`为空，**线程不会轮询，而是向`list1`映射的object注册Update事件**（实际上是保存一个用于向当前连接通信的Sender（这里使用的是`flume`库的通道，克隆Sender几乎没有开销，只是简单地增加引用计数）），然后`.await`等待消息传来。当另一个客户端处理`BLPush list1 v1`时，会检查该键是否有update事件，如果没有，则什么都不做；如果有（即当前的情况），则遍历所有Sender（不同的Sender对应着不同的连接）并发送该键（即发送`list1`），然后清空事件。处理`BLPop list1`的连接收到键后，再次查看数据库中`list1`，返回弹出的值。
+
+​	在Redis中，客户端缓存分为*Default Mode*（由服务端记录每个开启缓存功能的客户端的interesting keys，这会可能会消耗较多内存）和*Broadcasting Mode*（服务端只记录客户端感兴趣的前缀，根据前缀来决定是否向该客户端广播修改的键，广播的键不一定存在于客户端缓存中）。利用Track事件可以很好的解决客户端缓存问题，当客户端缓存了某个键时，就会向该键注册当前连接的Track事件（大小为一个指针），每当键被修改，就会触发Track事件，向对应的客户端发送invalidation message。当客户端关闭缓存时，触发Track事件后发送invalidation message会失败，此时即可移除该事件。
 
 
-
-## 6) 事务
-
-​	目前，rutin通过Lua脚本支持事务，满足Isolation和Consistency，但不保证Atomicity和Durability。用户可以通过SCRIPT REGISTER命令注册一个带有名称的脚本， 然后通过EVALNAME命令执行该脚本，也可以直接使用EVAL命令执行临时脚本。
-
-​	事务的Isolation主要通过事件机制的IntentionLock事件实现。在rutin中，每个处理命令的Handler都有其唯一的ID，而rutin中的每个Lua环境（rutin会在运行时动态创建Lua环境）都拥有自己的Handler。当执行脚本时，首先会对事务中涉及的键值对设置IntentionLock事件，IntentionLock事件拥有一个target_id字段，只有ID符合要求的handler，才能修改该键值对（但允许访问），其余handler会在**获取写锁后马上释放**，并等待允许再次获取写锁的通知（等待是异步的，因此不会阻塞线程），每个键值对可能有多个等待的handler，这些**等待的handler都是按序的，因此对于单个键值对的命令也会按序执行**。当事务执行完毕后，会分别向每个键值对中首个等待的handler，发送通知，允许其获取写锁，当该handler使用完写锁后，会继续通知下一个handler，以此类推，直到最后一个handler获取写锁后，由它负责释放IntentionLock事件。在此期间，任何希望想要获取写锁的handler仍然需要按序等待通知（即使事务已经结束了），如果其中有某个handler再次设置了IntentionLock事件，则会修改事件的target_id，然后按同样的方式继续
 
 
 
@@ -73,7 +69,7 @@ Rutin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 - [ ] 完善五个基本类型的命令
 - [ ] 支持数据溢出到磁盘
-- [ ] 支持WASM脚本
+- [ ] 支持事务
 - [ ] 支持JSON，protobuf协议
 - [ ] 追加多机功能（主从复制，哨兵机制，选举主节点等）
 
