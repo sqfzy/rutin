@@ -1,3 +1,9 @@
+pub mod db;
+pub mod propagator;
+pub mod script;
+
+pub use script::*;
+
 use crate::{
     conf::Conf,
     shared::{db::Db, propagator::Propagator},
@@ -5,44 +11,74 @@ use crate::{
 use async_shutdown::ShutdownManager;
 use std::sync::Arc;
 
-pub mod db;
-pub mod propagator;
-
 #[derive(Clone, Default)]
 pub struct Shared {
-    inner: Arc<SharedInner>,
-}
-
-#[derive(Default)]
-pub struct SharedInner {
-    db: db::Db,
-    wcmd_propagator: Propagator,
+    db: Arc<Db>,
+    conf: Arc<Conf>,
+    script: Arc<Script>,
+    wcmd_propagator: Arc<Propagator>,
     shutdown: ShutdownManager<()>,
 }
 
 impl Shared {
-    pub fn new(db: Db, conf: &Arc<Conf>, shutdown: ShutdownManager<()>) -> Self {
+    pub fn new(db: Arc<Db>, conf: Arc<Conf>, shutdown: ShutdownManager<()>) -> Self {
+        let db = db;
+        let conf = conf;
+        let wcmd_propagator = Arc::new(Propagator::new(conf.aof.enable, conf.replica.max_replica));
+        let script = Arc::new(Script::new());
         Self {
-            inner: Arc::new(SharedInner {
-                db,
-                wcmd_propagator: Propagator::new(conf.aof.enable, conf.replica.max_replica),
-                shutdown,
-            }),
+            db,
+            conf,
+            script,
+            wcmd_propagator,
+            shutdown,
         }
     }
 
-    #[inline]
-    pub fn db(&self) -> &db::Db {
-        &self.inner.db
+    pub fn new_with(
+        db: Arc<Db>,
+        conf: Arc<Conf>,
+        script: Arc<Script>,
+        wcmd_propagator: Arc<Propagator>,
+        shutdown: ShutdownManager<()>,
+    ) -> Self {
+        Self {
+            db,
+            conf,
+            script,
+            wcmd_propagator,
+            shutdown,
+        }
     }
 
-    #[inline]
-    pub fn wcmd_propagator(&self) -> &Propagator {
-        &self.inner.wcmd_propagator
+    pub fn db(&self) -> &Arc<Db> {
+        &self.db
     }
 
-    #[inline]
+    pub fn script(&self) -> &Arc<Script> {
+        &self.script
+    }
+
+    pub fn conf(&self) -> &Arc<Conf> {
+        &self.conf
+    }
+
+    pub fn wcmd_propagator(&self) -> &Arc<Propagator> {
+        &self.wcmd_propagator
+    }
+
     pub fn shutdown(&self) -> &ShutdownManager<()> {
-        &self.inner.shutdown
+        &self.shutdown
+    }
+}
+
+impl std::fmt::Debug for Shared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SharedInner")
+            .field("db", &self.db)
+            .field("script", &self.script)
+            .field("conf", &self.conf)
+            .field("wcmd_propagator", &self.wcmd_propagator)
+            .finish()
     }
 }

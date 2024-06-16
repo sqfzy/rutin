@@ -4,6 +4,7 @@ use crate::{
 };
 use ahash::{AHashMap, AHashSet};
 use bytes::{Buf, Bytes, BytesMut};
+use bytestring::ByteString;
 use mlua::prelude::*;
 use num_bigint::BigInt;
 use std::{hash::Hash, io, iter::Iterator, ptr::slice_from_raw_parts};
@@ -15,7 +16,7 @@ use tokio_util::{
 use tracing::instrument;
 
 #[derive(Clone, Debug)]
-pub enum RESP3<B = Bytes, S = String>
+pub enum RESP3<B = Bytes, S = ByteString>
 where
     B: AsRef<[u8]>,
     S: AsRef<str>,
@@ -480,7 +481,7 @@ where
 }
 
 // 解码
-impl RESP3<BytesMut, String> {
+impl RESP3<BytesMut, ByteString> {
     #[allow(clippy::multiple_bound_locations)]
     #[inline]
     #[instrument(level = "trace", skip(io_read), err)]
@@ -518,9 +519,11 @@ impl RESP3<BytesMut, String> {
 
                 let mut frames = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let frame = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
-                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
-                    )?;
+                    let frame = Box::pin(RESP3::decode_async(io_read, src))
+                        .await?
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
+                        })?;
                     frames.push(frame);
                 }
 
@@ -582,10 +585,9 @@ impl RESP3<BytesMut, String> {
             }
             b'(' => {
                 let line = RESP3::decode_line_async(io_read, src).await?;
-                let n = BigInt::parse_bytes(&line, 10).ok_or(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid big number",
-                ))?;
+                let n = BigInt::parse_bytes(&line, 10).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "invalid big number")
+                })?;
                 RESP3::BigNumber(n)
             }
             b'!' => {
@@ -626,12 +628,16 @@ impl RESP3<BytesMut, String> {
 
                 let mut map = AHashMap::with_capacity(len);
                 for _ in 0..len {
-                    let k = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
-                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
-                    )?;
-                    let v = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
-                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
-                    )?;
+                    let k = Box::pin(RESP3::decode_async(io_read, src))
+                        .await?
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
+                        })?;
+                    let v = Box::pin(RESP3::decode_async(io_read, src))
+                        .await?
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
+                        })?;
                     map.insert(k, v);
                 }
 
@@ -643,9 +649,11 @@ impl RESP3<BytesMut, String> {
 
                 let mut set = AHashSet::with_capacity(len);
                 for _ in 0..len {
-                    let frame = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
-                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
-                    )?;
+                    let frame = Box::pin(RESP3::decode_async(io_read, src))
+                        .await?
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
+                        })?;
                     set.insert(frame);
                 }
 
@@ -657,9 +665,11 @@ impl RESP3<BytesMut, String> {
 
                 let mut frames = Vec::with_capacity(len);
                 for _ in 0..len {
-                    let frame = Box::pin(RESP3::decode_async(io_read, src)).await?.ok_or(
-                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame"),
-                    )?;
+                    let frame = Box::pin(RESP3::decode_async(io_read, src))
+                        .await?
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
+                        })?;
                     frames.push(frame);
                 }
 
@@ -677,18 +687,14 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
+    #[instrument(level = "trace", skip(src, io_read))]
     async fn decode_line_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> io::Result<BytesMut> {
         loop {
-            if let Some(i) = memchr::memchr(b'\n', src) {
-                if i > 0 && src[i - 1] == b'\r' {
-                    let line = src.split_to(i - 1);
-                    src.advance(2);
-
-                    return Ok(line);
-                }
+            if let Some(line) = Self::decode_line(src) {
+                return Ok(line);
             }
 
             if io_read.read_buf(src).await? == 0 {
@@ -701,6 +707,7 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
+    #[instrument(level = "trace", skip(src, io_read))]
     async fn decode_decimal_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
@@ -712,6 +719,7 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
+    #[instrument(level = "trace", skip(src, io_read))]
     async fn decode_length_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
@@ -723,22 +731,28 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
-    async fn decode_string_async<R: AsyncRead + Unpin + Send>(
+    #[instrument(level = "trace", skip(src, io_read))]
+    async fn decode_string_async<
+        R: AsyncRead + Unpin + Send,
+        S: AsRef<str> + for<'a> From<&'a str>,
+    >(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> io::Result<String> {
+    ) -> io::Result<S> {
         let line = RESP3::decode_line_async(io_read, src).await?;
-        let string = String::from_utf8(line.to_vec())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid string"))?;
+        let string = S::from(
+            std::str::from_utf8(&line)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid string"))?,
+        );
         Ok(string)
     }
 
     #[inline]
+    #[instrument(level = "trace", skip(src))]
     fn decode_line(src: &mut BytesMut) -> Option<BytesMut> {
         if let Some(i) = memchr::memchr(b'\n', src) {
             if i > 0 && src[i - 1] == b'\r' {
                 let line = src.split_to(i - 1);
-                println!("debug1");
                 src.advance(2);
 
                 return Some(line);
@@ -749,6 +763,7 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
+    #[instrument(level = "trace", skip(src))]
     fn decode_decimal(src: &mut BytesMut) -> io::Result<Option<Int>> {
         let line = if let Some(l) = RESP3::decode_line(src) {
             l
@@ -761,6 +776,7 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
+    #[instrument(level = "trace", skip(src))]
     fn decode_length(src: &mut BytesMut) -> io::Result<Option<usize>> {
         let line = if let Some(l) = RESP3::decode_line(src) {
             l
@@ -773,14 +789,20 @@ impl RESP3<BytesMut, String> {
     }
 
     #[inline]
-    fn decode_string(src: &mut BytesMut) -> io::Result<Option<String>> {
+    #[instrument(level = "trace", skip(src))]
+    fn decode_string<S: AsRef<str> + for<'a> From<&'a str>>(
+        src: &mut BytesMut,
+    ) -> io::Result<Option<S>> {
         let line = if let Some(l) = RESP3::decode_line(src) {
             l
         } else {
             return Ok(None);
         };
-        let string = String::from_utf8(line.to_vec())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid string"))?;
+
+        let string = S::from(
+            std::str::from_utf8(&line)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid string"))?,
+        );
         Ok(Some(string))
     }
 }
@@ -788,10 +810,14 @@ impl RESP3<BytesMut, String> {
 #[derive(Debug, Clone, Default)]
 pub struct RESP3Encoder;
 
-impl Encoder<RESP3> for RESP3Encoder {
+impl<B, S> Encoder<RESP3<B, S>> for RESP3Encoder
+where
+    B: AsRef<[u8]>,
+    S: AsRef<str>,
+{
     type Error = tokio::io::Error;
 
-    fn encode(&mut self, item: RESP3, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: RESP3<B, S>, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode_buf(dst);
 
         Ok(())
@@ -946,10 +972,9 @@ impl Decoder for RESP3Decoder {
                         return Ok(None);
                     };
 
-                    let n = BigInt::parse_bytes(&line, 10).ok_or(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "invalid big number",
-                    ))?;
+                    let n = BigInt::parse_bytes(&line, 10).ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "invalid big number")
+                    })?;
                     RESP3::BigNumber(n)
                 }
                 b'!' => {
@@ -1063,7 +1088,7 @@ impl Decoder for RESP3Decoder {
         }
 
         let res = _decode(self);
-        if res.is_err() {
+        if matches!(res, Ok(None)) {
             // 恢复消耗的数据
             let consume = unsafe {
                 slice_from_raw_parts(origin, self.buf.as_ptr() as usize - origin as usize)
@@ -1302,8 +1327,8 @@ impl<S: AsRef<str>> mlua::IntoLua<'_> for RESP3<Bytes, S> {
 impl FromLua<'_> for RESP3 {
     fn from_lua(value: LuaValue<'_>, _lua: &'_ Lua) -> LuaResult<Self> {
         match value {
-            // Lua String -> SimpleString
-            LuaValue::String(s) => Ok(RESP3::SimpleString(s.to_str()?.to_string())),
+            // Lua String -> Bulk
+            LuaValue::String(s) => Ok(RESP3::Bulk(Bytes::copy_from_slice(s.as_bytes()))),
             // Lua String -> SimpleError
             LuaValue::Integer(n) => Ok(RESP3::Integer(n)),
             // Lua Number -> Double
@@ -1326,13 +1351,13 @@ impl FromLua<'_> for RESP3 {
                 let ok = table.raw_get("ok")?;
 
                 if let LuaValue::String(state) = ok {
-                    return Ok(RESP3::SimpleString(state.to_str()?.to_string()));
+                    return Ok(RESP3::SimpleString(state.to_str()?.into()));
                 }
 
                 let err = table.raw_get("err")?;
 
                 if let LuaValue::String(e) = err {
-                    return Ok(RESP3::SimpleError(e.to_str()?.to_string()));
+                    return Ok(RESP3::SimpleError(e.to_str()?.into()));
                 }
 
                 let verbatim_string = table.raw_get("verbatim_string")?;
@@ -1427,13 +1452,13 @@ mod frame_tests {
     use super::*;
 
     #[test]
-    fn decode() {
+    fn decode_resume() {
         let mut decoder = RESP3Decoder::default();
 
         let mut src = BytesMut::from("*2\r\n");
         let src_clone = src.clone();
 
-        decoder.decode(&mut src).unwrap_err();
+        assert!(decoder.decode(&mut src).unwrap().is_none());
 
         assert_eq!(decoder.buf, src_clone);
     }

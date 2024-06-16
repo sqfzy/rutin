@@ -4,35 +4,73 @@ mod set;
 mod str;
 mod zset;
 
+use bytes::Bytes;
+use dashmap::mapref::entry::Entry;
+use flume::Sender;
 pub use hash::*;
 pub use list::*;
 pub use set::*;
+use std::sync::Arc;
 pub use str::*;
-use strum::EnumDiscriminants;
+use strum::{EnumDiscriminants, EnumProperty};
+use tracing::instrument;
 pub use zset::*;
 
-use crate::shared::db::{event::Event, DbError};
-use tokio::time::Instant;
+use crate::{frame::RESP3, server::ID, shared::db::DbError, Id, Key};
+use tokio::{sync::Notify, time::Instant};
+
+use super::{
+    object_entry::{NotifyUnlock, ObjectEntryMut},
+    Db,
+};
 
 // 对象可以为空对象(不存储对象值)，只存储事件
-#[derive(Debug, Clone)]
+#[derive(Debug, Default)]
 pub struct Object {
-    pub inner: Option<ObjectInner>,
-    pub event: Event,
+    inner: Option<ObjectInner>,
+    events: Events,
 }
 
-// 在db模块以外创建的Entry的inner字段一定不为None
+impl Clone for Object {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            ..Default::default()
+        }
+    }
+}
+
 impl Object {
     pub(super) fn new(object: ObjectInner) -> Self {
         Object {
             inner: Some(object),
-            event: Event::default(),
+            events: Default::default(),
         }
     }
 
     #[inline]
     pub fn inner(&self) -> Option<&ObjectInner> {
         self.inner.as_ref()
+    }
+
+    #[inline]
+    pub fn inner_mut(&mut self) -> Option<&mut ObjectInner> {
+        self.inner.as_mut()
+    }
+
+    #[inline]
+    pub fn inner_unchecked(&self) -> &ObjectInner {
+        self.inner.as_ref().unwrap()
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> Option<ObjectInner> {
+        self.inner
+    }
+
+    #[inline]
+    pub fn into_inner_unchecked(self) -> ObjectInner {
+        self.inner.unwrap()
     }
 
     pub fn new_str(s: Str, expire: Option<Instant>) -> Self {
@@ -53,6 +91,13 @@ impl Object {
 
     pub fn new_zset(z: ZSet, expire: Option<Instant>) -> Self {
         Object::new(ObjectInner::new_zset(z, expire))
+    }
+
+    pub fn new_null() -> Self {
+        Object {
+            inner: None,
+            events: Default::default(),
+        }
     }
 
     pub fn on_str(&self) -> Option<Result<&Str, DbError>> {
@@ -229,13 +274,254 @@ impl Object {
             }))
         }
     }
+
+    #[inline]
+    pub fn set_flag(&mut self, flag: u8) {
+        self.events.flags |= flag;
+    }
+
+    #[inline]
+    pub fn remove_flag(&mut self, flag: u8) {
+        self.events.flags &= !flag;
+    }
+
+    pub(super) fn add_lock_event(&mut self, target_id: Id) -> NotifyUnlock {
+        let id = target_id;
+        if self.events.contains(INTENTION_LOCK_FLAG) {
+            for e in self.events.inner.iter_mut() {
+                if let Event::IntentionLock {
+                    target_id,
+                    notify_unlock,
+                    ..
+                } = e
+                {
+                    *target_id = id;
+                    return notify_unlock.clone();
+                }
+            }
+
+            unreachable!()
+        }
+
+        let notify_unlock = NotifyUnlock::new(Arc::new(Notify::const_new()));
+        let event = Event::IntentionLock {
+            target_id: id,
+            notify_unlock: notify_unlock.clone(),
+            count: 0,
+        };
+
+        self.set_flag(event.flag());
+        self.events.inner.push(event);
+
+        notify_unlock
+    }
+
+    pub(super) fn add_may_update_event(&mut self, sender: Sender<Bytes>) {
+        let event = Event::MayUpdate(sender);
+        self.set_flag(event.flag());
+        self.events.inner.push(event);
+    }
+
+    pub(super) fn add_track_event(&mut self, sender: Sender<RESP3>) {
+        let event = Event::Track(sender);
+        self.set_flag(event.flag());
+        self.events.inner.push(event);
+    }
+
+    #[inline]
+    pub(super) fn remove_event(&mut self, index: usize, flag: u8) {
+        if !self.events.contains(flag) {
+            return;
+        }
+
+        self.events.inner.swap_remove(index);
+    }
+
+    #[inline]
+    #[instrument(level = "debug", skip(db))]
+    pub(super) async fn trigger_lock_event(db: &Db, key: Key) -> ObjectEntryMut {
+        let mut entry = db.entries.entry(key);
+
+        match &mut entry {
+            Entry::Occupied(e) => {
+                // 如果没有意向锁事件，则直接返回
+                if !e.get().events.contains(INTENTION_LOCK_FLAG) {
+                    return ObjectEntryMut::new(entry, db, None);
+                }
+
+                let events = &mut e.get_mut().events;
+                let mut i = 0;
+                while let Some(e) = events.inner.get_mut(i) {
+                    match e {
+                        // 找到IntentionLock事件
+                        Event::IntentionLock {
+                            target_id,
+                            notify_unlock,
+                            count,
+                        } => {
+                            // 如果正在执行的不是带有目标ID的task，则释放读写锁后等待意向锁释放
+                            if ID.get() != *target_id {
+                                let notify_unlock = notify_unlock.clone();
+
+                                // 等待者数目加1
+                                *count += 1;
+                                let seq = *count;
+
+                                // 释放写锁
+                                let key = entry.into_key();
+
+                                // 多个任务有序等待获取写锁的许可
+                                let _ = notify_unlock.wait().await;
+
+                                // 重新获取写锁
+                                let mut new_entry = db.entries.entry(key.clone());
+
+                                // 如果当前任务是最后一个获取写锁的任务，则由该任务负责移除IntentionLock事件
+                                if let Entry::Occupied(e) = &mut new_entry {
+                                    let obj = e.get_mut();
+
+                                    if let Event::IntentionLock { count, .. } =
+                                        obj.events.inner.get_mut(i).unwrap()
+                                    {
+                                        if seq == *count {
+                                            obj.remove_event(i, INTENTION_LOCK_FLAG);
+                                            obj.remove_flag(INTENTION_LOCK_FLAG);
+                                        }
+                                    } else {
+                                        unreachable!()
+                                    }
+                                }
+
+                                // 获取写锁并带上notify，当写锁释放时通知下一个等待的任务。在使用写锁时，
+                                // 可能会有新的任务想要获取写锁，因此不能简单地通知唤醒所有等待的任务（这
+                                // 还会导致写锁争用，从而引起阻塞），而是应该一个接一个的唤醒
+                                return ObjectEntryMut::new(new_entry, db, Some(notify_unlock));
+                            }
+
+                            return ObjectEntryMut::new(entry, db, None);
+                        }
+                        _ => i += 1,
+                    }
+                }
+
+                unreachable!()
+            }
+            Entry::Vacant(_) => ObjectEntryMut::new(entry, db, None),
+        }
+    }
+
+    #[inline]
+    #[instrument(level = "debug", skip(self))]
+    pub(super) fn trigger_may_update_event(&mut self, key: &Bytes) {
+        if !self.events.contains(MAY_UPDATE_FLAG) {
+            return;
+        }
+
+        let mut i = 0;
+        while let Some(e) = self.events.inner.get(i) {
+            match e {
+                Event::MayUpdate(sender) => {
+                    let _ = sender.send(key.clone());
+
+                    self.remove_event(i, MAY_UPDATE_FLAG);
+                    self.remove_flag(MAY_UPDATE_FLAG);
+                }
+                _ => i += 1,
+            }
+        }
+    }
+
+    #[inline]
+    pub(super) fn trigger_track_event(&mut self, _key: &Key) {
+        // if !self.events.contains(TRACK_FLAG) {
+        //     return;
+        // }
+
+        // TODO:
+        todo!()
+    }
 }
 
 impl From<ObjectInner> for Object {
     fn from(value: ObjectInner) -> Self {
         Object {
             inner: Some(value),
-            event: Default::default(),
+            events: Default::default(),
+        }
+    }
+}
+
+pub const INTENTION_LOCK_FLAG: u8 = 1 << 0;
+pub const TRACK_FLAG: u8 = 1 << 1;
+pub const MAY_UPDATE_FLAG: u8 = 1 << 2;
+
+#[derive(Debug, Default)]
+struct Events {
+    inner: Vec<Event>,
+    // 事件类型标志位，用于快速判断是否包含某种事件
+    flags: u8,
+}
+
+impl Events {
+    pub const fn new(inner: Vec<Event>) -> Self {
+        Self { inner, flags: 0 }
+    }
+
+    #[inline]
+    pub fn contains(&self, flag: u8) -> bool {
+        self.flags & flag != 0
+    }
+}
+
+#[derive(EnumDiscriminants, EnumProperty)]
+#[strum_discriminants(vis(pub))]
+#[strum_discriminants(name(EventType))]
+#[derive(Debug)]
+pub enum Event {
+    /// 意向锁事件，代表该键值对在未来某个时刻会被某个['Handler']上锁，在此期间
+    /// 除了id为target_id的[`Handler`]外其余[`Handler`]只能访问，而不能修改该键
+    /// 值对。
+    ///
+    /// 每个[`Handler`]在执行时都有一个唯一的[`Id`]，target_id代表设置该意向锁的
+    /// [`Handler`]的id，当其它[`Handler`]获取写锁时，如果发现存在IntentionLock则
+    /// 马上释放写锁，并等待允许再次获取写锁的通知。
+    ///
+    /// [`NotifyUnlock`]是有序的，因此命令会按照原来的顺序执行。
+    ///
+    /// # Example:
+    ///
+    /// 在执行一个事务时，需要对多个键值对进行操作，为了保证事务的一致性，在事务
+    /// 的执行期间，这些键值对只能被该事务的[`Handler`]访问，此时就可以使用意向
+    /// 锁。使用意向锁之后，其余['Handler']在获取写锁后马上释放，并await直到被允
+    /// 许再次获取写锁。当事务执行完毕后，会通知最先等待的['Handler']，允许其获取
+    /// 写锁。该[`Handler`]使用完写锁后，会通知下一个等待的['Handler']，以此类推。
+    /// 直到最后一个等待的['Handler']获取写锁后，负责移除该事件。在此过程中，某个
+    /// [`Handler`]可以重新设置意向锁，此时修改target_id为新的[`Handler`]的id。
+    ///
+    IntentionLock {
+        // 设置意向锁的handler的ID，只有该ID的handler可以访问该键值对
+        target_id: Id,
+        // 用于通知等待的handler，可以获取写锁了。通知是one by one的
+        notify_unlock: NotifyUnlock,
+        // 用于记录等待的handler数目，最后一个获取写锁的handler，负责移除该事件
+        count: usize,
+    },
+
+    Track(Sender<RESP3>),
+
+    /// 触发该事件代表对象的值(不包括expire)可能被修改了
+    MayUpdate(Sender<Bytes>),
+    // Remove,
+}
+
+impl Event {
+    pub const fn flag(&self) -> u8 {
+        match self {
+            Event::IntentionLock { .. } => INTENTION_LOCK_FLAG,
+            Event::Track(_) => TRACK_FLAG,
+            Event::MayUpdate(_) => MAY_UPDATE_FLAG,
+            // Event::Insert => {}
+            // Event::Remove => {}
         }
     }
 }
@@ -501,5 +787,101 @@ impl From<Hash> for ObjValue {
 impl From<ZSet> for ObjValue {
     fn from(z: ZSet) -> Self {
         Self::ZSet(z)
+    }
+}
+
+#[cfg(test)]
+mod object_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn may_update_test() {
+        let mut obj = Object::new_str("".into(), None);
+
+        let (tx, rx) = flume::unbounded();
+
+        obj.add_may_update_event(tx);
+
+        obj.trigger_may_update_event(&"key".into());
+
+        let key = rx.recv().unwrap();
+        assert_eq!(&key, "key");
+    }
+
+    #[tokio::test]
+    async fn intention_lock_test() {
+        let flag = Arc::new(AtomicUsize::new(0));
+        let db = Arc::new(Db::default());
+
+        let notifiy = Arc::new(Notify::const_new());
+
+        db.insert_object("".into(), ObjectInner::new_str("".into(), None))
+            .await;
+        db.add_lock_event("".into(), 0).await;
+
+        // 目标ID不符，会被阻塞
+        let handle1 = tokio::spawn({
+            let db = db.clone();
+            let flag = flag.clone();
+            async move {
+                ID.scope(1, Object::trigger_lock_event(&db, "".into()))
+                    .await;
+                // 该语句应该被最先执行
+                assert_eq!(flag.fetch_add(1, Ordering::SeqCst), 1);
+            }
+        });
+
+        // 目标ID不符，会被阻塞
+        let handle2 = tokio::spawn({
+            let db = db.clone();
+            let flag = flag.clone();
+            async move {
+                ID.scope(2, Object::trigger_lock_event(&db, "".into()))
+                    .await;
+                // 该语句应该第二执行
+                assert_eq!(flag.fetch_add(1, Ordering::SeqCst), 2);
+            }
+        });
+
+        // 目标ID不符，会被阻塞
+        let handle3 = tokio::spawn({
+            let db = db.clone();
+            let flag = flag.clone();
+            async move {
+                // 重入IntentionLock事件
+                ID.scope(3, db.add_lock_event("".into(), 3)).await;
+                // 该语句应该第三执行
+                assert_eq!(flag.fetch_add(1, Ordering::SeqCst), 3);
+            }
+        });
+
+        // 目标ID不符，会被阻塞
+        let handle4 = tokio::spawn({
+            let db = db.clone();
+            let flag = flag.clone();
+            async move {
+                ID.scope(4, Object::trigger_lock_event(&db, "".into()))
+                    .await;
+                // 该语句应该最后执行
+                assert_eq!(flag.fetch_add(1, Ordering::SeqCst), 4);
+            }
+        });
+
+        // 符合目标ID，不会阻塞
+        ID.scope(0, Object::trigger_lock_event(&db, "".into()))
+            .await;
+        flag.fetch_add(1, Ordering::SeqCst);
+
+        // 通知等待的任务，意向锁已经可以释放了
+        notifiy.notify_one();
+
+        handle1.await.unwrap();
+        handle2.await.unwrap();
+        handle3.await.unwrap();
+        handle4.await.unwrap();
+
+        let e = db.get_object_entry(&"".into()).await.unwrap();
+        assert!(e.events.inner.is_empty())
     }
 }

@@ -14,13 +14,14 @@ async fn main() {
         return;
     }
 
-    let conf = std::sync::Arc::new(conf::Conf::new().unwrap());
+    let conf = conf::Conf::new().unwrap();
 
     rutin::init(conf.server.log_level.as_str());
 
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", conf.server.port))
-        .await
-        .unwrap();
+    let listener =
+        tokio::net::TcpListener::bind(format!("{}:{}", conf.server.addr, conf.server.port))
+            .await
+            .unwrap();
 
     rutin::run(listener, conf).await;
 }

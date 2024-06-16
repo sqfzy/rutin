@@ -11,20 +11,24 @@ pub use listener::*;
 use crate::{
     conf::Conf,
     shared::{db::Db, Shared},
+    Id,
 };
 use async_shutdown::ShutdownManager;
 use crossbeam::atomic::AtomicCell;
 use std::sync::Arc;
-use tokio::{net::TcpListener, sync::Semaphore};
+use tokio::{net::TcpListener, sync::Semaphore, task_local};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error};
 
+pub const RESERVE_MAX_ID: u128 = 20;
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
-// 需要检查是否已经存在相同的ID
-pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(1);
+// 需要检查是否已经存在相同的ID。保留前20个ID，专用于事务处理
+pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(RESERVE_MAX_ID);
+
+task_local! { pub static ID: Id; }
 
 #[inline]
-pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
+pub async fn run(listener: TcpListener, conf: Conf) {
     let shutdown_manager = ShutdownManager::new();
 
     tokio::spawn({
@@ -48,13 +52,17 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) {
         None
     };
 
+    let limit_connections = Arc::new(Semaphore::new(conf.server.max_connections));
     let mut server = Listener {
-        shared: Shared::new(Db::default(), &conf, shutdown_manager.clone()),
+        shared: Shared::new(
+            Arc::new(Db::default()),
+            Arc::new(conf),
+            shutdown_manager.clone(),
+        ),
         listener,
         tls_acceptor,
-        limit_connections: Arc::new(Semaphore::new(conf.server.max_connections)),
+        limit_connections,
         delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
-        conf,
     };
 
     // 运行服务，阻塞主线程。当shutdown触发时，解除主线程的阻塞

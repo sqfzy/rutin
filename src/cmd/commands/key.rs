@@ -52,10 +52,10 @@ pub struct Del {
 impl CmdExecutor for Del {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut count = 0;
         for key in self.keys {
-            if shared.db().remove_object(&key).is_some() {
+            if shared.db().remove_object(&key).await.is_some() {
                 count += 1;
             }
         }
@@ -87,19 +87,22 @@ pub struct Dump {
 impl CmdExecutor for Dump {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut buf = BytesMut::with_capacity(1024);
-        shared.db().visit_object(&self.key, |obj| {
-            match obj.typ() {
-                ObjValueType::Str => encode_str_value(&mut buf, obj.on_str()?.clone()),
-                ObjValueType::List => encode_list_value(&mut buf, obj.on_list()?.clone()),
-                ObjValueType::Set => encode_set_value(&mut buf, obj.on_set()?.clone()),
-                ObjValueType::Hash => encode_hash_value(&mut buf, obj.on_hash()?.clone()),
-                ObjValueType::ZSet => encode_zset_value(&mut buf, obj.on_zset()?.clone()),
-            }
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                match obj.typ() {
+                    ObjValueType::Str => encode_str_value(&mut buf, obj.on_str()?.clone()),
+                    ObjValueType::List => encode_list_value(&mut buf, obj.on_list()?.clone()),
+                    ObjValueType::Set => encode_set_value(&mut buf, obj.on_set()?.clone()),
+                    ObjValueType::Hash => encode_hash_value(&mut buf, obj.on_hash()?.clone()),
+                    ObjValueType::ZSet => encode_zset_value(&mut buf, obj.on_zset()?.clone()),
+                }
 
-            Ok(())
-        })?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Bulk(buf.freeze())))
     }
@@ -127,9 +130,9 @@ pub struct Exists {
 impl CmdExecutor for Exists {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         for key in self.keys {
-            if !shared.db().contains_object(&key) {
+            if !shared.db().contains_object(&key).await {
                 return Err(0.into());
             }
         }
@@ -163,57 +166,60 @@ pub struct Expire {
 impl CmdExecutor for Expire {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut res = None;
 
         let new_ex = Instant::now() + self.seconds;
-        shared.db().update_object(&self.key, |obj| {
-            let ex = obj.expire();
-            match self.opt {
-                Some(Opt::NX) => {
-                    if ex.is_none() {
-                        obj.set_expire(Some(new_ex))?;
-                        res = Some(RESP3::Integer(1));
-                        return Ok(());
-                    }
-                }
-                Some(Opt::XX) => {
-                    if ex.is_some() {
-                        obj.set_expire(Some(new_ex))?;
-                        res = Some(RESP3::Integer(1));
-                        return Ok(());
-                    }
-                }
-                Some(Opt::GT) => {
-                    if let Some(ex) = ex {
-                        if new_ex > ex {
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let ex = obj.expire();
+                match self.opt {
+                    Some(Opt::NX) => {
+                        if ex.is_none() {
                             obj.set_expire(Some(new_ex))?;
-
                             res = Some(RESP3::Integer(1));
                             return Ok(());
                         }
                     }
-                }
-                Some(Opt::LT) => {
-                    if let Some(ex) = ex {
-                        if new_ex < ex {
+                    Some(Opt::XX) => {
+                        if ex.is_some() {
                             obj.set_expire(Some(new_ex))?;
-
                             res = Some(RESP3::Integer(1));
                             return Ok(());
                         }
                     }
-                }
-                None => {
-                    obj.set_expire(Some(new_ex))?;
+                    Some(Opt::GT) => {
+                        if let Some(ex) = ex {
+                            if new_ex > ex {
+                                obj.set_expire(Some(new_ex))?;
 
-                    res = Some(RESP3::Integer(1));
-                    return Ok(());
-                }
-            }
+                                res = Some(RESP3::Integer(1));
+                                return Ok(());
+                            }
+                        }
+                    }
+                    Some(Opt::LT) => {
+                        if let Some(ex) = ex {
+                            if new_ex < ex {
+                                obj.set_expire(Some(new_ex))?;
 
-            Err(CmdError::from(0))
-        })?;
+                                res = Some(RESP3::Integer(1));
+                                return Ok(());
+                            }
+                        }
+                    }
+                    None => {
+                        obj.set_expire(Some(new_ex))?;
+
+                        res = Some(RESP3::Integer(1));
+                        return Ok(());
+                    }
+                }
+
+                Err(CmdError::from(0))
+            })
+            .await?;
 
         Ok(res)
     }
@@ -248,52 +254,55 @@ pub struct ExpireAt {
 impl CmdExecutor for ExpireAt {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut res = None;
-        shared.db().update_object(&self.key, |obj| {
-            let ex = obj.expire();
-            match self.opt {
-                Some(Opt::NX) => {
-                    if ex.is_none() {
-                        obj.set_expire(Some(self.timestamp))?;
-                        res = Some(RESP3::Integer(1));
-                        return Ok(());
-                    }
-                }
-                Some(Opt::XX) => {
-                    if ex.is_some() {
-                        obj.set_expire(Some(self.timestamp))?;
-                        res = Some(RESP3::Integer(1));
-                        return Ok(());
-                    }
-                }
-                Some(Opt::GT) => {
-                    if let Some(ex) = ex {
-                        if self.timestamp > ex {
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let ex = obj.expire();
+                match self.opt {
+                    Some(Opt::NX) => {
+                        if ex.is_none() {
                             obj.set_expire(Some(self.timestamp))?;
                             res = Some(RESP3::Integer(1));
                             return Ok(());
                         }
                     }
-                }
-                Some(Opt::LT) => {
-                    if let Some(ex) = ex {
-                        if self.timestamp < ex {
+                    Some(Opt::XX) => {
+                        if ex.is_some() {
                             obj.set_expire(Some(self.timestamp))?;
                             res = Some(RESP3::Integer(1));
                             return Ok(());
                         }
                     }
+                    Some(Opt::GT) => {
+                        if let Some(ex) = ex {
+                            if self.timestamp > ex {
+                                obj.set_expire(Some(self.timestamp))?;
+                                res = Some(RESP3::Integer(1));
+                                return Ok(());
+                            }
+                        }
+                    }
+                    Some(Opt::LT) => {
+                        if let Some(ex) = ex {
+                            if self.timestamp < ex {
+                                obj.set_expire(Some(self.timestamp))?;
+                                res = Some(RESP3::Integer(1));
+                                return Ok(());
+                            }
+                        }
+                    }
+                    None => {
+                        obj.set_expire(Some(self.timestamp))?;
+                        res = Some(RESP3::Integer(1));
+                        return Ok(());
+                    }
                 }
-                None => {
-                    obj.set_expire(Some(self.timestamp))?;
-                    res = Some(RESP3::Integer(1));
-                    return Ok(());
-                }
-            }
 
-            Err(CmdError::from(0))
-        })?;
+                Err(CmdError::from(0))
+            })
+            .await?;
 
         Ok(res)
     }
@@ -336,7 +345,7 @@ pub struct ExpireTime {
 impl CmdExecutor for ExpireTime {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut ex = None;
         shared
             .db()
@@ -344,6 +353,7 @@ impl CmdExecutor for ExpireTime {
                 ex = obj.expire();
                 Ok(())
             })
+            .await
             .map_err(|_| CmdError::from(-1))?; // 键不存在
 
         if let Some(ex) = ex {
@@ -379,30 +389,34 @@ pub struct Keys {
 impl CmdExecutor for Keys {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
             .map_err(|_| "ERR invalid pattern is given")?;
 
-        let db = shared.db();
-        let matched_keys = if db.size() > (1024 << 32) {
-            db.entries()
-                .par_iter()
-                .filter_map(|entry| {
-                    std::str::from_utf8(entry.key())
-                        .ok()
-                        .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
-                })
-                .collect::<Vec<Self::RESP3>>()
-        } else {
-            db.entries()
-                .iter()
-                .filter_map(|entry| {
-                    std::str::from_utf8(entry.key())
-                        .ok()
-                        .and_then(|key| re.is_match(key).then(|| RESP3::Bulk(entry.key().clone())))
-                })
-                .collect::<Vec<Self::RESP3>>()
-        };
+        let matched_keys = tokio::task::block_in_place(|| {
+            let db = shared.db();
+            let matched_keys = if db.size() > (1024 << 32) {
+                db.entries()
+                    .par_iter()
+                    .filter_map(|entry| {
+                        std::str::from_utf8(entry.key()).ok().and_then(|key| {
+                            re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
+                        })
+                    })
+                    .collect::<Vec<RESP3>>()
+            } else {
+                db.entries()
+                    .iter()
+                    .filter_map(|entry| {
+                        std::str::from_utf8(entry.key()).ok().and_then(|key| {
+                            re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
+                        })
+                    })
+                    .collect::<Vec<RESP3>>()
+            };
+
+            matched_keys
+        });
 
         Ok(Some(RESP3::Array(matched_keys)))
     }
@@ -432,7 +446,7 @@ impl CmdExecutor for NBKeys {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Self::RESP3>, CmdError> {
+    ) -> Result<Option<RESP3>, CmdError> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
             .map_err(|_| "ERR invalid pattern is given")?;
 
@@ -446,7 +460,7 @@ impl CmdExecutor for NBKeys {
             handler.bg_task_channel.new_sender()
         };
 
-        tokio::task::spawn_blocking(move || {
+        tokio::task::block_in_place(move || {
             let db = shared.db();
 
             let matched_keys = if db.size() > (1024 << 32) {
@@ -458,7 +472,7 @@ impl CmdExecutor for NBKeys {
                             re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
                         })
                     })
-                    .collect::<Vec<Self::RESP3>>()
+                    .collect::<Vec<RESP3>>()
             } else {
                 db.entries()
                     .iter()
@@ -467,7 +481,7 @@ impl CmdExecutor for NBKeys {
                             re.is_match(key).then(|| RESP3::Bulk(entry.key().clone()))
                         })
                     })
-                    .collect::<Vec<Self::RESP3>>()
+                    .collect::<Vec<RESP3>>()
             };
 
             let _ = bg_sender.send(RESP3::Array(matched_keys));
@@ -475,7 +489,7 @@ impl CmdExecutor for NBKeys {
 
         Ok(None)
     }
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         Ok(None)
     }
 
@@ -504,7 +518,7 @@ pub struct Persist {
 impl CmdExecutor for Persist {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         shared
             .db()
             .update_object(&self.key, |obj| {
@@ -515,6 +529,7 @@ impl CmdExecutor for Persist {
                 obj.set_expire(None)?;
                 Ok(())
             })
+            .await
             .map_err(|_| CmdError::from(0))?;
 
         Ok(Some(RESP3::Integer(1)))
@@ -545,7 +560,7 @@ pub struct Pttl {
 impl CmdExecutor for Pttl {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut ex = None;
 
         shared
@@ -554,6 +569,7 @@ impl CmdExecutor for Pttl {
                 ex = obj.expire();
                 Ok(())
             })
+            .await
             .map_err(|_| CmdError::from(-2))?;
 
         if let Some(ex) = ex {
@@ -589,7 +605,7 @@ pub struct Ttl {
 impl CmdExecutor for Ttl {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut ex = None;
 
         shared
@@ -598,6 +614,7 @@ impl CmdExecutor for Ttl {
                 ex = obj.expire();
                 Ok(())
             })
+            .await
             .map_err(|_| CmdError::from(-2))?;
 
         if let Some(ex) = ex {
@@ -631,13 +648,16 @@ pub struct Type {
 impl CmdExecutor for Type {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut typ = "";
 
-        shared.db().visit_object(&self.key, |obj| {
-            typ = obj.type_str();
-            Ok(())
-        })?;
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                typ = obj.type_str();
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::SimpleString(typ.into())))
     }
@@ -675,14 +695,15 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
-        assert!(db.contains_object(&"key1".into()));
+        )
+        .await;
+        assert!(db.contains_object(&"key1".into()).await);
 
         // case: 键存在
         let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key1"].as_ref())).unwrap();
         let result = del._execute(&shared).await.unwrap().unwrap();
         assert_eq!(result, RESP3::Integer(1));
-        assert!(!db.contains_object(&"key1".into()));
+        assert!(!db.contains_object(&"key1".into()).await);
 
         // case: 键不存在
         let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key_nil"].as_ref())).unwrap();
@@ -698,8 +719,9 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
-        assert!(db.contains_object(&"key1".into()));
+        )
+        .await;
+        assert!(db.contains_object(&"key1".into()).await);
 
         // case: 键存在
         let exists = Exists::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
@@ -720,13 +742,13 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
+        )
+        .await;
         assert!(db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_none());
 
@@ -736,10 +758,9 @@ mod cmd_key_tests {
         assert_eq!(result, RESP3::Integer(1));
         assert!(db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_some());
 
@@ -754,11 +775,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
         // case: with EX option
         let expire =
             Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref())).unwrap();
@@ -778,11 +801,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: with NX option
         let expire =
@@ -803,11 +828,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: with GT option
         let expire =
@@ -826,11 +853,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: with LT option
         let expire =
@@ -852,13 +881,13 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
+        )
+        .await;
         assert!(db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_none());
 
@@ -875,10 +904,9 @@ mod cmd_key_tests {
         assert_eq!(result, RESP3::Integer(1));
         assert!(db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_some());
 
@@ -894,11 +922,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: with EX option
         let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
@@ -921,11 +951,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: with NX option
         let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
@@ -948,11 +980,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: with GT option
         let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
@@ -975,11 +1009,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: with LT option
         let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
@@ -1005,20 +1041,21 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
+        )
+        .await;
         assert!(db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_none());
         let expire = Instant::now() + Duration::from_secs(10);
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str("value_with_ex".into(), Some(expire)),
-        );
+        )
+        .await;
 
         // case: 键存在，但没有过期时间
         let expire_time = ExpireTime::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
@@ -1040,7 +1077,7 @@ mod cmd_key_tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn keys_test() {
         let shared = Shared::default();
         let db = shared.db();
@@ -1048,19 +1085,23 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key2"),
             ObjectInner::new_str("value2".into(), None),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key3"),
             ObjectInner::new_str("value3".into(), None),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key4"),
             ObjectInner::new_str("value4".into(), None),
-        );
+        )
+        .await;
 
         let keys = Keys::parse(&mut CmdUnparsed::from([".*"].as_ref())).unwrap();
         let result = keys
@@ -1117,11 +1158,13 @@ mod cmd_key_tests {
                 "value_with_ex".into(),
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key_without_ex"),
             ObjectInner::new_str("value_without_ex".into(), None),
-        );
+        )
+        .await;
 
         // case: 键存在，有过期时间
         let persist = Persist::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
@@ -1129,10 +1172,9 @@ mod cmd_key_tests {
         assert_eq!(result, RESP3::Integer(1));
         assert!(db
             .get_object_entry(&"key_with_ex".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_none());
 
@@ -1155,13 +1197,13 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
+        )
+        .await;
         assert!(db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_none());
         let dur = Duration::from_secs(10);
@@ -1169,7 +1211,8 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str("value_with_ex".into(), Some(expire)),
-        );
+        )
+        .await;
 
         // case: 键存在，但没有过期时间
         let pttl = Pttl::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
@@ -1201,13 +1244,13 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str("value1".into(), None),
-        );
+        )
+        .await;
         assert!(db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
-            .value()
-            .inner()
-            .unwrap()
+            .inner_unchecked()
             .expire()
             .is_none());
         let dur = Duration::from_secs(10);
@@ -1215,7 +1258,8 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str("value_with_ex".into(), Some(expire)),
-        );
+        )
+        .await;
 
         // case: 键存在，但没有过期时间
         let ttl = Ttl::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
@@ -1247,23 +1291,28 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key1"),
             ObjectInner::new_str(Str::default(), None),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key2"),
             ObjectInner::new_list(List::default(), None),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key3"),
             ObjectInner::new_set(Set::default(), None),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key4"),
             ObjectInner::new_hash(Hash::default(), None),
-        );
+        )
+        .await;
         db.insert_object(
             Key::from("key5"),
             ObjectInner::new_zset(ZSet::default(), None),
-        );
+        )
+        .await;
 
         // case: 键存在
         let typ = Type::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();

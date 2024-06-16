@@ -1,6 +1,7 @@
 pub type CmdResult<T> = Result<T, CmdError>;
 
 use crate::{frame::RESP3, server::ServerError, shared::db::DbError, Int};
+use bytestring::ByteString;
 use snafu::{Location, Snafu};
 
 #[derive(Debug, Snafu)]
@@ -30,7 +31,7 @@ impl From<Int> for CmdError {
 impl From<&str> for CmdError {
     fn from(value: &str) -> Self {
         Err::Other {
-            message: value.to_string(),
+            message: value.into(),
         }
         .into()
     }
@@ -39,7 +40,7 @@ impl From<&str> for CmdError {
 impl From<anyhow::Error> for CmdError {
     fn from(value: anyhow::Error) -> Self {
         Err::Other {
-            message: value.to_string(),
+            message: value.to_string().into(),
         }
         .into()
     }
@@ -50,11 +51,11 @@ impl From<DbError> for CmdError {
         match e {
             DbError::KeyNotFound => CmdError::Null,
             DbError::TypeErr { expected, found } => Err::Other {
-                message: format!("WRONGTYPE expected: {expected} found {found}"),
+                message: format!("WRONGTYPE expected: {expected} found {found}").into(),
             }
             .into(),
             DbError::Overflow => Err::Other {
-                message: "ERR value out of range".to_string(),
+                message: "ERR value out of range".into(),
             }
             .into(),
         }
@@ -74,7 +75,7 @@ impl TryInto<RESP3> for CmdError {
             // 命令执行失败，向客户端返回空值
             CmdError::Null => RESP3::Null,
             // 命令执行失败，向客户端返回错误信息
-            CmdError::Err { source } => RESP3::SimpleError(source.to_string()),
+            CmdError::Err { source } => RESP3::SimpleError(source.to_string().into()),
         };
 
         Ok(frame)
@@ -95,6 +96,6 @@ pub enum Err {
     A2IParse,
     #[snafu(display("ERR syntax error"))]
     Syntax,
-    #[snafu(whatever, display("ERR {}", message))]
-    Other { message: String },
+    #[snafu(display("ERR {}", message))]
+    Other { message: ByteString },
 }

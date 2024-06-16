@@ -14,7 +14,6 @@ pub struct Listener {
     pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
     pub delay_token: DelayShutdownToken<()>,
-    pub conf: Arc<Conf>,
 }
 
 impl Listener {
@@ -22,7 +21,8 @@ impl Listener {
     pub async fn run(&mut self) -> Result<(), io::Error> {
         println!(
             "server is running on {}:{}...",
-            &self.conf.server.addr, self.conf.server.port
+            &self.shared.conf().server.addr,
+            self.shared.conf().server.port
         );
 
         Conf::prepare(self).await.unwrap();
@@ -44,13 +44,12 @@ impl Listener {
                 .await?;
 
             let shared = self.shared.clone();
-            let conf = self.conf.clone();
 
             // 对于每个连接都创建一个delay_token，只有当所有连接都正常退出时，才关闭服务
             let delay_token = self.delay_token.clone();
             match &self.tls_acceptor {
                 None => {
-                    let mut handler = Handler::new(shared, stream, conf);
+                    let mut handler = Handler::new(shared, stream);
 
                     tokio::spawn(async move {
                         // 开始处理连接
@@ -68,8 +67,7 @@ impl Listener {
                 }
                 // 如果开启了TLS，则使用TlsStream
                 Some(tls_acceptor) => {
-                    let mut handler =
-                        Handler::new(shared, tls_acceptor.accept(stream).await?, conf);
+                    let mut handler = Handler::new(shared, tls_acceptor.accept(stream).await?);
 
                     tokio::spawn(async move {
                         // 开始处理连接
@@ -87,11 +85,12 @@ impl Listener {
     }
 
     pub async fn clean(&mut self) {
-        if self.conf.rdb.enable && !self.conf.aof.enable {
+        let conf = self.shared.conf();
+        if conf.rdb.enable && !conf.aof.enable {
             let mut rdb = RDB::new(
-                self.shared.clone(),
-                self.conf.rdb.file_path.clone(),
-                self.conf.rdb.enable_checksum,
+                &self.shared,
+                conf.rdb.file_path.clone(),
+                conf.rdb.enable_checksum,
             );
             let start = tokio::time::Instant::now();
             rdb.save().await.ok();

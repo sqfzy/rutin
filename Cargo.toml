@@ -21,7 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 crossbeam = { version = "0.8.4", features = ["crossbeam-queue", "nightly"] }
 itoa = "1.0.11"
 ryu = "1.0.17"
-tokio-util = { version = "0.7.11", features = ["codec"] }
+tokio-util = { version = "0.7.11", features = ["full"] }
 atoi = "2.0.0"
 async-shutdown = "0.2.2"
 flume = { version = "0.11.0", features = ["async", "spin"] }
@@ -38,14 +38,14 @@ snafu = "0.8.2"
 backon = "0.4.4"
 rayon = "1.10.0"
 # tokio-async-drop = "0.1.0"
-console-subscriber = "0.2.0"
+console-subscriber = "0.3.0"
 try-lock = "0.2.5"
 kanal = "0.1.0-pre8"
 tokio-rustls = "0.26.0"
 tokio-rustls-acme = "0.3.0"
 rustls-pemfile = "2.1.2"
 rustls = "0.23.7"
-mlua = { version = "0.9.8", features = ["async", "lua54", "vendored"] }
+mlua = { version = "0.9.8", features = ["async", "lua54", "send", "vendored"] }
 either = "1.12.0"
 pin-project = "1.1.5"
 yoke = { version = "0.7.4", features = ["derive"] }
@@ -58,6 +58,9 @@ mimalloc = "0.1"
 arc-swap = "1.7.1"
 bus = "2.4.1"
 tokio-uring = "0.5.0"
+event-listener = "5.3.1"
+# bstr = "1.9.1"
+bytestring = "1.3.1"
 
 # [target.'cfg(not(target_env = "msvc"))'.dependencies]
 # tikv-jemallocator = "0.5"
@@ -72,12 +75,6 @@ assert_cmd = { version = "2.0.14", features = ["color-auto"] }
 # name = "rutinose_bench"
 # harness = false
 
-# [profile.release]
-# debug = true
-
-[build]
-rustflags = ["--cfg", "tokio_unstable"]
-
 # [profile.dev]
 # rustflags = ["--cfg", "tokio_unstable"]
 #
@@ -86,7 +83,7 @@ rustflags = ["--cfg", "tokio_unstable"]
 # opt-level = "z"   # 或者 "s"，表示进行更小的尺寸优化
 opt-level = 3     # 最大优化
 lto = true        # 启用链接时优化（Link Time Optimization）
-debug = false     # 关闭调试信息
+debug = true      # 关闭调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 panic = "abort"
 

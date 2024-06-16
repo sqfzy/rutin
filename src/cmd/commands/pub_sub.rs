@@ -26,7 +26,7 @@ pub struct Publish {
 impl CmdExecutor for Publish {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         // 获取正在监听的订阅者
         let listeners = shared
             .db()
@@ -78,7 +78,7 @@ impl CmdExecutor for Subscribe {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Self::RESP3>, CmdError> {
+    ) -> Result<Option<RESP3>, CmdError> {
         use snafu::Location;
 
         let Handler {
@@ -121,7 +121,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         Ok(None)
     }
 
@@ -152,7 +152,7 @@ impl CmdExecutor for Unsubscribe {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Self::RESP3>, CmdError> {
+    ) -> Result<Option<RESP3>, CmdError> {
         use snafu::Location;
 
         let Handler {
@@ -205,7 +205,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         Ok(None)
     }
 

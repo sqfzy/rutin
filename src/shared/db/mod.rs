@@ -1,16 +1,18 @@
 mod error;
-mod event;
 mod object;
 mod object_entry;
 
 use bytes::Bytes;
 pub use error::DbError;
-pub use event::EventType;
 pub use object::*;
-use object_entry::ObjectEntryMut;
+use object_entry::NotifyUnlock;
+pub use object_entry::ObjectEntryMut;
 
 use crate::{
-    cmd::CmdResult, frame::RESP3, server::BgTaskSender, shared::db::event::Event, Id, Key,
+    cmd::CmdResult,
+    frame::RESP3,
+    server::{BgTaskSender, RESERVE_MAX_ID},
+    Id, Key,
 };
 use ahash::RandomState;
 use dashmap::{
@@ -54,13 +56,18 @@ impl Db {
     // 记录客户端ID和其对应的`BgTaskSender`，用于向客户端发送消息
     #[inline]
     #[instrument(level = "debug", skip(self, id, bg_sender), ret)]
-    pub fn record_client_id(&self, mut id: u128, bg_sender: BgTaskSender) -> Id {
+    pub fn record_client_id(&self, mut id: Id, bg_sender: BgTaskSender) -> Id {
         loop {
             match self.client_records.entry(id) {
                 // 如果id已经存在，则自增1
                 Entry::Occupied(_) => id += 1,
                 // 如果id不存在，则插入
                 Entry::Vacant(e) => {
+                    // 客户端id不允许在保留id范围内
+                    if id <= RESERVE_MAX_ID {
+                        id += RESERVE_MAX_ID - id + 1;
+                        continue;
+                    }
                     e.insert(bg_sender);
                     return id;
                 }
@@ -69,27 +76,26 @@ impl Db {
     }
 
     #[instrument(level = "debug", skip(self), ret)]
-    pub fn get_client_bg_sender(&self, client_id: u128) -> Option<BgTaskSender> {
+    pub fn get_client_bg_sender(&self, client_id: Id) -> Option<BgTaskSender> {
         self.client_records.get(&client_id).map(|e| e.clone())
     }
 
-    #[instrument(level = "debug", skip(self, sender))]
-    pub fn add_event(&self, key: Key, sender: Sender<RESP3>, event: EventType) {
-        match self.entries.entry(key) {
-            Entry::Occupied(mut e) => {
-                let obj = e.get_mut();
-                obj.event.add_event(sender, event);
-            }
-            Entry::Vacant(e) => {
-                // 不存在对象，创建一个空对象
-                let mut obj = Object {
-                    inner: None,
-                    event: Event::default(),
-                };
-                obj.event.add_event(sender, event);
-                e.insert(obj);
-            }
-        }
+    pub async fn add_lock_event(&self, key: Key, target_id: Id) -> Option<NotifyUnlock> {
+        self.get_object_entry_mut(key)
+            .await
+            .add_lock_event(target_id)
+            .1
+    }
+
+    pub async fn add_may_update_event(&self, key: Key, sender: Sender<Bytes>) {
+        let _ = self
+            .get_object_entry_mut(key)
+            .await
+            .add_may_update_event(sender);
+    }
+
+    pub async fn add_track_event(&self, key: Key, sender: Sender<RESP3>) {
+        let _ = self.get_object_entry_mut(key).await.add_track_event(sender);
     }
 
     #[inline]
@@ -129,26 +135,28 @@ impl Db {
 // cmd模块只应该使用以下接口操作数据库
 impl Db {
     /// 检验对象是否合法存在。如果对象不存在，对象为空或者对象已过期则返回false，否则返回true
-    pub fn contains_object(&self, key: &Key) -> bool {
+    #[instrument(level = "debug", skip(self), ret)]
+    pub async fn contains_object(&self, key: &Key) -> bool {
         if let Some(e) = self.entries.get(key) {
-            if let Some(obj) = &e.inner {
+            if let Some(obj) = e.inner() {
                 if !obj.is_expired() {
                     return true;
                 }
 
                 // 对象已过期，移除该键值对
                 drop(e);
-                self.remove_object(key);
+                self.remove_object(key).await;
             }
         }
         false
     }
 
-    pub fn get_object_entry(&self, key: &Key) -> Option<Ref<'_, Bytes, Object, RandomState>> {
+    #[instrument(level = "debug", skip(self))]
+    pub async fn get_object_entry(&self, key: &Key) -> Option<Ref<'_, Bytes, Object, RandomState>> {
         // 键存在
         if let Some(e) = self.entries.get(key) {
             // 对象不为空
-            if let Some(inner) = &e.value().inner {
+            if let Some(inner) = e.value().inner() {
                 // 对象未过期
                 if !inner.is_expired() {
                     return Some(e);
@@ -156,7 +164,7 @@ impl Db {
 
                 // 对象已过期，移除该键值对
                 drop(e);
-                self.remove_object(key);
+                self.remove_object(key).await;
             }
         }
 
@@ -164,8 +172,9 @@ impl Db {
     }
 
     #[inline]
-    pub fn get_object_entry_mut(&self, key: Key) -> ObjectEntryMut {
-        ObjectEntryMut::new(self.entries.entry(key), self)
+    #[instrument(level = "debug", skip(self))]
+    pub async fn get_object_entry_mut(&self, key: Key) -> ObjectEntryMut {
+        Object::trigger_lock_event(self, key).await
     }
 
     /// # Desc:
@@ -176,7 +185,7 @@ impl Db {
     ///
     /// 如果对象不存在，对象为空或者对象已过期则返回CmdError::from(DbError::KeyNotFound)
     #[instrument(level = "debug", skip(self, f))]
-    pub fn visit_object(
+    pub async fn visit_object(
         &self,
         key: &Key,
         f: impl FnOnce(&ObjectInner) -> CmdResult<()>,
@@ -189,7 +198,7 @@ impl Db {
             return Err(DbError::KeyNotFound.into());
         };
 
-        let obj_inner = if let Some(inner) = &entry.inner {
+        let obj_inner = if let Some(inner) = entry.inner() {
             inner
         } else {
             // 对象为空对象
@@ -201,7 +210,7 @@ impl Db {
             // 对象已过期，移除该键值对
             error!("object is expired");
             drop(entry);
-            self.remove_object(key);
+            self.remove_object(key).await;
             return Err(DbError::KeyNotFound.into());
         }
 
@@ -209,8 +218,8 @@ impl Db {
         f(obj_inner)
     }
 
-    pub fn insert_object(&self, key: Key, object: ObjectInner) -> Option<ObjectInner> {
-        self.get_object_entry_mut(key).insert_object(object).1
+    pub async fn insert_object(&self, key: Key, object: ObjectInner) -> Option<ObjectInner> {
+        self.get_object_entry_mut(key).await.insert_object(object).1
     }
 
     // /// # Desc:
@@ -292,26 +301,31 @@ impl Db {
     /// # Desc:
     ///
     /// 移除键值对。如果存在旧对象，则会触发旧对象中的Remove事件
-    pub fn remove_object(&self, key: &Key) -> Option<(Key, Object)> {
-        self.get_object_entry_mut(key.clone()).remove_object()
+    #[instrument(level = "debug", skip(self), ret)]
+    pub async fn remove_object(&self, key: &Key) -> Option<(Key, Object)> {
+        self.get_object_entry_mut(key.clone()).await.remove_object()
     }
 
-    pub fn update_object(
+    #[instrument(level = "debug", skip(self, f), err)]
+    pub async fn update_object(
         &self,
         key: &Key,
         f: impl FnOnce(&mut ObjectInner) -> CmdResult<()>,
     ) -> CmdResult<()> {
         self.get_object_entry_mut(key.clone())
+            .await
             .update_object_value(f)
     }
 
-    pub fn update_or_create_object(
+    #[instrument(level = "debug", skip(self, f), err)]
+    pub async fn update_or_create_object(
         &self,
         key: &Key,
         typ: ObjValueType,
         f: impl FnOnce(&mut ObjectInner) -> CmdResult<()>,
     ) -> CmdResult<()> {
         self.get_object_entry_mut(key.clone())
+            .await
             .update_or_create_object(typ, f)?;
 
         Ok(())
@@ -382,9 +396,11 @@ pub mod db_tests {
         let db = Db::default();
 
         // 无对象时插入对象
-        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None));
+        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None))
+            .await;
         let res = db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
             .on_str()
             .unwrap()
@@ -394,11 +410,13 @@ pub mod db_tests {
 
         // 有对象时插入对象，触发旧对象的Update事件
         let (tx, rx) = flume::unbounded();
-        db.add_event("key1".into(), tx.clone(), EventType::MayUpdate);
+        db.add_may_update_event("key1".into(), tx.clone()).await;
 
-        db.insert_object("key1".into(), ObjectInner::new_str("value2".into(), None));
+        db.insert_object("key1".into(), ObjectInner::new_str("value2".into(), None))
+            .await;
         let res = db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
             .on_str()
             .unwrap()
@@ -407,14 +425,16 @@ pub mod db_tests {
         assert_eq!(res, "value2".as_bytes());
 
         let res = rx.recv().unwrap();
-        assert_eq!(res.try_bulk().unwrap().as_ref(), b"key1");
+        assert_eq!(res.as_ref(), b"key1");
 
         // 存在空对象时插入对象，触发Update事件
-        db.add_event("key2".into(), tx.clone(), EventType::MayUpdate);
+        db.add_may_update_event("key2".into(), tx.clone()).await;
 
-        db.insert_object("key2".into(), ObjectInner::new_str("value2".into(), None));
+        db.insert_object("key2".into(), ObjectInner::new_str("value2".into(), None))
+            .await;
         let res = db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
             .on_str()
             .unwrap()
@@ -423,7 +443,7 @@ pub mod db_tests {
         assert_eq!(res, "value2".as_bytes());
 
         let res = rx.recv().unwrap();
-        assert_eq!(res.try_bulk().unwrap().as_ref(), b"key2");
+        assert_eq!(res.as_ref(), b"key2");
     }
 
     #[tokio::test]
@@ -432,28 +452,35 @@ pub mod db_tests {
 
         let db = Db::default();
 
-        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None));
+        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None))
+            .await;
 
         // 访问有效对象，应该成功
-        db.visit_object(&"key1".into(), |_| Ok(())).unwrap();
+        db.visit_object(&"key1".into(), |_| Ok(())).await.unwrap();
 
         // 访问不存在的对象，应该失败
         db.visit_object(&"key_not_exist".into(), |_| Ok(()))
+            .await
             .unwrap_err();
 
         // 访问空对象时，应该失败
         let (tx, _) = flume::unbounded();
-        db.add_event("key_none".into(), tx, EventType::MayUpdate); // 这会创建一个空对象
-        db.visit_object(&"key_none".into(), |_| Ok(())).unwrap_err();
+
+        db.add_may_update_event("key_none".into(), tx.clone()).await; // 这会创建一个空对象
+        db.visit_object(&"key_none".into(), |_| Ok(()))
+            .await
+            .unwrap_err();
 
         // 访问过期对象时，应该失败，并且过期对象会被删除
         db.insert_object(
             "key_expired".into(),
             ObjectInner::new_str("key_expired".into(), Some(Instant::now())),
-        );
+        )
+        .await;
         db.visit_object(&"key_expired".into(), |_| Ok(()))
+            .await
             .unwrap_err();
-        assert!(db.get_object_entry(&"key_expired".into()).is_none());
+        assert!(db.get_object_entry(&"key_expired".into()).await.is_none());
     }
 
     #[tokio::test]
@@ -463,19 +490,22 @@ pub mod db_tests {
         let db = Db::default();
         let (tx, rx) = flume::unbounded();
 
-        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None));
+        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None))
+            .await;
 
         // 更新有效对象，应该成功，并且触发Update事件
-        db.add_event("key1".into(), tx.clone(), EventType::MayUpdate);
+        db.add_may_update_event("key1".into(), tx.clone()).await;
 
         db.update_object(&"key1".into(), |obj| {
             obj.on_str_mut().unwrap().set("value2".into());
             Ok(())
         })
+        .await
         .unwrap();
 
         let update_res = db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
             .on_str()
             .unwrap()
@@ -484,25 +514,30 @@ pub mod db_tests {
         assert_eq!(update_res, "value2".as_bytes());
 
         let event_res = rx.recv().unwrap();
-        assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key1");
+        assert_eq!(event_res.as_ref(), b"key1");
 
         // 更新不存在的对象，应该失败
         db.update_object(&"key_not_exist".into(), |_| Ok(()))
+            .await
             .unwrap_err();
 
         // 更新空对象时，应该失败
-        db.add_event("key_none".into(), tx, EventType::MayUpdate); // 这会创建一个空对象
+        db.add_may_update_event("key_none".into(), tx.clone()).await; // 这会创建一个空对象
+
         db.update_object(&"key_none".into(), |_| Ok(()))
+            .await
             .unwrap_err();
 
         // 更新过期对象时，应该失败，并且过期对象会被删除
         db.insert_object(
             "key_expired".into(),
             ObjectInner::new_str("value".into(), Some(Instant::now())),
-        );
+        )
+        .await;
         db.update_object(&"key_expired".into(), |_| Ok(()))
+            .await
             .unwrap_err();
-        assert!(db.get_object_entry(&"key_expired".into()).is_none());
+        assert!(db.get_object_entry(&"key_expired".into()).await.is_none());
     }
 
     #[tokio::test]
@@ -512,19 +547,22 @@ pub mod db_tests {
         let db = Db::default();
         let (tx, rx) = flume::unbounded();
 
-        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None));
+        db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None))
+            .await;
 
         // 更新或创建，更新有效象应该成功，并且触发Update事件
-        db.add_event("key1".into(), tx.clone(), EventType::MayUpdate);
+        db.add_may_update_event("key1".into(), tx.clone()).await;
 
         db.update_or_create_object(&"key1".into(), ObjValueType::Str, |obj| {
             obj.on_str_mut().unwrap().set("value2".into());
             Ok(())
         })
+        .await
         .unwrap();
 
         let update_res = db
             .get_object_entry(&"key1".into())
+            .await
             .unwrap()
             .on_str()
             .unwrap()
@@ -533,17 +571,19 @@ pub mod db_tests {
         assert_eq!(update_res, "value2".as_bytes());
 
         let event_res = rx.recv().unwrap();
-        assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key1");
+        assert_eq!(event_res.as_ref(), b"key1");
 
         // 更新或创建，更新不存在的对象，应该创建新对象
         db.update_or_create_object(&"key_not_exist".into(), ObjValueType::Str, |obj| {
             obj.on_str_mut().unwrap().set("value".into());
             Ok(())
         })
+        .await
         .unwrap();
 
         let update_res = db
             .get_object_entry(&"key_not_exist".into())
+            .await
             .unwrap()
             .on_str()
             .unwrap()
@@ -552,15 +592,17 @@ pub mod db_tests {
         assert_eq!(update_res, "value".as_bytes());
 
         // 更新或创建，更新空对象，应该创建新对象并触发空对象的Update事件
-        db.add_event("key_none".into(), tx, EventType::MayUpdate); // 这会创建一个空对象
+        db.add_may_update_event("key_none".into(), tx.clone()).await; // 这会创建一个空对象
         db.update_or_create_object(&"key_none".into(), ObjValueType::Str, |obj| {
             obj.on_str_mut().unwrap().set("value".into());
             Ok(())
         })
+        .await
         .unwrap();
 
         let update_res = db
             .get_object_entry(&"key_none".into())
+            .await
             .unwrap()
             .on_str()
             .unwrap()
@@ -569,28 +611,6 @@ pub mod db_tests {
         assert_eq!(update_res, "value".as_bytes());
 
         let event_res = rx.recv().unwrap();
-        assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key_none");
+        assert_eq!(event_res.as_ref(), b"key_none");
     }
-
-    // #[tokio::test]
-    // async fn remove_object_test() {
-    //     test_init();
-    //
-    //     let db = Db::default();
-    //     let (tx, rx) = flume::unbounded();
-    //
-    //     db.insert_object("key1".into(), ObjectInner::new_str("value1".into(), None));
-    //
-    //     // 移除有效对象，应该成功，并且触发Remove事件
-    //     db.add_event("key1".into(), tx.clone(), EventType::Remove);
-    //
-    //     db.remove_object(&"key1".into()).unwrap();
-    //     get_object(&db, "key1".as_bytes()).unwrap_err();
-    //
-    //     let event_res = rx.recv().unwrap();
-    //     assert_eq!(event_res.try_bulk().unwrap().as_ref(), b"key1");
-    //
-    //     // 移除不存在的对象，应该返回None
-    //     assert!(db.remove_object(&"key_not_exist".into()).is_none());
-    // }
 }

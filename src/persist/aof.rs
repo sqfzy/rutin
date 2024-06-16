@@ -182,10 +182,10 @@ impl AOF {
 
         // 如果AOF文件以REDIS开头，说明是RDB与AOF混合文件，需要先加载RDB
         if buf.starts_with(b"REDIS") {
-            rdb_load(&mut buf, self.shared.db(), false)?;
+            rdb_load(&mut buf, self.shared.db(), false).await?;
         }
 
-        let (mut handler, _) = Handler::new_fake_with(self.shared.clone(), self.conf.clone(), None);
+        let (mut handler, _) = Handler::new_fake_with(self.shared.clone(), None, None);
         let mut decoder = RESP3Decoder::default();
         while let Some(cmd_frame) = decoder.decode(&mut buf)? {
             dispatch(cmd_frame, &mut handler).await?;

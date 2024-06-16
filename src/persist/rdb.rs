@@ -5,9 +5,10 @@ use crate::shared::{
 };
 use ahash::{AHashMap, AHashSet};
 use anyhow::bail;
+use async_shutdown::ShutdownManager;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use skiplist::OrderedSkipList;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     time::Duration,
@@ -61,17 +62,19 @@ const RDB_ENC_LZF: u8 = 3;
 
 #[derive(Clone)]
 pub struct RDB {
+    db: Arc<Db>,
     path: String,
     enable_checksum: bool,
-    shared: Shared,
+    shutdown: ShutdownManager<()>,
 }
 
 impl RDB {
-    pub fn new(shared: Shared, path: String, enable_checksum: bool) -> Self {
+    pub fn new(shared: &Shared, path: String, enable_checksum: bool) -> Self {
         Self {
+            db: shared.db().clone(),
             path,
             enable_checksum,
-            shared,
+            shutdown: shared.shutdown().clone(),
         }
     }
 }
@@ -80,15 +83,11 @@ impl RDB {
     pub async fn save(&mut self) -> anyhow::Result<()> {
         let mut file = tokio::fs::File::create(&self.path).await?;
 
-        if let Ok(fut) = self
-            .shared
-            .shutdown()
-            .wrap_delay_shutdown(rdb_save::rdb_save(
-                &mut file,
-                self.shared.db(),
-                self.enable_checksum,
-            ))
-        {
+        if let Ok(fut) = self.shutdown.wrap_delay_shutdown(rdb_save::rdb_save(
+            &mut file,
+            &self.db,
+            self.enable_checksum,
+        )) {
             fut.await?;
         } else {
             return Ok(());
@@ -103,7 +102,7 @@ impl RDB {
         let mut rdb = BytesMut::with_capacity(1024 * 32);
         while file.read_buf(&mut rdb).await? != 0 {}
 
-        rdb_load::rdb_load(&mut rdb, self.shared.db(), self.enable_checksum)?;
+        rdb_load::rdb_load(&mut rdb, &self.db, self.enable_checksum).await?;
 
         Ok(())
     }
@@ -305,7 +304,11 @@ mod rdb_load {
 
     use super::*;
 
-    pub fn rdb_load(rdb: &mut BytesMut, db: &Db, enable_checksum: bool) -> anyhow::Result<()> {
+    pub async fn rdb_load(
+        rdb: &mut BytesMut,
+        db: &Db,
+        enable_checksum: bool,
+    ) -> anyhow::Result<()> {
         if enable_checksum {
             let mut checksum = [0; 8];
             checksum.copy_from_slice(&rdb[rdb.len() - 8..]);
@@ -371,7 +374,8 @@ mod rdb_load {
 
                     trace!("String: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_str(value, expire));
+                    db.insert_object(key, ObjectInner::new_str(value, expire))
+                        .await;
                     expire = None;
                 }
                 RDB_TYPE_LIST => {
@@ -380,7 +384,8 @@ mod rdb_load {
 
                     trace!("List: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_list(value, expire));
+                    db.insert_object(key, ObjectInner::new_list(value, expire))
+                        .await;
                     expire = None;
                 }
                 RDB_TYPE_HASH => {
@@ -389,7 +394,8 @@ mod rdb_load {
 
                     trace!("Hash: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_hash(value, expire));
+                    db.insert_object(key, ObjectInner::new_hash(value, expire))
+                        .await;
                     expire = None;
                 }
                 RDB_TYPE_SET => {
@@ -398,7 +404,8 @@ mod rdb_load {
 
                     trace!("Set: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_set(value, expire));
+                    db.insert_object(key, ObjectInner::new_set(value, expire))
+                        .await;
                     expire = None;
                 }
                 RDB_TYPE_ZSET => {
@@ -407,7 +414,8 @@ mod rdb_load {
 
                     trace!("ZSet: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_zset(value, expire));
+                    db.insert_object(key, ObjectInner::new_zset(value, expire))
+                        .await;
                     expire = None;
                 }
                 invalid_ctrl => bail!("invalid RDB control byte: {:?}", invalid_ctrl),
@@ -858,10 +866,10 @@ mod rdb_test {
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("str1".into(), str1.clone());
-        db.insert_object("str2".into(), str2.clone());
-        db.insert_object("str3".into(), str3.clone());
-        db.insert_object("str4".into(), str4.clone());
+        db.insert_object("str1".into(), str1.clone()).await;
+        db.insert_object("str2".into(), str2.clone()).await;
+        db.insert_object("str3".into(), str3.clone()).await;
+        db.insert_object("str4".into(), str4.clone()).await;
 
         let l1 = ObjectInner::new_list(List::default(), None);
         let l2 = ObjectInner::new_list(vec!["v1", "v2"].into(), None);
@@ -874,10 +882,10 @@ mod rdb_test {
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("l1".into(), l1.clone());
-        db.insert_object("l2".into(), l2.clone());
-        db.insert_object("l3".into(), l3.clone());
-        db.insert_object("l4".into(), l4.clone());
+        db.insert_object("l1".into(), l1.clone()).await;
+        db.insert_object("l2".into(), l2.clone()).await;
+        db.insert_object("l3".into(), l3.clone()).await;
+        db.insert_object("l4".into(), l4.clone()).await;
 
         let s1 = ObjectInner::new_set(Set::default(), None);
         let s2 = ObjectInner::new_set(vec!["v1", "v2"].into(), None);
@@ -890,10 +898,10 @@ mod rdb_test {
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("s1".into(), s1.clone());
-        db.insert_object("s2".into(), s2.clone());
-        db.insert_object("s3".into(), s3.clone());
-        db.insert_object("s4".into(), s4.clone());
+        db.insert_object("s1".into(), s1.clone()).await;
+        db.insert_object("s2".into(), s2.clone()).await;
+        db.insert_object("s3".into(), s3.clone()).await;
+        db.insert_object("s4".into(), s4.clone()).await;
 
         let h1 = ObjectInner::new_hash(Hash::default(), None);
         let h2 = ObjectInner::new_hash(vec![("f1", "v1"), ("f2", "v2")].into(), None);
@@ -906,10 +914,10 @@ mod rdb_test {
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("h1".into(), h1.clone());
-        db.insert_object("h2".into(), h2.clone());
-        db.insert_object("h3".into(), h3.clone());
-        db.insert_object("h4".into(), h4.clone());
+        db.insert_object("h1".into(), h1.clone()).await;
+        db.insert_object("h2".into(), h2.clone()).await;
+        db.insert_object("h3".into(), h3.clone()).await;
+        db.insert_object("h4".into(), h4.clone()).await;
 
         let zs1 = ObjectInner::new_zset(ZSet::default(), None);
         let zs2 = ObjectInner::new_zset(vec![(1_f64, "v1"), (2_f64, "v2")].into(), None);
@@ -922,180 +930,160 @@ mod rdb_test {
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
-        db.insert_object("zs1".into(), zs1.clone());
-        db.insert_object("zs2".into(), zs2.clone());
-        db.insert_object("zs3".into(), zs3.clone());
-        db.insert_object("zs4".into(), zs4.clone());
+        db.insert_object("zs1".into(), zs1.clone()).await;
+        db.insert_object("zs2".into(), zs2.clone()).await;
+        db.insert_object("zs3".into(), zs3.clone()).await;
+        db.insert_object("zs4".into(), zs4.clone()).await;
 
-        let mut rdb = RDB::new(shared.clone(), "tests/dump/dump_temp.rdb".into(), true);
+        let mut rdb = RDB::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.save().await.unwrap();
 
         let shared = Shared::default();
-        let mut rdb = RDB::new(shared, "tests/dump/dump_temp.rdb".into(), true);
+        let mut rdb = RDB::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.load().await.unwrap();
 
         assert_eq!(
             db.get_object_entry(&"str1".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &str1
         );
         assert_eq!(
             db.get_object_entry(&"str2".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &str2
         );
         assert_eq!(
             db.get_object_entry(&"str3".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &str3
         );
         assert_eq!(
             db.get_object_entry(&"str4".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &str4
         );
 
         assert_eq!(
             db.get_object_entry(&"l1".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &l1
         );
         assert_eq!(
             db.get_object_entry(&"l2".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &l2
         );
         assert_eq!(
             db.get_object_entry(&"l3".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &l3
         );
         assert_eq!(
             db.get_object_entry(&"l4".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &l4
         );
 
         assert_eq!(
             db.get_object_entry(&"s1".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &s1
         );
         assert_eq!(
             db.get_object_entry(&"s2".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &s2
         );
         assert_eq!(
             db.get_object_entry(&"s3".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &s3
         );
         assert_eq!(
             db.get_object_entry(&"s4".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &s4
         );
 
         assert_eq!(
             db.get_object_entry(&"h1".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &h1
         );
         assert_eq!(
             db.get_object_entry(&"h2".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &h2
         );
         assert_eq!(
             db.get_object_entry(&"h3".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &h3
         );
         assert_eq!(
             db.get_object_entry(&"h4".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &h4
         );
 
         assert_eq!(
             db.get_object_entry(&"zs1".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &zs1
         );
         assert_eq!(
             db.get_object_entry(&"zs2".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &zs2
         );
         assert_eq!(
             db.get_object_entry(&"zs3".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &zs3
         );
         assert_eq!(
             db.get_object_entry(&"zs4".into())
+                .await
                 .unwrap()
-                .value()
-                .inner()
-                .unwrap(),
+                .inner_unchecked(),
             &zs4
         );
     }

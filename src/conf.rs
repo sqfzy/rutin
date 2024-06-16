@@ -202,17 +202,14 @@ impl Conf {
     }
 
     pub async fn prepare(listener: &mut Listener) -> anyhow::Result<()> {
-        let Listener { shared, conf, .. } = listener;
+        let shared = &listener.shared;
+        let conf = shared.conf();
 
         /*********************/
         /* 是否开启RDB持久化 */
         /*********************/
         if conf.rdb.enable && !conf.aof.enable {
-            let mut rdb = RDB::new(
-                shared.clone(),
-                conf.rdb.file_path.clone(),
-                conf.rdb.enable_checksum,
-            );
+            let mut rdb = RDB::new(shared, conf.rdb.file_path.clone(), conf.rdb.enable_checksum);
 
             let start = std::time::Instant::now();
             println!("Loading RDB file...");
@@ -234,6 +231,7 @@ impl Conf {
         /* 开启过期键定时检查 */
         /**********************/
         let period = Duration::from_secs(conf.server.expire_check_interval_secs);
+        let handle = Handle::current();
         std::thread::spawn({
             let shared = shared.clone();
             move || {
@@ -254,7 +252,7 @@ impl Conf {
                         tracing::trace!("key {:?} is expired", key);
                         // 删除过期键，该过程会自动删除对应的expire_record
                         // WARN: 执行remove_object时，不应该持有entry_expire_records元素的引用，否则会导致死锁
-                        shared.db().remove_object(&key);
+                        handle.block_on(shared.db().remove_object(&key));
                     }
                 }
             }
@@ -356,16 +354,18 @@ mod conf_tests {
             ..Default::default()
         };
 
-        let conf = Arc::new(conf);
         let shutdown = async_shutdown::ShutdownManager::new();
-        let shared = Shared::new(Db::default(), &conf, shutdown.clone());
+        let shared = Shared::new(Arc::new(Db::default()), Arc::new(conf), shutdown.clone());
         // 启用AOF，开始AOF save，将AOF文件中的命令加载到内存中
-        enable_aof(shared.clone(), conf.clone()).await.unwrap();
+        enable_aof(shared.clone(), shared.conf().clone())
+            .await
+            .unwrap();
 
         let db = shared.db();
         // 断言AOF文件中的内容已经加载到内存中
         assert_eq!(
             db.get_object_entry(&"key:000000000015".into())
+                .await
                 .unwrap()
                 .on_str()
                 .unwrap()
@@ -375,6 +375,7 @@ mod conf_tests {
         );
         assert_eq!(
             db.get_object_entry(&"key:000000000003".into())
+                .await
                 .unwrap()
                 .on_str()
                 .unwrap()
@@ -384,6 +385,7 @@ mod conf_tests {
         );
         assert_eq!(
             db.get_object_entry(&"key:000000000025".into())
+                .await
                 .unwrap()
                 .on_str()
                 .unwrap()
@@ -392,7 +394,7 @@ mod conf_tests {
             b"VXK"
         );
 
-        let (mut handler, _) = Handler::new_fake_with(shared.clone(), conf.clone(), None);
+        let (mut handler, _) = Handler::new_fake_with(shared.clone(), None, None);
 
         let file = tokio::fs::OpenOptions::new()
             .write(true)

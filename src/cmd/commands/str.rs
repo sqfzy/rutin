@@ -28,7 +28,7 @@ pub struct Append {
 impl CmdExecutor for Append {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut length = None;
 
         shared
@@ -39,7 +39,8 @@ impl CmdExecutor for Append {
 
                 length = Some(RESP3::Integer(str.len() as Int));
                 Ok(())
-            })?;
+            })
+            .await?;
 
         Ok(length)
     }
@@ -67,13 +68,16 @@ pub struct Decr {
 impl CmdExecutor for Decr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.decr_by(1)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.decr_by(1)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -101,13 +105,16 @@ pub struct DecrBy {
 impl CmdExecutor for DecrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.decr_by(self.decrement)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.decr_by(self.decrement)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -138,13 +145,16 @@ impl CmdExecutor for Get {
     const CMD_TYPE: crate::cmd::CmdType = CmdType::Read;
 
     #[inline]
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut res = None;
 
-        shared.db().visit_object(&self.key, |obj| {
-            res = Some(RESP3::Bulk(obj.on_str()?.to_bytes()));
-            Ok(())
-        })?;
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                res = Some(RESP3::Bulk(obj.on_str()?.to_bytes()));
+                Ok(())
+            })
+            .await?;
 
         Ok(res)
     }
@@ -175,16 +185,19 @@ pub struct GetRange {
 impl CmdExecutor for GetRange {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut res = "".into();
 
-        shared.db().visit_object(&self.key, |obj| {
-            let str = obj.on_str()?;
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                let str = obj.on_str()?;
 
-            let mut buf = itoa::Buffer::new();
-            res = Bytes::copy_from_slice(str.get_range(&mut buf, self.start, self.end));
-            Ok(())
-        })?;
+                let mut buf = itoa::Buffer::new();
+                res = Bytes::copy_from_slice(str.get_range(&mut buf, self.start, self.end));
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Bulk(res)))
     }
@@ -220,14 +233,17 @@ pub struct GetSet {
 impl CmdExecutor for GetSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut old = "".into();
 
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            old = str.set(self.new_value).to_bytes();
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                old = str.set(self.new_value).to_bytes();
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Bulk(old)))
     }
@@ -256,14 +272,17 @@ pub struct Incr {
 impl CmdExecutor for Incr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
 
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.incr_by(1)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.incr_by(1)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -292,13 +311,16 @@ pub struct IncrBy {
 impl CmdExecutor for IncrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut new_i = 0;
-        shared.db().update_object(&self.key, |obj| {
-            let str = obj.on_str_mut()?;
-            new_i = str.incr_by(self.increment)?;
-            Ok(())
-        })?;
+        shared
+            .db()
+            .update_object(&self.key, |obj| {
+                let str = obj.on_str_mut()?;
+                new_i = str.incr_by(self.increment)?;
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(new_i)))
     }
@@ -328,15 +350,18 @@ pub struct MGet {
 impl CmdExecutor for MGet {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut res = Vec::with_capacity(self.keys.len());
         for key in self.keys.iter() {
             let mut str = "".into();
 
-            shared.db().visit_object(key, |obj| {
-                str = obj.on_str()?.to_bytes();
-                Ok(())
-            })?;
+            shared
+                .db()
+                .visit_object(key, |obj| {
+                    str = obj.on_str()?.to_bytes();
+                    Ok(())
+                })
+                .await?;
 
             res.push(RESP3::Bulk(str));
         }
@@ -366,16 +391,16 @@ pub struct MSet {
 
 impl CmdExecutor for MSet {
     const CMD_TYPE: CmdType = CmdType::Write;
-    type RESP3 = RESP3<Bytes, &'static str>;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, ObjectInner::new_str(value.into(), None));
+                .insert_object(key, ObjectInner::new_str(value.into(), None))
+                .await;
         }
 
-        Ok(Some(RESP3::SimpleString("OK")))
+        Ok(Some(RESP3::SimpleString("OK".into())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -406,9 +431,9 @@ pub struct MSetNx {
 impl CmdExecutor for MSetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         for (key, _) in &self.pairs {
-            if shared.db().contains_object(key) {
+            if shared.db().contains_object(key).await {
                 return Err(0.into());
             }
         }
@@ -416,7 +441,8 @@ impl CmdExecutor for MSetNx {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, ObjectInner::new_str(value.into(), None));
+                .insert_object(key, ObjectInner::new_str(value.into(), None))
+                .await;
         }
 
         Ok(Some(RESP3::Integer(1)))
@@ -462,10 +488,9 @@ enum SetOpt {
 
 impl CmdExecutor for Set {
     const CMD_TYPE: CmdType = CmdType::Write;
-    type RESP3 = RESP3<Bytes, &'static str>;
 
     #[inline]
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         // 1. 是否要求键存在？
         // 2. 满足命令对键的要求后，更新值
         // 3. 是否需要更新expire?
@@ -484,7 +509,7 @@ impl CmdExecutor for Set {
             }
         }
 
-        let entry = shared.db().get_object_entry_mut(self.key);
+        let entry = shared.db().get_object_entry_mut(self.key).await;
         if let Some(flag) = key_flag {
             if flag != entry.is_object_existed() {
                 return Err(CmdError::Null);
@@ -510,7 +535,7 @@ impl CmdExecutor for Set {
         if self.get {
             Ok(Some(RESP3::Bulk(old.unwrap().on_str()?.to_bytes())))
         } else {
-            Ok(Some(RESP3::SimpleString("OK")))
+            Ok(Some(RESP3::SimpleString("OK".into())))
         }
     }
 
@@ -646,15 +671,17 @@ pub struct SetEx {
 
 impl CmdExecutor for SetEx {
     const CMD_TYPE: CmdType = CmdType::Write;
-    type RESP3 = RESP3<Bytes, &'static str>;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
-        shared.db().insert_object(
-            self.key,
-            ObjectInner::new_str(self.value.into(), Some(Instant::now() + self.expire)),
-        );
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+        shared
+            .db()
+            .insert_object(
+                self.key,
+                ObjectInner::new_str(self.value.into(), Some(Instant::now() + self.expire)),
+            )
+            .await;
 
-        Ok(Some(RESP3::SimpleString("OK")))
+        Ok(Some(RESP3::SimpleString("OK".into())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -684,14 +711,15 @@ pub struct SetNx {
 impl CmdExecutor for SetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
-        if shared.db().contains_object(&self.key) {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+        if shared.db().contains_object(&self.key).await {
             return Err(0.into());
         }
 
         shared
             .db()
-            .insert_object(self.key, ObjectInner::new_str(self.value.into(), None));
+            .insert_object(self.key, ObjectInner::new_str(self.value.into(), None))
+            .await;
 
         Ok(Some(RESP3::Integer(1)))
     }
@@ -720,12 +748,15 @@ pub struct StrLen {
 impl CmdExecutor for StrLen {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Self::RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
         let mut len = 0;
-        shared.db().visit_object(&self.key, |obj| {
-            len = obj.on_str()?.len();
-            Ok(())
-        })?;
+        shared
+            .db()
+            .visit_object(&self.key, |obj| {
+                len = obj.on_str()?.len();
+                Ok(())
+            })
+            .await?;
 
         Ok(Some(RESP3::Integer(len as Int)))
     }
@@ -1056,7 +1087,11 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let obj = shared.db().get_object_entry(&"key_expire".into()).unwrap();
+        let obj = shared
+            .db()
+            .get_object_entry(&"key_expire".into())
+            .await
+            .unwrap();
         assert_eq!(
             obj.on_str().unwrap().unwrap().to_bytes().as_ref(),
             b"value_expire_modified"
