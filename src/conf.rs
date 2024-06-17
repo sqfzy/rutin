@@ -315,7 +315,7 @@ async fn enable_aof(shared: Shared, conf: Arc<Conf>) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod conf_tests {
-    use crate::{cmd::dispatch, frame::RESP3, server::Handler, shared::db::Db, util::test_init};
+    use crate::{cmd::dispatch, frame::Resp3, server::Handler, shared::db::Db, util::test_init};
     use std::io::Write;
 
     use super::*;
@@ -405,20 +405,20 @@ mod conf_tests {
         drop(file);
 
         let frames = vec![
-            RESP3::Array(vec![
-                RESP3::Bulk("SET".into()),
-                RESP3::Bulk("key:000000000015".into()),
-                RESP3::Bulk("VXK".into()),
+            Resp3::new_array(vec![
+                Resp3::new_blob("SET".into()),
+                Resp3::new_blob("key:000000000015".into()),
+                Resp3::new_blob("VXK".into()),
             ]),
-            RESP3::Array(vec![
-                RESP3::Bulk("SET".into()),
-                RESP3::Bulk("key:000000000003".into()),
-                RESP3::Bulk("VXK".into()),
+            Resp3::new_array(vec![
+                Resp3::new_blob("SET".into()),
+                Resp3::new_blob("key:000000000003".into()),
+                Resp3::new_blob("VXK".into()),
             ]),
-            RESP3::Array(vec![
-                RESP3::Bulk("SET".into()),
-                RESP3::Bulk("key:000000000025".into()),
-                RESP3::Bulk("VXK".into()),
+            Resp3::new_array(vec![
+                Resp3::new_blob("SET".into()),
+                Resp3::new_blob("key:000000000025".into()),
+                Resp3::new_blob("VXK".into()),
             ]),
         ];
 

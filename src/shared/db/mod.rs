@@ -10,7 +10,7 @@ pub use object_entry::ObjectEntryMut;
 
 use crate::{
     cmd::CmdResult,
-    frame::RESP3,
+    frame::Resp3,
     server::{BgTaskSender, RESERVE_MAX_ID},
     Id, Key,
 };
@@ -36,7 +36,7 @@ pub struct Db {
 
     // Key代表频道名，每个频道名映射着一组Sender，通过这些Sender可以发送消息给订阅频道
     // 的客户端
-    pub_sub: DashMap<Key, Vec<Sender<RESP3>>, RandomState>,
+    pub_sub: DashMap<Key, Vec<Sender<Resp3>>, RandomState>,
 
     // 记录已经连接的客户端，并且映射到该连接的`BgTaskSender`，使用该sender可以向该连接
     // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
@@ -94,7 +94,7 @@ impl Db {
             .add_may_update_event(sender);
     }
 
-    pub async fn add_track_event(&self, key: Key, sender: Sender<RESP3>) {
+    pub async fn add_track_event(&self, key: Key, sender: Sender<Resp3>) {
         let _ = self.get_object_entry_mut(key).await.add_track_event(sender);
     }
 
@@ -335,13 +335,13 @@ impl Db {
 impl Db {
     // 获取该频道的所有监听者
     #[instrument(level = "debug", skip(self))]
-    pub fn get_channel_all_listener(&self, topic: &[u8]) -> Option<Vec<Sender<RESP3>>> {
+    pub fn get_channel_all_listener(&self, topic: &[u8]) -> Option<Vec<Sender<Resp3>>> {
         self.pub_sub.get(topic).map(|listener| listener.clone())
     }
 
     // 向频道添加一个监听者
     #[instrument(level = "debug", skip(self, listener))]
-    pub fn add_channel_listener(&self, topic: Key, listener: Sender<RESP3>) {
+    pub fn add_channel_listener(&self, topic: Key, listener: Sender<Resp3>) {
         self.pub_sub.entry(topic).or_default().push(listener);
     }
 
@@ -350,8 +350,8 @@ impl Db {
     pub fn remove_channel_listener(
         &self,
         topic: &[u8],
-        listener: &Sender<RESP3>,
-    ) -> Option<Sender<RESP3>> {
+        listener: &Sender<Resp3>,
+    ) -> Option<Sender<Resp3>> {
         if let Some(mut pubs) = self.pub_sub.get_mut(topic) {
             // 如果找到匹配的listener，则移除
             if let Some(index) = pubs.iter().position(|l| l.same_channel(listener)) {

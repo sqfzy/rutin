@@ -2,7 +2,7 @@ use crate::server::Handler;
 use crate::{
     cmd::{error::Err, CmdError, CmdExecutor, CmdType, CmdUnparsed},
     connection::AsyncStream,
-    frame::RESP3,
+    frame::Resp3,
     shared::{db::ObjValueType, Shared},
     util::atoi,
     Id, Int, Key,
@@ -29,7 +29,7 @@ pub struct BLMove {
 impl CmdExecutor for BLMove {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let db = shared.db();
 
         let mut elem = None;
@@ -61,7 +61,7 @@ impl CmdExecutor for BLMove {
                     Where::Right => list.push_back(elem.clone()),
                 }
 
-                res = Some(RESP3::Bulk(elem));
+                res = Some(Resp3::new_blob(elem));
                 Ok(())
             })
             .await?;
@@ -117,7 +117,7 @@ pub struct BLPop {
 impl CmdExecutor for BLPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let db = shared.db();
 
         match first_round(&self.keys, shared).await {
@@ -181,7 +181,7 @@ pub struct LPos {
 impl CmdExecutor for LPos {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         // 找到一个匹配元素，则rank-1(或+1)，当rank为0时，则表明开始收入
         // 一共要收入count个，但最长只能找max_len个元素
         // 如果count == 1，返回Integer
@@ -211,7 +211,7 @@ impl CmdExecutor for LPos {
                             continue;
                         }
 
-                        res.push(RESP3::Integer(i as Int));
+                        res.push(Resp3::new_integer(i as Int));
                         if res.len() == count {
                             return Ok(());
                         }
@@ -230,7 +230,7 @@ impl CmdExecutor for LPos {
                             continue;
                         }
 
-                        res.push(RESP3::Integer(i as Int));
+                        res.push(Resp3::new_integer(i as Int));
                         if res.len() == count {
                             return Ok(());
                         }
@@ -243,11 +243,11 @@ impl CmdExecutor for LPos {
 
         let count = res.len();
         let res = if count == 0 {
-            RESP3::Null
+            Resp3::Null
         } else if count == 1 {
             res.pop().unwrap()
         } else {
-            RESP3::Array(res)
+            Resp3::new_array(res)
         };
 
         Ok(Some(res))
@@ -303,13 +303,13 @@ pub struct LLen {
 impl CmdExecutor for LLen {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut res = None;
         shared
             .db()
             .visit_object(&self.key, |obj| {
                 let list = obj.on_list()?;
-                res = Some(RESP3::Integer(list.len() as Int));
+                res = Some(Resp3::new_integer(list.len() as Int));
 
                 Ok(())
             })
@@ -343,7 +343,7 @@ pub struct LPop {
 impl CmdExecutor for LPop {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut res = None;
         shared
             .db()
@@ -352,24 +352,24 @@ impl CmdExecutor for LPop {
 
                 if self.count == 1 {
                     if let Some(value) = list.pop_front() {
-                        res = Some(RESP3::Bulk(value));
+                        res = Some(Resp3::new_blob(value));
                     } else {
-                        res = Some(RESP3::Null);
+                        res = Some(Resp3::Null);
                     }
                 } else {
                     let mut values = Vec::with_capacity(self.count as usize);
                     for _ in 0..self.count {
                         if let Some(value) = list.pop_front() {
-                            values.push(RESP3::Bulk(value));
+                            values.push(Resp3::new_blob(value));
                         } else {
                             break;
                         }
                     }
 
                     if values.is_empty() {
-                        res = Some(RESP3::Null);
+                        res = Some(Resp3::Null);
                     } else {
-                        res = Some(RESP3::Array(values));
+                        res = Some(Resp3::new_array(values));
                     }
                 }
 
@@ -411,7 +411,7 @@ pub struct LPush {
 impl CmdExecutor for LPush {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut len = 0;
         shared
             .db()
@@ -427,7 +427,7 @@ impl CmdExecutor for LPush {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(len as Int)))
+        Ok(Some(Resp3::new_integer(len as Int)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -459,7 +459,7 @@ impl CmdExecutor for NBLPop {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Resp3>, CmdError> {
         let Handler { shared, .. } = handler;
 
         match first_round(&self.keys, shared).await {
@@ -509,7 +509,7 @@ impl CmdExecutor for NBLPop {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         Ok(None)
     }
 
@@ -554,10 +554,10 @@ impl TryFrom<&[u8]> for Where {
     }
 }
 
-async fn first_round<S: AsRef<str>>(
+async fn first_round<S: AsRef<str> + PartialEq>(
     keys: &[Key],
     shared: &Shared,
-) -> Result<Option<RESP3<Bytes, S>>, CmdError> {
+) -> Result<Option<Resp3<Bytes, S>>, CmdError> {
     let mut res = None;
     // 先尝试一轮pop
     for key in keys.iter() {
@@ -567,9 +567,9 @@ async fn first_round<S: AsRef<str>>(
                 let list = obj.on_list_mut()?;
 
                 if let Some(value) = list.pop_front() {
-                    res = Some(RESP3::Array(vec![
-                        RESP3::Bulk(key.clone()),
-                        RESP3::Bulk(value),
+                    res = Some(Resp3::new_array(vec![
+                        Resp3::new_blob(key.clone()),
+                        Resp3::new_blob(value),
                     ]));
                 }
 
@@ -596,7 +596,7 @@ async fn pop_timeout_at(
     key_tx: Sender<Key>,
     key_rx: Receiver<Key>,
     deadline: Option<Instant>,
-) -> Result<RESP3, CmdError> {
+) -> Result<Resp3, CmdError> {
     let db = shared.db();
     let mut res = None;
 
@@ -611,9 +611,9 @@ async fn pop_timeout_at(
                             let list = obj.on_list_mut()?;
 
                             if let Some(value) = list.pop_front() {
-                                res = Some(RESP3::Array(vec![
-                                    RESP3::Bulk(key.clone()),
-                                    RESP3::Bulk(value),
+                                res = Some(Resp3::new_array(vec![
+                                    Resp3::new_blob(key.clone()),
+                                    Resp3::new_blob(value),
                                 ]));
                             }
 
@@ -635,7 +635,7 @@ async fn pop_timeout_at(
                     }
                 }
                 // 超时
-                Err(_) => break Ok(RESP3::Null),
+                Err(_) => break Ok(Resp3::Null),
                 _ => continue,
             }
         }
@@ -648,9 +648,9 @@ async fn pop_timeout_at(
                     let list = obj.on_list_mut()?;
 
                     if let Some(value) = list.pop_front() {
-                        res = Some(RESP3::Array(vec![
-                            RESP3::Bulk(key.clone()),
-                            RESP3::Bulk(value),
+                        res = Some(Resp3::new_array(vec![
+                            Resp3::new_blob(key.clone()),
+                            Resp3::new_blob(value),
                         ]));
                     }
 
@@ -694,7 +694,7 @@ mod cmd_list_tests {
 
         let lpush = LPush::parse(&mut CmdUnparsed::from(["list", "key1"].as_ref())).unwrap();
         assert_eq!(
-            Some(RESP3::Integer(1)),
+            Some(Resp3::new_integer(1)),
             lpush._execute(&shared).await.unwrap()
         );
 
@@ -702,14 +702,14 @@ mod cmd_list_tests {
             key: Key::from("list"),
         };
         assert_eq!(
-            Some(RESP3::Integer(1)),
+            Some(Resp3::new_integer(1)),
             llen._execute(&shared).await.unwrap()
         );
 
         let lpush =
             LPush::parse(&mut CmdUnparsed::from(["list", "key2", "key3"].as_ref())).unwrap();
         assert_eq!(
-            Some(RESP3::Integer(3)),
+            Some(Resp3::new_integer(3)),
             lpush._execute(&shared).await.unwrap()
         );
 
@@ -717,7 +717,7 @@ mod cmd_list_tests {
             key: Key::from("list"),
         };
         assert_eq!(
-            Some(RESP3::Integer(3)),
+            Some(Resp3::new_integer(3)),
             llen._execute(&shared).await.unwrap()
         );
     }
@@ -729,7 +729,7 @@ mod cmd_list_tests {
 
         let lpush = LPush::parse(&mut CmdUnparsed::from(["list", "key1"].as_ref())).unwrap();
         assert_eq!(
-            Some(RESP3::Integer(1)),
+            Some(Resp3::new_integer(1)),
             lpush._execute(&shared).await.unwrap()
         );
         // key1
@@ -737,25 +737,25 @@ mod cmd_list_tests {
         let lpush =
             LPush::parse(&mut CmdUnparsed::from(["list", "key2", "key3"].as_ref())).unwrap();
         assert_eq!(
-            Some(RESP3::Integer(3)),
+            Some(Resp3::new_integer(3)),
             lpush._execute(&shared).await.unwrap()
         );
         // key3 key2 key1
 
         let lpop = LPop::parse(&mut CmdUnparsed::from(["list"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Bulk("key3".into()),
+            Resp3::new_blob("key3".into()),
             lpop._execute(&shared).await.unwrap().unwrap()
         );
 
         let lpop = LPop::parse(&mut CmdUnparsed::from(["list", "2"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Array(vec![RESP3::Bulk("key2".into()), RESP3::Bulk("key1".into())]),
+            Resp3::new_array(vec![Resp3::new_blob("key2".into()), Resp3::new_blob("key1".into())]),
             lpop._execute(&shared).await.unwrap().unwrap()
         );
 
         let lpop = LPop::parse(&mut CmdUnparsed::from(["list"].as_ref())).unwrap();
-        assert_eq!(RESP3::Null, lpop._execute(&shared).await.unwrap().unwrap());
+        assert_eq!(Resp3::Null, lpop._execute(&shared).await.unwrap().unwrap());
     }
 
     #[tokio::test]
@@ -771,7 +771,7 @@ mod cmd_list_tests {
         ))
         .unwrap();
         assert_eq!(
-            Some(RESP3::Integer(3)),
+            Some(Resp3::new_integer(3)),
             lpush._execute(&handler.shared).await.unwrap()
         );
         // l1: key1c key1b key1a
@@ -781,21 +781,21 @@ mod cmd_list_tests {
         ))
         .unwrap();
         assert_eq!(
-            Some(RESP3::Integer(3)),
+            Some(Resp3::new_integer(3)),
             lpush._execute(&handler.shared).await.unwrap()
         );
         // l2: key2c key2b key2a
 
         let blpop = BLPop::parse(&mut CmdUnparsed::from(["l1", "l2", "1"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Array(vec![RESP3::Bulk("l1".into()), RESP3::Bulk("key1c".into())]),
+            Resp3::new_array(vec![Resp3::new_blob("l1".into()), Resp3::new_blob("key1c".into())]),
             blpop._execute(&handler.shared).await.unwrap().unwrap()
         );
         // l1: key1b key1a
 
         let blpop = BLPop::parse(&mut CmdUnparsed::from(["l2", "list1", "1"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Array(vec![RESP3::Bulk("l2".into()), RESP3::Bulk("key2c".into())]),
+            Resp3::new_array(vec![Resp3::new_blob("l2".into()), Resp3::new_blob("key2c".into())]),
             blpop._execute(&handler.shared).await.unwrap().unwrap()
         );
         // l2: key2b key2a
@@ -807,7 +807,7 @@ mod cmd_list_tests {
         tokio::spawn(async move {
             let blpop = BLPop::parse(&mut CmdUnparsed::from(["l3", "0"].as_ref())).unwrap();
             assert_eq!(
-                RESP3::Array(vec![RESP3::Bulk("l3".into()), RESP3::Bulk("key".into())]),
+                Resp3::new_array(vec![Resp3::new_blob("l3".into()), Resp3::new_blob("key".into())]),
                 blpop._execute(&handler2.shared).await.unwrap().unwrap()
             );
         });
@@ -815,7 +815,7 @@ mod cmd_list_tests {
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(&mut CmdUnparsed::from(["l3", "key"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Integer(1),
+            Resp3::new_integer(1),
             lpush._execute(&handler.shared).await.unwrap().unwrap()
         );
 
@@ -826,7 +826,7 @@ mod cmd_list_tests {
         tokio::spawn(async move {
             let blpop = BLPop::parse(&mut CmdUnparsed::from(["l4", "2"].as_ref())).unwrap();
             assert_eq!(
-                RESP3::Array(vec![RESP3::Bulk("l4".into()), RESP3::Bulk("key".into())]),
+                Resp3::new_array(vec![Resp3::new_blob("l4".into()), Resp3::new_blob("key".into())]),
                 blpop._execute(&handler3.shared).await.unwrap().unwrap()
             );
         });
@@ -834,7 +834,7 @@ mod cmd_list_tests {
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(&mut CmdUnparsed::from(["l4", "key"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Integer(1),
+            Resp3::new_integer(1),
             lpush._execute(&handler.shared).await.unwrap().unwrap()
         );
 
@@ -843,7 +843,7 @@ mod cmd_list_tests {
         /************************/
         let blpop = BLPop::parse(&mut CmdUnparsed::from(["null", "1"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Null,
+            Resp3::Null,
             blpop._execute(&handler.shared).await.unwrap().unwrap()
         );
     }
@@ -862,7 +862,7 @@ mod cmd_list_tests {
         ))
         .unwrap();
         assert_eq!(
-            Some(RESP3::Integer(3)),
+            Some(Resp3::new_integer(3)),
             lpush._execute(&handler.shared).await.unwrap()
         );
         // l1: key1c key1b key1a
@@ -872,7 +872,7 @@ mod cmd_list_tests {
         ))
         .unwrap();
         assert_eq!(
-            Some(RESP3::Integer(3)),
+            Some(Resp3::new_integer(3)),
             lpush._execute(&handler.shared).await.unwrap()
         );
         // l2: key2c key2b key2a
@@ -898,12 +898,12 @@ mod cmd_list_tests {
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(&mut CmdUnparsed::from(["list3", "key"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Integer(1),
+            Resp3::new_integer(1),
             lpush._execute(&handler.shared).await.unwrap().unwrap()
         );
 
         assert_eq!(
-            RESP3::Array(vec![RESP3::Bulk("list3".into()), RESP3::Bulk("key".into())]),
+            Resp3::new_array(vec![Resp3::new_blob("list3".into()), Resp3::new_blob("key".into())]),
             handler.bg_task_channel.recv_from_bg_task().await
         );
 
@@ -914,7 +914,7 @@ mod cmd_list_tests {
             NBLPop::parse(&mut CmdUnparsed::from(["whatever", "1", "0"].as_ref())).unwrap();
         nblpop.execute(&mut handler).await.unwrap();
         assert_eq!(
-            RESP3::Null,
+            Resp3::Null,
             handler.bg_task_channel.recv_from_bg_task().await
         );
 
@@ -939,12 +939,12 @@ mod cmd_list_tests {
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(&mut CmdUnparsed::from(["list3", "key"].as_ref())).unwrap();
         assert_eq!(
-            RESP3::Integer(1),
+            Resp3::new_integer(1),
             lpush._execute(&handler.shared).await.unwrap().unwrap()
         );
 
         assert_eq!(
-            RESP3::Array(vec![RESP3::Bulk("list3".into()), RESP3::Bulk("key".into())]),
+            Resp3::new_array(vec![Resp3::new_blob("list3".into()), Resp3::new_blob("key".into())]),
             handler.bg_task_channel.recv_from_bg_task().await
         );
     }
@@ -969,7 +969,7 @@ mod cmd_list_tests {
         let res = lpos._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
             res.try_array().unwrap().to_vec(),
-            vec![RESP3::Integer(2), RESP3::Integer(3), RESP3::Integer(4)]
+            vec![Resp3::new_integer(2), Resp3::new_integer(3), Resp3::new_integer(4)]
         );
 
         let lpos = LPos::parse(&mut CmdUnparsed::from(
@@ -979,7 +979,7 @@ mod cmd_list_tests {
         let res = lpos._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
             res.try_array().unwrap().to_vec(),
-            vec![RESP3::Integer(3), RESP3::Integer(4)]
+            vec![Resp3::new_integer(3), Resp3::new_integer(4)]
         );
 
         let lpos = LPos::parse(&mut CmdUnparsed::from(
@@ -989,7 +989,7 @@ mod cmd_list_tests {
         let res = lpos._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
             res.try_array().unwrap().to_vec(),
-            vec![RESP3::Integer(4), RESP3::Integer(3)]
+            vec![Resp3::new_integer(4), Resp3::new_integer(3)]
         );
     }
 }

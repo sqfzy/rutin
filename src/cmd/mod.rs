@@ -7,7 +7,7 @@ pub use error::*;
 
 use crate::{
     connection::AsyncStream,
-    frame::RESP3,
+    frame::Resp3,
     server::{Handler, ServerError},
     shared::Shared,
 };
@@ -23,7 +23,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
     async fn apply(
         mut args: CmdUnparsed,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Resp3>, CmdError> {
         let cmd = Self::parse(&mut args)?;
 
         let res = cmd.execute(handler).await?;
@@ -44,11 +44,11 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Resp3>, CmdError> {
         self._execute(&handler.shared).await
     }
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError>;
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError>;
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError>;
 }
@@ -62,9 +62,9 @@ pub enum CmdType {
 
 #[inline]
 pub async fn dispatch(
-    cmd_frame: RESP3,
+    cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
-) -> Result<Option<RESP3>, ServerError> {
+) -> Result<Option<Resp3>, ServerError> {
     match _dispatch(cmd_frame, handler).await {
         Ok(res) => Ok(res),
         Err(e) => {
@@ -78,9 +78,9 @@ pub async fn dispatch(
 #[inline]
 #[instrument(level = "debug", skip(handler), err, ret)]
 pub async fn _dispatch(
-    cmd_frame: RESP3,
+    cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
-) -> Result<Option<RESP3>, CmdError> {
+) -> Result<Option<Resp3>, CmdError> {
     let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
     let mut cmd_name = [0; 16];
     let len = cmd.get_uppercase(0, &mut cmd_name).ok_or(Err::Syntax)?;
@@ -172,7 +172,7 @@ pub async fn _dispatch(
 
 #[derive(Debug)]
 pub struct CmdUnparsed {
-    inner: Vec<RESP3>,
+    inner: Vec<Resp3>,
     start: usize,
     end: usize,
 }
@@ -190,7 +190,7 @@ impl CmdUnparsed {
 
     pub fn get_uppercase(&self, index: usize, buf: &mut [u8]) -> Option<usize> {
         match self.inner.get(self.start + index) {
-            Some(RESP3::Bulk(b)) => {
+            Some(Resp3::BlobString { inner: b, .. }) => {
                 buf[..b.len()].copy_from_slice(b);
                 buf.make_ascii_uppercase();
                 Some(b.len())
@@ -201,7 +201,7 @@ impl CmdUnparsed {
 
     pub fn next_back(&mut self) -> Option<Bytes> {
         match self.inner.get(self.end) {
-            Some(RESP3::Bulk(b)) => {
+            Some(Resp3::BlobString { inner: b, .. }) => {
                 self.end -= 1;
                 Some(b.clone())
             }
@@ -230,7 +230,7 @@ impl Iterator for CmdUnparsed {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         match self.inner.get(self.start) {
-            Some(RESP3::Bulk(b)) => {
+            Some(Resp3::BlobString { inner: b, .. }) => {
                 self.start += 1;
                 Some(b.clone())
             }
@@ -239,17 +239,17 @@ impl Iterator for CmdUnparsed {
     }
 }
 
-impl TryFrom<RESP3> for CmdUnparsed {
+impl TryFrom<Resp3> for CmdUnparsed {
     type Error = CmdError;
 
     #[inline]
-    fn try_from(value: RESP3) -> Result<Self, Self::Error> {
+    fn try_from(value: Resp3) -> Result<Self, Self::Error> {
         match value {
-            RESP3::Array(arr) => Ok(Self {
+            Resp3::Array { inner, .. } => Ok(Self {
                 start: 0,
-                end: arr.len() - 1,
+                end: inner.len() - 1,
                 // 不检查元素是否都为RESP3::Bulk，如果不是RESP3::Bulk，parse时会返回错误给客户端
-                inner: arr,
+                inner,
             }),
             _ => Err(Err::Other {
                 message: "not an array frame".into(),
@@ -263,7 +263,7 @@ impl From<&[&str]> for CmdUnparsed {
     fn from(val: &[&str]) -> Self {
         let inner: Vec<_> = val
             .iter()
-            .map(|s| RESP3::Bulk(Bytes::copy_from_slice(s.as_bytes())))
+            .map(|s| Resp3::new_blob(Bytes::copy_from_slice(s.as_bytes())))
             .collect();
         if inner.is_empty() {
             Self::default()
@@ -277,9 +277,9 @@ impl From<&[&str]> for CmdUnparsed {
     }
 }
 
-impl From<CmdUnparsed> for RESP3 {
+impl From<CmdUnparsed> for Resp3 {
     #[inline]
     fn from(val: CmdUnparsed) -> Self {
-        RESP3::Array(val.inner)
+        Resp3::new_array(val.inner)
     }
 }

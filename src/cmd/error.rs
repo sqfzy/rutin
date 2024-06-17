@@ -1,6 +1,6 @@
 pub type CmdResult<T> = Result<T, CmdError>;
 
-use crate::{frame::RESP3, server::ServerError, shared::db::DbError, Int};
+use crate::{frame::Resp3, server::ServerError, shared::db::DbError, Int};
 use bytestring::ByteString;
 use snafu::{Location, Snafu};
 
@@ -62,20 +62,20 @@ impl From<DbError> for CmdError {
     }
 }
 
-impl TryInto<RESP3> for CmdError {
+impl TryInto<Resp3> for CmdError {
     type Error = ServerError;
 
-    fn try_into(self) -> Result<RESP3, Self::Error> {
+    fn try_into(self) -> Result<Resp3, Self::Error> {
         let frame = match self {
             CmdError::ServerErr { source, loc } => {
                 return Err(format!("{}: {}", loc, source).into())
             }
             // 命令执行失败，向客户端返回错误码
-            CmdError::ErrorCode { code } => RESP3::Integer(code),
+            CmdError::ErrorCode { code } => Resp3::new_integer(code),
             // 命令执行失败，向客户端返回空值
-            CmdError::Null => RESP3::Null,
+            CmdError::Null => Resp3::Null,
             // 命令执行失败，向客户端返回错误信息
-            CmdError::Err { source } => RESP3::SimpleError(source.to_string().into()),
+            CmdError::Err { source } => Resp3::new_simple_error(source.to_string().into()),
         };
 
         Ok(frame)

@@ -16,7 +16,7 @@ use strum::{EnumDiscriminants, EnumProperty};
 use tracing::instrument;
 pub use zset::*;
 
-use crate::{frame::RESP3, server::ID, shared::db::DbError, Id, Key};
+use crate::{frame::Resp3, server::ID, shared::db::DbError, Id, Key};
 use tokio::{sync::Notify, time::Instant};
 
 use super::{
@@ -322,7 +322,7 @@ impl Object {
         self.events.inner.push(event);
     }
 
-    pub(super) fn add_track_event(&mut self, sender: Sender<RESP3>) {
+    pub(super) fn add_track_event(&mut self, sender: Sender<Resp3>) {
         let event = Event::Track(sender);
         self.set_flag(event.flag());
         self.events.inner.push(event);
@@ -438,7 +438,7 @@ impl Object {
         // }
 
         // TODO:
-        todo!()
+        // todo!()
     }
 }
 
@@ -507,7 +507,7 @@ pub enum Event {
         count: usize,
     },
 
-    Track(Sender<RESP3>),
+    Track(Sender<Resp3>),
 
     /// 触发该事件代表对象的值(不包括expire)可能被修改了
     MayUpdate(Sender<Bytes>),

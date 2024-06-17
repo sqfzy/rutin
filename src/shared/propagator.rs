@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use crate::{
     cmd::CmdUnparsed,
     connection::AsyncStream,
-    frame::RESP3,
+    frame::Resp3,
     server::{Handler, ServerError},
 };
 
@@ -48,7 +48,7 @@ impl Propagator {
         let existing_replicas = self.existing_replicas.load(Ordering::Relaxed);
 
         if existing_replicas != 0 || self.to_aof.is_some() {
-            RESP3::from(cmd).encode_buf(&mut handler.context.wcmd_buf);
+            Resp3::from(cmd).encode_buf(&mut handler.context.wcmd_buf);
         } else {
             // 不存在replica也没有开启aof则不进行propagate
             return;

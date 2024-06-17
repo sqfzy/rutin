@@ -7,7 +7,7 @@ use bytes::Bytes;
 
 use crate::{
     cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err},
-    frame::RESP3,
+    frame::Resp3,
     shared::{db::ObjValueType::Hash, Shared},
     Key,
 };
@@ -22,7 +22,7 @@ pub struct HDel {
 impl CmdExecutor for HDel {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut count = 0;
 
         shared
@@ -39,7 +39,7 @@ impl CmdExecutor for HDel {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(count)))
+        Ok(Some(Resp3::new_integer(count)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -65,7 +65,7 @@ pub struct HExists {
 impl CmdExecutor for HExists {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut exists = false;
 
         shared
@@ -78,7 +78,7 @@ impl CmdExecutor for HExists {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(if exists { 1 } else { 0 })))
+        Ok(Some(Resp3::new_integer(if exists { 1 } else { 0 })))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -104,7 +104,7 @@ pub struct HGet {
 impl CmdExecutor for HGet {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut value = None;
 
         shared
@@ -117,7 +117,7 @@ impl CmdExecutor for HGet {
             })
             .await?;
 
-        Ok(value.map(|b| RESP3::Bulk(b.clone())))
+        Ok(value.map(|b| Resp3::new_blob(b.clone())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -142,7 +142,7 @@ pub struct HSet {
 impl CmdExecutor for HSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut count = 0;
 
         shared
@@ -158,7 +158,7 @@ impl CmdExecutor for HSet {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(count)))
+        Ok(Some(Resp3::new_integer(count)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -196,19 +196,19 @@ mod cmd_hash_tests {
         .unwrap();
         assert_eq!(
             hset._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(2)
+            Resp3::new_integer(2)
         );
 
         let hdel = HDel::parse(&mut ["key", "field1", "field2"].as_ref().into()).unwrap();
         assert_eq!(
             hdel._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(2)
+            Resp3::new_integer(2)
         );
 
         let hdel = HDel::parse(&mut ["key", "field1", "field2"].as_ref().into()).unwrap();
         assert_eq!(
             hdel._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(0)
+            Resp3::new_integer(0)
         );
     }
 
@@ -225,19 +225,19 @@ mod cmd_hash_tests {
         .unwrap();
         assert_eq!(
             hset._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(2)
+            Resp3::new_integer(2)
         );
 
         let hexists = HExists::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
         assert_eq!(
             hexists._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(1)
+            Resp3::new_integer(1)
         );
 
         let hexists = HExists::parse(&mut ["key", "field3"].as_ref().into()).unwrap();
         assert_eq!(
             hexists._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(0)
+            Resp3::new_integer(0)
         );
     }
 
@@ -254,13 +254,13 @@ mod cmd_hash_tests {
         .unwrap();
         assert_eq!(
             hset._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(2)
+            Resp3::new_integer(2)
         );
 
         let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
         assert_eq!(
             hget._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Bulk("value1".into())
+            Resp3::new_blob("value1".into())
         );
 
         let hget = HGet::parse(&mut ["key", "field3"].as_ref().into()).unwrap();
@@ -280,19 +280,19 @@ mod cmd_hash_tests {
         .unwrap();
         assert_eq!(
             hset._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Integer(2)
+            Resp3::new_integer(2)
         );
 
         let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
         assert_eq!(
             hget._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Bulk("value1".into())
+            Resp3::new_blob("value1".into())
         );
 
         let hget = HGet::parse(&mut ["key", "field2"].as_ref().into()).unwrap();
         assert_eq!(
             hget._execute(&shared).await.unwrap().unwrap(),
-            RESP3::Bulk("value2".into())
+            Resp3::new_blob("value2".into())
         );
     }
 }

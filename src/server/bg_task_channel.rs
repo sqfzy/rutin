@@ -1,12 +1,12 @@
-use crate::frame::RESP3;
+use crate::frame::Resp3;
 use flume::{Receiver, Sender};
 
-pub type BgTaskSender = Sender<RESP3>;
+pub type BgTaskSender = Sender<Resp3>;
 
 #[derive(Debug, Clone)]
 pub struct BgTaskChannel {
     tx: BgTaskSender,
-    rx: Receiver<RESP3>,
+    rx: Receiver<Resp3>,
 }
 
 impl BgTaskChannel {
@@ -18,7 +18,7 @@ impl BgTaskChannel {
         &self.tx
     }
 
-    pub async fn recv_from_bg_task(&self) -> RESP3 {
+    pub async fn recv_from_bg_task(&self) -> Resp3 {
         self.rx.recv_async().await.unwrap()
     }
 }

@@ -357,7 +357,7 @@ impl ObjectEntryMut<'_> {
     /// 内存
     #[inline]
     #[instrument(level = "debug", skip(self))]
-    pub fn add_track_event(mut self, sender: Sender<RESP3>) -> Self {
+    pub fn add_track_event(mut self, sender: Sender<Resp3>) -> Self {
         match self.entry {
             Entry::Occupied(ref mut e) => {
                 let obj = e.get_mut();

@@ -3,7 +3,7 @@ use crate::{
         error::{CmdError, Err},
         CmdExecutor, CmdType, CmdUnparsed,
     },
-    frame::RESP3,
+    frame::Resp3,
     shared::{
         db::{ObjValueType, ObjectInner},
         Shared,
@@ -28,7 +28,7 @@ pub struct Append {
 impl CmdExecutor for Append {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut length = None;
 
         shared
@@ -37,7 +37,7 @@ impl CmdExecutor for Append {
                 let str = obj.on_str_mut()?;
                 str.append(self.value);
 
-                length = Some(RESP3::Integer(str.len() as Int));
+                length = Some(Resp3::new_integer(str.len() as Int));
                 Ok(())
             })
             .await?;
@@ -68,7 +68,7 @@ pub struct Decr {
 impl CmdExecutor for Decr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut new_i = 0;
         shared
             .db()
@@ -79,7 +79,7 @@ impl CmdExecutor for Decr {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(new_i)))
+        Ok(Some(Resp3::new_integer(new_i)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -105,7 +105,7 @@ pub struct DecrBy {
 impl CmdExecutor for DecrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut new_i = 0;
         shared
             .db()
@@ -116,7 +116,7 @@ impl CmdExecutor for DecrBy {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(new_i)))
+        Ok(Some(Resp3::new_integer(new_i)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -145,13 +145,13 @@ impl CmdExecutor for Get {
     const CMD_TYPE: crate::cmd::CmdType = CmdType::Read;
 
     #[inline]
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut res = None;
 
         shared
             .db()
             .visit_object(&self.key, |obj| {
-                res = Some(RESP3::Bulk(obj.on_str()?.to_bytes()));
+                res = Some(Resp3::new_blob(obj.on_str()?.to_bytes()));
                 Ok(())
             })
             .await?;
@@ -185,7 +185,7 @@ pub struct GetRange {
 impl CmdExecutor for GetRange {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut res = "".into();
 
         shared
@@ -199,7 +199,7 @@ impl CmdExecutor for GetRange {
             })
             .await?;
 
-        Ok(Some(RESP3::Bulk(res)))
+        Ok(Some(Resp3::new_blob(res)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -233,7 +233,7 @@ pub struct GetSet {
 impl CmdExecutor for GetSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut old = "".into();
 
         shared
@@ -245,7 +245,7 @@ impl CmdExecutor for GetSet {
             })
             .await?;
 
-        Ok(Some(RESP3::Bulk(old)))
+        Ok(Some(Resp3::new_blob(old)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -272,7 +272,7 @@ pub struct Incr {
 impl CmdExecutor for Incr {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut new_i = 0;
 
         shared
@@ -284,7 +284,7 @@ impl CmdExecutor for Incr {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(new_i)))
+        Ok(Some(Resp3::new_integer(new_i)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -311,7 +311,7 @@ pub struct IncrBy {
 impl CmdExecutor for IncrBy {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut new_i = 0;
         shared
             .db()
@@ -322,7 +322,7 @@ impl CmdExecutor for IncrBy {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(new_i)))
+        Ok(Some(Resp3::new_integer(new_i)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -350,7 +350,7 @@ pub struct MGet {
 impl CmdExecutor for MGet {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut res = Vec::with_capacity(self.keys.len());
         for key in self.keys.iter() {
             let mut str = "".into();
@@ -363,10 +363,10 @@ impl CmdExecutor for MGet {
                 })
                 .await?;
 
-            res.push(RESP3::Bulk(str));
+            res.push(Resp3::new_blob(str));
         }
 
-        Ok(Some(RESP3::Array(res)))
+        Ok(Some(Resp3::new_array(res)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -392,7 +392,7 @@ pub struct MSet {
 impl CmdExecutor for MSet {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         for (key, value) in self.pairs {
             shared
                 .db()
@@ -400,7 +400,7 @@ impl CmdExecutor for MSet {
                 .await;
         }
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -431,7 +431,7 @@ pub struct MSetNx {
 impl CmdExecutor for MSetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         for (key, _) in &self.pairs {
             if shared.db().contains_object(key).await {
                 return Err(0.into());
@@ -445,7 +445,7 @@ impl CmdExecutor for MSetNx {
                 .await;
         }
 
-        Ok(Some(RESP3::Integer(1)))
+        Ok(Some(Resp3::new_integer(1)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -490,7 +490,7 @@ impl CmdExecutor for Set {
     const CMD_TYPE: CmdType = CmdType::Write;
 
     #[inline]
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         // 1. 是否要求键存在？
         // 2. 满足命令对键的要求后，更新值
         // 3. 是否需要更新expire?
@@ -533,9 +533,9 @@ impl CmdExecutor for Set {
         let (_, old) = entry.insert_object(new_obj);
 
         if self.get {
-            Ok(Some(RESP3::Bulk(old.unwrap().on_str()?.to_bytes())))
+            Ok(Some(Resp3::new_blob(old.unwrap().on_str()?.to_bytes())))
         } else {
-            Ok(Some(RESP3::SimpleString("OK".into())))
+            Ok(Some(Resp3::new_simple_string("OK".into())))
         }
     }
 
@@ -672,7 +672,7 @@ pub struct SetEx {
 impl CmdExecutor for SetEx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         shared
             .db()
             .insert_object(
@@ -681,7 +681,7 @@ impl CmdExecutor for SetEx {
             )
             .await;
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -711,7 +711,7 @@ pub struct SetNx {
 impl CmdExecutor for SetNx {
     const CMD_TYPE: CmdType = CmdType::Write;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         if shared.db().contains_object(&self.key).await {
             return Err(0.into());
         }
@@ -721,7 +721,7 @@ impl CmdExecutor for SetNx {
             .insert_object(self.key, ObjectInner::new_str(self.value.into(), None))
             .await;
 
-        Ok(Some(RESP3::Integer(1)))
+        Ok(Some(Resp3::new_integer(1)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -748,7 +748,7 @@ pub struct StrLen {
 impl CmdExecutor for StrLen {
     const CMD_TYPE: CmdType = CmdType::Read;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let mut len = 0;
         shared
             .db()
@@ -758,7 +758,7 @@ impl CmdExecutor for StrLen {
             })
             .await?;
 
-        Ok(Some(RESP3::Integer(len as Int)))
+        Ok(Some(Resp3::new_integer(len as Int)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {

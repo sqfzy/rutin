@@ -3,7 +3,7 @@ use super::{BgTaskChannel, BgTaskSender, ServerError, CLIENT_ID_COUNT, ID};
 use crate::{
     cmd::dispatch,
     connection::{AsyncStream, Connection, FakeStream},
-    frame::RESP3,
+    frame::Resp3,
     shared::Shared,
     Id, Key,
 };
@@ -76,7 +76,7 @@ impl<S: AsyncStream> Handler<S> {
     }
 
     #[inline]
-    pub async fn dispatch(&mut self, cmd_frame: RESP3) -> Result<Option<RESP3>, ServerError> {
+    pub async fn dispatch(&mut self, cmd_frame: Resp3) -> Result<Option<Resp3>, ServerError> {
         ID.scope(self.context.client_id, dispatch(cmd_frame, self))
             .await
     }

@@ -1,6 +1,6 @@
 use crate::{
     cmd::{CmdError, ServerErrSnafu},
-    frame::RESP3,
+    frame::Resp3,
     server::{Handler, ServerError, ID},
     shared::Shared,
     Id, Key,
@@ -87,7 +87,7 @@ impl LuaScript {
                                 LuaValue::String(s) => {
                                     // PERF: 拷贝
                                     cmd_frame
-                                        .push(RESP3::Bulk(Bytes::copy_from_slice(s.as_bytes())))
+                                        .push(Resp3::new_blob(Bytes::copy_from_slice(s.as_bytes())))
                                 }
                                 _ => {
                                     return Err(LuaError::external(
@@ -96,7 +96,7 @@ impl LuaScript {
                                 }
                             }
                         }
-                        let cmd_frame = RESP3::Array(cmd_frame);
+                        let cmd_frame = Resp3::new_array(cmd_frame);
 
                         debug!("lua call: {:?}", cmd_frame);
 
@@ -106,7 +106,7 @@ impl LuaScript {
                             match handler.dispatch(cmd_frame).await {
                                 Ok(ei) => match ei {
                                     Some(res) => Ok(res.into_lua(lua)),
-                                    None => Ok(RESP3::<Bytes, ByteString>::Null.into_lua(lua)),
+                                    None => Ok(Resp3::<Bytes, ByteString>::Null.into_lua(lua)),
                                 },
                                 // 中断脚本，返回运行时错误
                                 Err(e) => Err(LuaError::external(format!("ERR {}", e))),
@@ -129,7 +129,7 @@ impl LuaScript {
                                 LuaValue::String(s) => {
                                     // PERF: 拷贝
                                     cmd_frame
-                                        .push(RESP3::Bulk(Bytes::copy_from_slice(s.as_bytes())))
+                                        .push(Resp3::new_blob(Bytes::copy_from_slice(s.as_bytes())))
                                 }
                                 _ => {
                                     return Err(LuaError::external(
@@ -138,7 +138,7 @@ impl LuaScript {
                                 }
                             }
                         }
-                        let cmd_frame = RESP3::Array(cmd_frame);
+                        let cmd_frame = Resp3::new_array(cmd_frame);
 
                         debug!("lua call: {:?}", cmd_frame);
 
@@ -146,10 +146,10 @@ impl LuaScript {
                             match handler.dispatch(cmd_frame).await {
                                 Ok(ei) => match ei {
                                     Some(res) => Ok(res.into_lua(lua)),
-                                    None => Ok(RESP3::<Bytes, ByteString>::Null.into_lua(lua)),
+                                    None => Ok(Resp3::<Bytes, ByteString>::Null.into_lua(lua)),
                                 },
                                 // 不返回运行时错误，而是返回一个表 { err: Lua String }
-                                Err(e) => Ok(RESP3::SimpleError(e.to_string()).into_lua(lua)),
+                                Err(e) => Ok(Resp3::new_simple_error(e.to_string()).into_lua(lua)),
                             }
                         })
                         .await
@@ -159,14 +159,15 @@ impl LuaScript {
 
                 // redis.status_reply
                 // 返回一张表, { ok: Lua String }
-                let status_reply = lua
-                    .create_function_mut(|lua, ok: String| RESP3::SimpleString(ok).into_lua(lua))?;
+                let status_reply = lua.create_function_mut(|lua, ok: String| {
+                    Resp3::new_simple_string(ok).into_lua(lua)
+                })?;
                 redis.set("status_reply", status_reply)?;
 
                 // redis.error_reply
                 // 返回一张表, { err: Lua String }
                 let error_reply = lua.create_function_mut(|lua, err: String| {
-                    RESP3::SimpleError(err).into_lua(lua)
+                    Resp3::new_simple_error(err).into_lua(lua)
                 })?;
                 redis.set("error_reply", error_reply)?;
 
@@ -246,7 +247,7 @@ impl LuaScript {
         chunk: Bytes,
         keys: Vec<Key>,
         argv: Vec<Bytes>,
-    ) -> Result<RESP3, ServerError> {
+    ) -> Result<Resp3, ServerError> {
         let script = shared.script().clone();
 
         let res = self
@@ -267,16 +268,16 @@ impl LuaScript {
                 // 传入KEYS和ARGV
                 let lua_keys = global.get::<_, LuaTable>("KEYS")?;
                 for (i, key) in keys.into_iter().enumerate() {
-                    lua_keys.set(i + 1, RESP3::<bytes::Bytes, String>::Bulk(key))?;
+                    lua_keys.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob(key))?;
                 }
 
                 let lua_argv = global.get::<_, LuaTable>("ARGV")?;
                 for (i, arg) in argv.into_iter().enumerate() {
-                    lua_argv.set(i + 1, RESP3::<bytes::Bytes, String>::Bulk(arg))?;
+                    lua_argv.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob(arg))?;
                 }
 
                 // 执行脚本，若脚本有错误则中断脚本
-                let res: RESP3 = lua.load(chunk.as_ref()).eval_async().await?;
+                let res: Resp3 = lua.load(chunk.as_ref()).eval_async().await?;
 
                 // 脚本执行完毕，唤醒一个等待的任务
                 for intention_lock in intention_locks {
@@ -288,7 +289,7 @@ impl LuaScript {
                 lua_argv.clear()?;
                 lua.gc_collect()?;
 
-                Ok::<RESP3, anyhow::Error>(res)
+                Ok::<Resp3, anyhow::Error>(res)
             })
             .await;
 
@@ -303,7 +304,7 @@ impl LuaScript {
         script_name: Bytes,
         keys: Vec<Key>,
         argv: Vec<Bytes>,
-    ) -> Result<RESP3, CmdError> {
+    ) -> Result<Resp3, CmdError> {
         let chunk = match self.lua_scripts.get(&script_name) {
             Some(script) => script.clone(),
             None => return Err("script not found".into()),
@@ -390,7 +391,7 @@ async fn lua_tests() {
             )
             .await
             .unwrap();
-        assert_eq!(res, RESP3::SimpleString("PONG".into()));
+        assert_eq!(res, Resp3::new_simple_string("PONG".into()));
 
         let res = lua_script
             .eval(
@@ -401,7 +402,7 @@ async fn lua_tests() {
             )
             .await
             .unwrap();
-        assert_eq!(res, RESP3::SimpleString("OK".into()),);
+        assert_eq!(res, Resp3::new_simple_string("OK".into()),);
 
         let res = lua_script
             .eval(
@@ -412,7 +413,7 @@ async fn lua_tests() {
             )
             .await
             .unwrap();
-        assert_eq!(res, RESP3::SimpleString("value".into()));
+        assert_eq!(res, Resp3::new_blob("value".into()));
 
         let res = lua_script
             .eval(
@@ -425,7 +426,7 @@ async fn lua_tests() {
             .unwrap();
         assert_eq!(
             res,
-            RESP3::SimpleError("ERR My very special table error".into()),
+            Resp3::new_simple_error("ERR My very special table error".into()),
         );
 
         let script = r#"return redis.call("ping")"#;
@@ -440,7 +441,7 @@ async fn lua_tests() {
             .eval_name(shared.clone(), "f1".into(), vec![], vec![])
             .await
             .unwrap();
-        assert_eq!(res, RESP3::SimpleString("PONG".into()));
+        assert_eq!(res, Resp3::new_simple_string("PONG".into()));
 
         // 删除脚本
         lua_script.remove_script("f1".into()).unwrap();

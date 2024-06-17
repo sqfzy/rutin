@@ -1,6 +1,6 @@
 use crate::{
     cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err, ServerErrSnafu},
-    frame::RESP3,
+    frame::Resp3,
     shared::Shared,
     util::atoi,
 };
@@ -17,7 +17,7 @@ pub struct Eval {
 impl CmdExecutor for Eval {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let res = shared
             .script()
             .lua_script
@@ -54,7 +54,7 @@ pub struct EvalName {
 impl CmdExecutor for EvalName {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let res = shared
             .script()
             .lua_script
@@ -88,17 +88,17 @@ pub struct ScriptExists {
 impl CmdExecutor for ScriptExists {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
-        let res = self
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+        let res: Vec<_> = self
             .names
             .iter()
             .map(|name| {
                 let res = shared.script().lua_script.contain(name);
-                RESP3::Boolean(res)
+                Resp3::<Bytes, bytestring::ByteString>::new_boolean(res)
             })
             .collect();
 
-        Ok(Some(RESP3::Array(res)))
+        Ok(Some(Resp3::new_array(res)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -118,10 +118,10 @@ pub struct ScriptFlush {}
 impl CmdExecutor for ScriptFlush {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         shared.script().lua_script.flush();
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -142,13 +142,13 @@ pub struct ScriptRegister {
 impl CmdExecutor for ScriptRegister {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         shared
             .script()
             .lua_script
             .register_script(self.name, self.script)?;
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -173,7 +173,7 @@ mod cmd_script_tests {
 
         let eval = Eval::parse(&mut ["return 1", "0"].as_ref().into()).unwrap();
         let res = eval._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, RESP3::Integer(1));
+        assert_eq!(res, Resp3::new_integer(1));
 
         let eval = Eval::parse(
             &mut ["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"]
@@ -182,7 +182,7 @@ mod cmd_script_tests {
         )
         .unwrap();
         let res = eval._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, RESP3::SimpleString("OK".into()));
+        assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let eval = Eval::parse(
             &mut ["return redis.call('get', KEYS[1])", "1", "key"]
@@ -191,7 +191,7 @@ mod cmd_script_tests {
         )
         .unwrap();
         let res = eval._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, RESP3::Bulk("value".into()));
+        assert_eq!(res, Resp3::new_blob("value".into()));
     }
 
     #[tokio::test]
@@ -205,26 +205,26 @@ mod cmd_script_tests {
         )
         .unwrap();
         let res = script_register._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, RESP3::SimpleString("OK".into()));
+        assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let script_exists = ScriptExists::parse(&mut ["test", "nothing"].as_ref().into()).unwrap();
         let res = script_exists._execute(&shared).await.unwrap().unwrap();
         assert_eq!(
             res,
-            RESP3::Array(vec![RESP3::Boolean(true), RESP3::Boolean(false)])
+            Resp3::new_array(vec![Resp3::new_boolean(true), Resp3::new_boolean(false)])
         );
 
         let eval_name =
             EvalName::parse(&mut ["test", "1", "key", "value"].as_ref().into()).unwrap();
         let res = eval_name._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, RESP3::SimpleString("OK".into()));
+        assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let script_flush = ScriptFlush::parse(&mut [].as_ref().into()).unwrap();
         let res = script_flush._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, RESP3::SimpleString("OK".into()));
+        assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let script_exists = ScriptExists::parse(&mut ["test"].as_ref().into()).unwrap();
         let res = script_exists._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, RESP3::Array(vec![RESP3::Boolean(false)]));
+        assert_eq!(res, Resp3::new_array(vec![Resp3::new_boolean(false)]));
     }
 }

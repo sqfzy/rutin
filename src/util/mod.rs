@@ -1,6 +1,6 @@
 mod test;
 
-use std::time::SystemTime;
+use std::{num::ParseFloatError, time::SystemTime};
 
 pub use test::*;
 use tokio::time::Instant;
@@ -43,7 +43,7 @@ pub async fn fake_server() {
 #[cfg(feature = "fake_client")]
 #[allow(dead_code)]
 pub async fn fake_client() {
-    use crate::frame::RESP3;
+    use crate::frame::Resp3;
     use bytes::BytesMut;
     use clap::Parser;
     use either::Either::Right;
@@ -92,11 +92,11 @@ pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, &str> {
     atoi::atoi(text).ok_or("failed to parse integer")
 }
 
-pub fn atof(text: &[u8]) -> Result<f64, &str> {
+pub fn atof(text: &[u8]) -> Result<f64, String> {
     std::str::from_utf8(text)
-        .map_err(|_| "failed to parse fraction")?
+        .map_err(|e| e.to_string())?
         .parse()
-        .map_err(|_| "failed to parse fraction")
+        .map_err(|e: ParseFloatError| e.to_string())
 }
 
 pub fn upper_case(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {

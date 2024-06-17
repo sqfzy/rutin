@@ -4,7 +4,7 @@ use crate::{
         CmdExecutor, CmdType, CmdUnparsed,
     },
     connection::AsyncStream,
-    frame::RESP3,
+    frame::Resp3,
     server::Handler,
     shared::Shared,
     Int, Key,
@@ -26,7 +26,7 @@ pub struct Publish {
 impl CmdExecutor for Publish {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         // 获取正在监听的订阅者
         let listeners = shared
             .db()
@@ -37,10 +37,10 @@ impl CmdExecutor for Publish {
         // 理论上一定会发送成功，因为Db中保存的发布者与订阅者是一一对应的
         for listener in listeners {
             let res = listener
-                .send_async(RESP3::Array(vec![
-                    RESP3::Bulk("message".into()),
-                    RESP3::Bulk(self.topic.clone()),
-                    RESP3::Bulk(self.msg.clone()),
+                .send_async(Resp3::new_array(vec![
+                    Resp3::new_blob("message".into()),
+                    Resp3::new_blob(self.topic.clone()),
+                    Resp3::new_blob(self.msg.clone()),
                 ]))
                 .await;
 
@@ -52,7 +52,7 @@ impl CmdExecutor for Publish {
             }
         }
 
-        Ok(Some(RESP3::Integer(count)))
+        Ok(Some(Resp3::new_integer(count)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -78,7 +78,7 @@ impl CmdExecutor for Subscribe {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Resp3>, CmdError> {
         use snafu::Location;
 
         let Handler {
@@ -106,10 +106,10 @@ impl CmdExecutor for Subscribe {
                     .add_channel_listener(topic.clone(), bg_task_channel.new_sender());
             }
 
-            conn.write_frame::<Bytes, String>(&RESP3::Array(vec![
-                RESP3::Bulk("subscribe".into()),
-                RESP3::Bulk(topic),
-                RESP3::Integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
+            conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
+                Resp3::new_blob("subscribe".into()),
+                Resp3::new_blob(topic),
+                Resp3::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await
             .map_err(|e| CmdError::ServerErr {
@@ -121,7 +121,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         Ok(None)
     }
 
@@ -152,7 +152,7 @@ impl CmdExecutor for Unsubscribe {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Resp3>, CmdError> {
         use snafu::Location;
 
         let Handler {
@@ -167,10 +167,10 @@ impl CmdExecutor for Unsubscribe {
             sub
         } else {
             for topic in self.topics {
-                conn.write_frame::<Bytes, String>(&RESP3::Array(vec![
-                    RESP3::Bulk("unsubscribe".into()),
-                    RESP3::Bulk(topic),
-                    RESP3::Integer(0),
+                conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
+                    Resp3::new_blob("unsubscribe".into()),
+                    Resp3::new_blob(topic),
+                    Resp3::new_integer(0),
                 ]))
                 .await
                 .map_err(|e| CmdError::ServerErr {
@@ -190,10 +190,10 @@ impl CmdExecutor for Unsubscribe {
                     .remove_channel_listener(&topic, bg_task_channel.get_sender());
             }
 
-            conn.write_frame::<Bytes, String>(&RESP3::Array(vec![
-                RESP3::Bulk("unsubscribe".into()),
-                RESP3::Bulk(topic),
-                RESP3::Integer(subscribed_channels.len() as Int),
+            conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
+                Resp3::new_blob("unsubscribe".into()),
+                Resp3::new_blob(topic),
+                Resp3::new_integer(subscribed_channels.len() as Int),
             ]))
             .await
             .map_err(|e| CmdError::ServerErr {
@@ -205,7 +205,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         Ok(None)
     }
 
@@ -286,9 +286,9 @@ mod cmd_pub_sub_tests {
             .try_array()
             .unwrap()
             .to_vec();
-        matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");
-        matches!(msg.get(1).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"channel1");
-        matches!(msg.get(2).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"hello");
+        assert_eq!(msg.first().unwrap(), &Resp3::new_blob("message".into()));
+        assert_eq!(msg.get(1).unwrap(), &Resp3::new_blob("channel1".into()));
+        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob("hello".into()));
 
         // 向channel2发布消息
         let publish =
@@ -309,9 +309,9 @@ mod cmd_pub_sub_tests {
             .try_array()
             .unwrap()
             .to_vec();
-        matches!(msg.first().unwrap(), RESP3::Bulk(x) if x.as_ref() == b"message");
-        matches!(msg.get(1).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"channel2");
-        matches!(msg.get(2).unwrap(), RESP3::Bulk(x) if x.as_ref() == b"world");
+        assert_eq!(msg.first().unwrap(), &Resp3::new_blob("message".into()));
+        assert_eq!(msg.get(1).unwrap(), &Resp3::new_blob("channel2".into()));
+        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob("world".into()));
 
         // 尝试向未订阅的频道发布消息
         let publish = Publish::parse(&mut CmdUnparsed::from(

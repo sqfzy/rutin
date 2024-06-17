@@ -4,7 +4,7 @@ use crate::{
         CmdExecutor, CmdType, CmdUnparsed,
     },
     connection::AsyncStream,
-    frame::RESP3,
+    frame::Resp3,
     persist::rdb::RDB,
     server::Handler,
     shared::Shared,
@@ -45,13 +45,13 @@ pub struct Ping {
 impl CmdExecutor for Ping {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         let res = match self.msg {
-            Some(msg) => RESP3::SimpleString(
+            Some(msg) => Resp3::new_simple_string(
                 msg.try_into()
                     .map_err(|_| CmdError::from("message is not valid utf8"))?,
             ),
-            None => RESP3::SimpleString("PONG".into()),
+            None => Resp3::new_simple_string("PONG".into()),
         };
 
         Ok(Some(res))
@@ -77,8 +77,8 @@ pub struct Echo {
 impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
-        Ok(Some(RESP3::Bulk(self.msg)))
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+        Ok(Some(Resp3::new_blob(self.msg)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -202,7 +202,7 @@ impl CmdExecutor for BgSave {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Resp3>, CmdError> {
         let rdb_conf = &handler.shared.conf().rdb;
         let shared = &handler.shared;
 
@@ -215,12 +215,12 @@ impl CmdExecutor for BgSave {
             }
         });
 
-        Ok(Some(RESP3::SimpleString(
+        Ok(Some(Resp3::new_simple_string(
             "Background saving started".into(),
         )))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         Ok(None)
     }
 
@@ -305,11 +305,11 @@ impl CmdExecutor for ClientTracking {
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<RESP3>, CmdError> {
+    ) -> Result<Option<Resp3>, CmdError> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
-            return Ok(Some(RESP3::SimpleString("OK".into())));
+            return Ok(Some(Resp3::new_simple_string("OK".into())));
         }
 
         if let Some(redirect) = self.redirect {
@@ -323,10 +323,10 @@ impl CmdExecutor for ClientTracking {
             handler.context.client_track = Some(handler.bg_task_channel.new_sender());
         }
 
-        Ok(Some(RESP3::SimpleString("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<RESP3>, CmdError> {
+    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
         Ok(None)
     }
 
