@@ -72,11 +72,11 @@ impl From<Vec<(f64, Bytes)>> for ZSet {
     }
 }
 
-impl From<Vec<(f64, &'static str)>> for ZSet {
-    fn from(value: Vec<(f64, &'static str)>) -> Self {
-        let mut sl = OrderedSkipList::with_capacity(value.len());
+impl<B: Into<Bytes>, const N: usize> From<[(f64, B); N]> for ZSet {
+    fn from(value: [(f64, B); N]) -> Self {
+        let mut sl = OrderedSkipList::with_capacity(N);
         for (score, member) in value {
-            sl.insert(ZSetElem(score, Bytes::from(member)));
+            sl.insert(ZSetElem(score, member.into()));
         }
         ZSet::SkipList(sl)
     }
@@ -105,8 +105,8 @@ impl PartialOrd for ZSetElem {
     }
 }
 
-impl From<(f64, Bytes)> for ZSetElem {
-    fn from((score, member): (f64, Bytes)) -> Self {
-        Self(score, member)
+impl<B: Into<Bytes>> From<(f64, B)> for ZSetElem {
+    fn from((score, member): (f64, B)) -> Self {
+        Self(score, member.into())
     }
 }

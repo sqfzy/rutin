@@ -857,14 +857,10 @@ mod rdb_test {
         let shared = Shared::default();
         let db = shared.db();
 
-        let str1 = ObjectInner::new_str("hello".into(), None);
-        let str2 = ObjectInner::new_str("10".into(), None);
-        let str3 =
-            ObjectInner::new_str("200".into(), Some(Instant::now() + Duration::from_secs(10)));
-        let str4 = ObjectInner::new_str(
-            "hello".into(),
-            Some(Instant::now() + Duration::from_secs(10)),
-        );
+        let str1 = ObjectInner::new_str("hello", None);
+        let str2 = ObjectInner::new_str("10", None);
+        let str3 = ObjectInner::new_str("200", Some(Instant::now() + Duration::from_secs(10)));
+        let str4 = ObjectInner::new_str("hello", Some(Instant::now() + Duration::from_secs(10)));
 
         db.insert_object("str1".into(), str1.clone()).await;
         db.insert_object("str2".into(), str2.clone()).await;
@@ -872,13 +868,13 @@ mod rdb_test {
         db.insert_object("str4".into(), str4.clone()).await;
 
         let l1 = ObjectInner::new_list(List::default(), None);
-        let l2 = ObjectInner::new_list(vec!["v1", "v2"].into(), None);
+        let l2 = ObjectInner::new_list(["v1".into(), "v2".into()], None);
         let l3 = ObjectInner::new_list(
             List::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
         let l4 = ObjectInner::new_list(
-            vec!["v1", "v2"].into(),
+            vec!["v1".into(), "v2".into()],
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
@@ -888,13 +884,13 @@ mod rdb_test {
         db.insert_object("l4".into(), l4.clone()).await;
 
         let s1 = ObjectInner::new_set(Set::default(), None);
-        let s2 = ObjectInner::new_set(vec!["v1", "v2"].into(), None);
+        let s2 = ObjectInner::new_set(["v1".into(), "v2".into()], None);
         let s3 = ObjectInner::new_set(
             Set::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
         let s4 = ObjectInner::new_set(
-            vec!["v1", "v2"].into(),
+            ["v1".into(), "v2".into()],
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
@@ -904,13 +900,16 @@ mod rdb_test {
         db.insert_object("s4".into(), s4.clone()).await;
 
         let h1 = ObjectInner::new_hash(Hash::default(), None);
-        let h2 = ObjectInner::new_hash(vec![("f1", "v1"), ("f2", "v2")].into(), None);
+        let h2 = ObjectInner::new_hash(
+            [("f1".into(), "v1".into()), ("f2".into(), "v2".into())],
+            None,
+        );
         let h3 = ObjectInner::new_hash(
             Hash::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
         let h4 = ObjectInner::new_hash(
-            vec![("f1", "v1"), ("f2", "v2")].into(),
+            [("f1".into(), "v1".into()), ("f2".into(), "v2".into())],
             Some(Instant::now() + Duration::from_secs(10)),
         );
 
@@ -920,13 +919,13 @@ mod rdb_test {
         db.insert_object("h4".into(), h4.clone()).await;
 
         let zs1 = ObjectInner::new_zset(ZSet::default(), None);
-        let zs2 = ObjectInner::new_zset(vec![(1_f64, "v1"), (2_f64, "v2")].into(), None);
+        let zs2 = ObjectInner::new_zset([(1_f64, "v1"), (2_f64, "v2")], None);
         let zs3 = ObjectInner::new_zset(
             ZSet::default(),
             Some(Instant::now() + Duration::from_secs(10)),
         );
         let zs4 = ObjectInner::new_zset(
-            vec![(1_f64, "v1"), (2_f64, "v2")].into(),
+            [(1_f64, "v1"), (2_f64, "v2")],
             Some(Instant::now() + Duration::from_secs(10)),
         );
 

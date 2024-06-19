@@ -58,28 +58,8 @@ impl Default for Hash {
     }
 }
 
-impl From<AHashMap<Key, Bytes>> for Hash {
-    fn from(map: AHashMap<Key, Bytes>) -> Self {
-        Hash::HashMap(map)
-    }
-}
-
-impl From<Vec<(Key, Bytes)>> for Hash {
-    fn from(vec: Vec<(Key, Bytes)>) -> Self {
-        let mut map = AHashMap::with_capacity(vec.len());
-        for (field, value) in vec {
-            map.insert(field, value);
-        }
-        Hash::HashMap(map)
-    }
-}
-
-impl From<Vec<(&'static str, &'static str)>> for Hash {
-    fn from(value: Vec<(&'static str, &'static str)>) -> Self {
-        let mut map = AHashMap::with_capacity(value.len());
-        for (field, value) in value {
-            map.insert(field.into(), value.into());
-        }
-        Hash::HashMap(map)
+impl<M: Into<AHashMap<Key, Bytes>>> From<M> for Hash {
+    fn from(map: M) -> Self {
+        Hash::HashMap(map.into())
     }
 }

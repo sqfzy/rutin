@@ -44,24 +44,14 @@ impl Set {
     }
 }
 
-impl From<AHashSet<Bytes>> for Set {
-    fn from(set: AHashSet<Bytes>) -> Self {
-        Set::HashSet(set)
-    }
-}
-
-impl From<Vec<&'static str>> for Set {
-    fn from(value: Vec<&'static str>) -> Self {
-        let mut set = AHashSet::with_capacity(value.len());
-        for v in value {
-            set.insert(Bytes::from(v));
-        }
-        Set::HashSet(set)
-    }
-}
-
 impl Default for Set {
     fn default() -> Self {
         Self::HashSet(AHashSet::default())
+    }
+}
+
+impl<S: Into<AHashSet<Bytes>>> From<S> for Set {
+    fn from(set: S) -> Self {
+        Set::HashSet(set.into())
     }
 }

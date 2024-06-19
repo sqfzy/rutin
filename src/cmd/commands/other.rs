@@ -78,7 +78,7 @@ impl CmdExecutor for Echo {
     const CMD_TYPE: CmdType = CmdType::Other;
 
     async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        Ok(Some(Resp3::new_blob(self.msg)))
+        Ok(Some(Resp3::new_blob_string(self.msg)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {

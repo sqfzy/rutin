@@ -117,7 +117,7 @@ impl CmdExecutor for HGet {
             })
             .await?;
 
-        Ok(value.map(|b| Resp3::new_blob(b.clone())))
+        Ok(value.map(|b| Resp3::new_blob_string(b.clone())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -260,7 +260,7 @@ mod cmd_hash_tests {
         let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
         assert_eq!(
             hget._execute(&shared).await.unwrap().unwrap(),
-            Resp3::new_blob("value1".into())
+            Resp3::new_blob_string("value1".into())
         );
 
         let hget = HGet::parse(&mut ["key", "field3"].as_ref().into()).unwrap();
@@ -286,13 +286,13 @@ mod cmd_hash_tests {
         let hget = HGet::parse(&mut ["key", "field1"].as_ref().into()).unwrap();
         assert_eq!(
             hget._execute(&shared).await.unwrap().unwrap(),
-            Resp3::new_blob("value1".into())
+            Resp3::new_blob_string("value1".into())
         );
 
         let hget = HGet::parse(&mut ["key", "field2"].as_ref().into()).unwrap();
         assert_eq!(
             hget._execute(&shared).await.unwrap().unwrap(),
-            Resp3::new_blob("value2".into())
+            Resp3::new_blob_string("value2".into())
         );
     }
 }

@@ -2,6 +2,8 @@ pub mod lua;
 
 pub use lua::*;
 
+// TODO: 支持WASM脚本
+
 #[derive(Debug, Default)]
 pub struct Script {
     pub lua_script: LuaScript,

@@ -191,7 +191,7 @@ mod cmd_script_tests {
         )
         .unwrap();
         let res = eval._execute(&shared).await.unwrap().unwrap();
-        assert_eq!(res, Resp3::new_blob("value".into()));
+        assert_eq!(res, Resp3::new_blob_string("value".into()));
     }
 
     #[tokio::test]

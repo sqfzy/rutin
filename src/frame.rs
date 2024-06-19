@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::{
     util::{self, atof},
     Int,
@@ -7,7 +9,8 @@ use bytes::{Buf, Bytes, BytesMut};
 use bytestring::ByteString;
 use mlua::{prelude::*, Value};
 use num_bigint::BigInt;
-use std::{hash::Hash, io, iter::Iterator, ptr::slice_from_raw_parts};
+use snafu::Snafu;
+use std::{hash::Hash, io, iter::Iterator, ops::Range, ptr::slice_from_raw_parts};
 use strum::{EnumDiscriminants, IntoStaticStr};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::{
@@ -16,28 +19,19 @@ use tokio_util::{
 };
 use tracing::instrument;
 
-// type FrameResult<T> = Result<T, FrameError>;
+pub type FrameResult<T> = Result<T, FrameError>;
 
-// #[derive(Snafu, Debug)]
-// pub enum FrameError {
-//     #[snafu(transparent)]
-//     Io { source: tokio::io::Error },
-//
-//     #[snafu(display("{:?} incomplete", frame_type))]
-//     Incomplete { frame_type: Resp3Type },
-//
-//     #[snafu(display("{:?} failed to parse length", frame_type))]
-//     InvalidLength { frame_type: Resp3Type },
-//
-//     #[snafu(display("{:?} failed to parse integer", frame_type))]
-//     InvalidInteger { frame_type: Resp3Type },
-//
-//     #[snafu(display("{:?} failed to parse string", frame_type))]
-//     InvalidString { frame_type: Resp3Type },
-//
-//     #[snafu(display(""))]
-//     ParseError { source: FromUtf8Error },
-// }
+#[derive(Snafu, Debug)]
+pub enum FrameError {
+    #[snafu(transparent)]
+    Io { source: tokio::io::Error },
+
+    #[snafu(display("incomplete frame"))]
+    Incomplete,
+
+    #[snafu(display("invalid format: {}", msg))]
+    InvalidFormat { msg: String },
+}
 
 const CRLF: &[u8] = b"\r\n";
 
@@ -55,8 +49,8 @@ const VERBATIM_STRING_PREFIX: u8 = b'=';
 const MAP_PREFIX: u8 = b'%';
 const SET_PREFIX: u8 = b'~';
 const PUSH_PREFIX: u8 = b'>';
-const CHUNKED_STRING_PREFIX: u8 = b';';
-const STREAMED_LENGTH: u8 = b'?';
+const CHUNKED_STRING_PREFIX: u8 = b'?';
+const CHUNKED_STRING_LENGTH_PREFIX: u8 = b';';
 
 pub type Attributes<B, S> = AHashMap<Resp3<B, S>, Resp3<B, S>>;
 
@@ -189,7 +183,7 @@ where
         }
     }
 
-    pub fn new_blob(blob: B) -> Self {
+    pub fn new_blob_string(blob: B) -> Self {
         Resp3::BlobString {
             inner: blob,
             attributes: None,
@@ -721,361 +715,298 @@ impl Resp3<BytesMut, ByteString> {
     pub async fn decode_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> io::Result<Option<Resp3>> {
+    ) -> FrameResult<Option<Resp3>> {
         if src.is_empty() && io_read.read_buf(src).await? == 0 {
             return Ok(None);
         }
 
         debug_assert!(!src.is_empty());
 
-        let res = match src.get_u8() {
-            SIMPLE_STRING_PREFIX => Resp3::SimpleString {
-                inner: Resp3::decode_string_async(io_read, src).await?,
-                attributes: None,
-            },
-            ERROR_PREFIX => Resp3::SimpleError {
-                inner: Resp3::decode_string_async(io_read, src).await?,
-                attributes: None,
-            },
-            INTEGER_PREFIX => Resp3::Integer {
-                inner: Resp3::decode_decimal_async(io_read, src).await?,
-                attributes: None,
-            },
-            BLOB_STRING_PREFIX => {
-                let line = Resp3::decode_line_async(io_read, src).await?;
+        #[inline]
+        async fn _decode_async<R: AsyncRead + Unpin + Send>(
+            io_read: &mut R,
+            src: &mut BytesMut,
+        ) -> FrameResult<Resp3> {
+            let res = match src.get_u8() {
+                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                ERROR_PREFIX => Resp3::SimpleError {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                INTEGER_PREFIX => Resp3::Integer {
+                    inner: Resp3::decode_decimal_async(io_read, src).await?,
+                    attributes: None,
+                },
+                BLOB_STRING_PREFIX => {
+                    let line = Resp3::decode_line_async(io_read, src).await?;
 
-                if line.len() == 1 && line[0] == STREAMED_LENGTH {
-                    let mut chunks = Vec::new();
-                    loop {
-                        let mut line = Resp3::decode_line_async(io_read, src).await?;
+                    if Resp3::get(&line, 0..1)?[0] == CHUNKED_STRING_PREFIX {
+                        let mut chunks = Vec::new();
+                        loop {
+                            let mut line = Resp3::decode_line_async(io_read, src).await?;
 
-                        if line.is_empty() {
-                            return Err(io::Error::new(
-                                io::ErrorKind::UnexpectedEof,
-                                "incomplete frame",
-                            ));
+                            if Resp3::get_u8(&mut line)? != CHUNKED_STRING_LENGTH_PREFIX {
+                                return Err(FrameError::InvalidFormat {
+                                    msg: "invalid chunk length prefix".to_string(),
+                                });
+                            }
+
+                            let len = util::atoi(&line).map_err(|_| {
+                                io::Error::new(io::ErrorKind::InvalidData, "invalid chunk length")
+                            })?;
+
+                            if len == 0 {
+                                break;
+                            }
+
+                            Resp3::need_bytes_async(io_read, src, len + 2).await?;
+                            let res = src.split_to(len);
+                            src.advance(2);
+
+                            chunks.push(res.freeze());
                         }
 
-                        if line.get_u8() != CHUNKED_STRING_PREFIX {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "invalid frmae",
-                            ));
-                        }
-
-                        let len = util::atoi(&line).map_err(|_| {
-                            io::Error::new(io::ErrorKind::InvalidData, "invalid chunk length")
+                        Resp3::ChunkedString(chunks)
+                    } else {
+                        let len = util::atoi(&line).map_err(|_| FrameError::InvalidFormat {
+                            msg: "invalid blob string length".to_string(),
                         })?;
 
-                        if len == 0 {
-                            break;
-                        }
-
-                        if src.remaining() < len + 2 && io_read.read_buf(src).await? == 0 {
-                            return Err(io::Error::new(
-                                io::ErrorKind::UnexpectedEof,
-                                "incomplete frame",
-                            ));
-                        }
-
+                        Resp3::need_bytes_async(io_read, src, len + 2).await?;
                         let res = src.split_to(len);
                         src.advance(2);
 
-                        chunks.push(res.freeze());
+                        Resp3::BlobString {
+                            inner: res.freeze(),
+                            attributes: None,
+                        }
+                    }
+                }
+                ARRAY_PREFIX => {
+                    let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
+
+                    let mut frames = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        let frame = Box::pin(_decode_async(io_read, src)).await?;
+                        frames.push(frame);
                     }
 
-                    Resp3::ChunkedString(chunks)
-                } else {
-                    let len = util::atoi(&line).map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidData, "invalid length")
-                    })?;
-
-                    if src.remaining() < len + 2 && io_read.read_buf(src).await? == 0 {
-                        return Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "incomplete frame",
-                        ));
-                    }
-
-                    let res = src.split_to(len);
-                    src.advance(2);
-
-                    Resp3::BlobString {
-                        inner: res.freeze(),
+                    Resp3::Array {
+                        inner: frames,
                         attributes: None,
                     }
                 }
-            }
-            ARRAY_PREFIX => {
-                let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
+                NULL_PREFIX => {
+                    Resp3::need_bytes_async(io_read, src, 2).await?;
+                    src.advance(2);
+                    Resp3::Null
+                }
+                BOOLEAN_PREFIX => {
+                    Resp3::need_bytes_async(io_read, src, 3).await?;
 
-                let mut frames = Vec::with_capacity(len);
-                for _ in 0..len {
-                    let frame = Box::pin(Resp3::decode_async(io_read, src))
-                        .await?
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
-                        })?;
-                    frames.push(frame);
-                }
+                    let b = match src[0] {
+                        b't' => true,
+                        b'f' => false,
+                        _ => {
+                            return Err(FrameError::InvalidFormat {
+                                msg: "invalid boolean".to_string(),
+                            });
+                        }
+                    };
+                    src.advance(3);
 
-                Resp3::Array {
-                    inner: frames,
-                    attributes: None,
-                }
-            }
-            NULL_PREFIX => {
-                if src.remaining() < 2 && io_read.read_buf(src).await? == 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "incomplete frame",
-                    ));
-                }
-                src.advance(2);
-                Resp3::Null
-            }
-            BOOLEAN_PREFIX => {
-                if src.remaining() < 3 && io_read.read_buf(src).await? == 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "incomplete frame",
-                    ));
-                }
-
-                let b = match src.get_u8() {
-                    b't' => true,
-                    b'f' => false,
-                    _ => {
-                        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid frame"));
+                    Resp3::Boolean {
+                        inner: b,
+                        attributes: None,
                     }
-                };
-
-                src.advance(2);
-                Resp3::Boolean {
-                    inner: b,
-                    attributes: None,
                 }
-            }
-            DOUBLE_PREFIX => {
-                let line = Resp3::decode_line_async(io_read, src).await?;
+                DOUBLE_PREFIX => {
+                    let line = Resp3::decode_line_async(io_read, src).await?;
 
-                let double = atof(&line)
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid frame"))?;
+                    let double = atof(&line)
+                        .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?;
 
-                Resp3::Double {
-                    inner: double,
-                    attributes: None,
+                    Resp3::Double {
+                        inner: double,
+                        attributes: None,
+                    }
                 }
-            }
-            BIG_NUMBER_PREFIX => {
-                let line = Resp3::decode_line_async(io_read, src).await?;
-                let n = BigInt::parse_bytes(&line, 10)
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid frame"))?;
-                Resp3::BigNumber {
-                    inner: n,
-                    attributes: None,
-                }
-            }
-            BLOB_ERROR_PREFIX => {
-                let len = Resp3::decode_length_async(io_read, src).await?;
+                BIG_NUMBER_PREFIX => {
+                    let line = Resp3::decode_line_async(io_read, src).await?;
 
-                if src.remaining() < len + 2 && io_read.read_buf(src).await? == 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "incomplete frame",
-                    ));
-                }
-
-                let e = src.split_to(len);
-                src.advance(2);
-
-                Resp3::BlobError {
-                    inner: e.freeze(),
-
-                    attributes: None,
-                }
-            }
-            VERBATIM_STRING_PREFIX => {
-                let len = Resp3::decode_length_async(io_read, src).await?;
-
-                if src.remaining() < len + 2 && io_read.read_buf(src).await? == 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::UnexpectedEof,
-                        "incomplete frame",
-                    ));
-                }
-
-                let format = src[0..3].try_into().unwrap();
-                src.advance(4);
-
-                let data = src.split_to(len).freeze();
-                src.advance(2);
-
-                Resp3::VerbatimString {
-                    format,
-                    data,
-                    attributes: None,
-                }
-            }
-            MAP_PREFIX => {
-                let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
-
-                let mut map = AHashMap::with_capacity(len);
-                for _ in 0..len {
-                    let k = Box::pin(Resp3::decode_async(io_read, src))
-                        .await?
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
-                        })?;
-                    let v = Box::pin(Resp3::decode_async(io_read, src))
-                        .await?
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
-                        })?;
-                    map.insert(k, v);
-                }
-
-                // map的key由客户端保证唯一
-                Resp3::Map {
-                    inner: map,
-                    attributes: None,
-                }
-            }
-            SET_PREFIX => {
-                let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
-
-                let mut set = AHashSet::with_capacity(len);
-                for _ in 0..len {
-                    let frame = Box::pin(Resp3::decode_async(io_read, src))
-                        .await?
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
-                        })?;
-                    set.insert(frame);
-                }
-
-                // set的元素由客户端保证唯一
-                Resp3::Set {
-                    inner: set,
-                    attributes: None,
-                }
-            }
-            PUSH_PREFIX => {
-                let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
-
-                let mut frames = Vec::with_capacity(len);
-                for _ in 0..len {
-                    let frame = Box::pin(Resp3::decode_async(io_read, src))
-                        .await?
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
-                        })?;
-                    frames.push(frame);
-                }
-
-                Resp3::Push {
-                    inner: frames,
-                    attributes: None,
-                }
-            }
-            b'|' => {
-                let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
-
-                let mut attributes = AHashMap::with_capacity(len);
-                for _ in 0..len {
-                    let k = Box::pin(Resp3::decode_async(io_read, src))
-                        .await?
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
-                        })?;
-                    let v = Box::pin(Resp3::decode_async(io_read, src))
-                        .await?
-                        .ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
-                        })?;
-                    attributes.insert(k, v);
-                }
-
-                let mut resp = Box::pin(Self::decode_async(io_read, src))
-                    .await?
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete frame")
+                    let n = BigInt::parse_bytes(&line, 10).ok_or_else(|| {
+                        FrameError::InvalidFormat {
+                            msg: "invalid big number".to_string(),
+                        }
                     })?;
 
-                resp.add_attributes(attributes);
-
-                return Ok(Some(resp));
-            }
-            b'H' => {
-                let mut line = Resp3::decode_line_async(io_read, src).await?;
-
-                let ello = Resp3::decode_until_async(io_read, src, b' ').await?;
-                if ello != b"HELLO".as_slice() {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid frame"));
-                }
-
-                let version = if let Some(i) = memchr::memchr(b' ', &line) {
-                    util::atoi(&line.split_to(i)).map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidData, "invalid version")
-                    })?
-                } else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "invalid version",
-                    ));
-                };
-
-                if line.is_empty() {
-                    Resp3::Hello {
-                        version,
-                        auth: None,
-                    }
-                } else {
-                    let auth = Resp3::decode_until_async(io_read, src, b' ').await?;
-                    if auth != b"AUTH".as_slice() {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "failed to parse auth",
-                        ));
-                    }
-
-                    let username = Self::decode_until_async(io_read, src, b' ').await?.freeze();
-
-                    let password = line.split().freeze();
-
-                    Resp3::Hello {
-                        version,
-                        auth: Some((username, password)),
+                    Resp3::BigNumber {
+                        inner: n,
+                        attributes: None,
                     }
                 }
-            }
-            prefix => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("invalid frame prefix: {prefix}"),
-                ));
-            }
-        };
+                BLOB_ERROR_PREFIX => {
+                    let len = Resp3::decode_length_async(io_read, src).await?;
 
+                    Resp3::need_bytes_async(io_read, src, len + 2).await?;
+                    let e = src.split_to(len);
+                    src.advance(2);
+
+                    Resp3::BlobError {
+                        inner: e.freeze(),
+                        attributes: None,
+                    }
+                }
+                VERBATIM_STRING_PREFIX => {
+                    let len = Resp3::decode_length_async(io_read, src).await?;
+
+                    Resp3::need_bytes_async(io_read, src, len + 2).await?;
+
+                    let format = src[0..3].try_into().unwrap();
+                    src.advance(4);
+
+                    let data = src.split_to(len).freeze();
+                    src.advance(2);
+
+                    Resp3::VerbatimString {
+                        format,
+                        data,
+                        attributes: None,
+                    }
+                }
+                MAP_PREFIX => {
+                    let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
+
+                    let mut map = AHashMap::with_capacity(len);
+                    for _ in 0..len {
+                        let k = Box::pin(_decode_async(io_read, src)).await?;
+                        let v = Box::pin(_decode_async(io_read, src)).await?;
+                        map.insert(k, v);
+                    }
+
+                    // map的key由客户端保证唯一
+                    Resp3::Map {
+                        inner: map,
+                        attributes: None,
+                    }
+                }
+                SET_PREFIX => {
+                    let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
+
+                    let mut set = AHashSet::with_capacity(len);
+                    for _ in 0..len {
+                        let frame = Box::pin(_decode_async(io_read, src)).await?;
+                        set.insert(frame);
+                    }
+
+                    // set的元素由客户端保证唯一
+                    Resp3::Set {
+                        inner: set,
+                        attributes: None,
+                    }
+                }
+                PUSH_PREFIX => {
+                    let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
+
+                    let mut frames = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        let frame = Box::pin(_decode_async(io_read, src)).await?;
+                        frames.push(frame);
+                    }
+
+                    Resp3::Push {
+                        inner: frames,
+                        attributes: None,
+                    }
+                }
+                b'H' => {
+                    let mut line = Resp3::decode_line_async(io_read, src).await?;
+
+                    let ello = Resp3::decode_until_async(io_read, &mut line, b' ').await?;
+                    if ello != b"ELLO".as_slice() {
+                        return Err(FrameError::InvalidFormat {
+                            msg: "failed to parse hello".to_string(),
+                        });
+                    }
+
+                    let version =
+                        util::atoi(&Resp3::decode_until(&mut line, b' ')?).map_err(|e| {
+                            FrameError::InvalidFormat {
+                                msg: format!("invalid version: {}", e),
+                            }
+                        })?;
+
+                    if line.is_empty() {
+                        Resp3::Hello {
+                            version,
+                            auth: None,
+                        }
+                    } else {
+                        let auth = Resp3::decode_until_async(io_read, &mut line, b' ').await?;
+                        if auth != b"AUTH".as_slice() {
+                            return Err(FrameError::InvalidFormat {
+                                msg: "invalid auth".to_string(),
+                            });
+                        }
+
+                        let username = Resp3::decode_until_async(io_read, &mut line, b' ')
+                            .await?
+                            .freeze();
+
+                        let password = line.split().freeze();
+
+                        Resp3::Hello {
+                            version,
+                            auth: Some((username, password)),
+                        }
+                    }
+                }
+                prefix => {
+                    return Err(FrameError::InvalidFormat {
+                        msg: format!("invalid prefix: {}", prefix),
+                    });
+                }
+            };
+
+            Ok(res)
+        }
+
+        let res = _decode_async(io_read, src).await?;
         Ok(Some(res))
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src, io_read))]
+    async fn need_bytes_async<R: AsyncRead + Unpin + Send>(
+        io_read: &mut R,
+        src: &mut BytesMut,
+        len: usize,
+    ) -> FrameResult<()> {
+        while src.len() < len {
+            if io_read.read_buf(src).await? == 0 {
+                return Err(FrameError::Incomplete);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[inline]
     async fn decode_line_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> io::Result<BytesMut> {
+    ) -> FrameResult<BytesMut> {
         loop {
-            if let Some(line) = Self::decode_line(src) {
-                return Ok(line);
-            }
-
-            if io_read.read_buf(src).await? == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "incomplete frame",
-                ));
+            match Self::decode_line(src) {
+                Ok(line) => return Ok(line),
+                Err(FrameError::Incomplete) => {
+                    if io_read.read_buf(src).await? == 0 {
+                        return Err(FrameError::Incomplete);
+                    }
+                }
+                Err(e) => return Err(e),
             }
         }
     }
@@ -1085,7 +1016,7 @@ impl Resp3<BytesMut, ByteString> {
         io_read: &mut R,
         src: &mut BytesMut,
         byte: u8,
-    ) -> io::Result<BytesMut> {
+    ) -> FrameResult<BytesMut> {
         loop {
             if let Some(i) = memchr::memchr(byte, src) {
                 let line = src.split_to(i);
@@ -1094,123 +1025,180 @@ impl Resp3<BytesMut, ByteString> {
             }
 
             if io_read.read_buf(src).await? == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "incomplete frame",
-                ));
+                return Err(FrameError::Incomplete);
             }
         }
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src, io_read))]
+    async fn decode_exact_async<R: AsyncRead + Unpin + Send>(
+        io_read: &mut R,
+        src: &mut BytesMut,
+        len: usize,
+    ) -> FrameResult<BytesMut> {
+        loop {
+            if src.len() >= len {
+                return Ok(src.split_to(len));
+            }
+
+            if io_read.read_buf(src).await? == 0 {
+                return Err(FrameError::Incomplete);
+            }
+        }
+    }
+
+    #[inline]
     async fn decode_decimal_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> io::Result<Int> {
+    ) -> FrameResult<Int> {
         let line = Resp3::decode_line_async(io_read, src).await?;
-        let decimal = util::atoi(&line)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        let decimal = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
         Ok(decimal)
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src, io_read))]
     async fn decode_length_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> io::Result<usize> {
+    ) -> FrameResult<usize> {
         let line = Resp3::decode_line_async(io_read, src).await?;
-        let len = util::atoi(&line)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        let len = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
         Ok(len)
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src, io_read))]
     async fn decode_string_async<
         R: AsyncRead + Unpin + Send,
         S: AsRef<str> + for<'a> From<&'a str>,
     >(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> io::Result<S> {
+    ) -> FrameResult<S> {
         let line = Resp3::decode_line_async(io_read, src).await?;
         let string = S::from(
             std::str::from_utf8(&line)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
+                .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?,
         );
         Ok(string)
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src))]
-    fn decode_line(src: &mut BytesMut) -> Option<BytesMut> {
+    async fn get_u8_async<'a, R: AsyncRead + Unpin + Send>(
+        io_read: &'a mut R,
+        src: &'a mut BytesMut,
+    ) -> FrameResult<u8> {
+        loop {
+            if !src.is_empty() {
+                return Ok(src.get_u8());
+            }
+
+            if io_read.read_buf(src).await? == 0 {
+                return Err(FrameError::Incomplete);
+            }
+        }
+    }
+
+    #[inline]
+    async fn get_async<'a, R: AsyncRead + Unpin + Send>(
+        io_read: &'a mut R,
+        src: &'a mut BytesMut,
+        range: Range<usize>,
+    ) -> FrameResult<&'a [u8]> {
+        loop {
+            if src.len() >= range.end {
+                return Ok(&src[range]);
+            }
+
+            if io_read.read_buf(src).await? == 0 {
+                return Err(FrameError::Incomplete);
+            }
+        }
+    }
+
+    #[inline]
+    fn need_bytes(src: &BytesMut, len: usize) -> FrameResult<()> {
+        if src.len() < len {
+            return Err(FrameError::Incomplete);
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    fn decode_line(src: &mut BytesMut) -> FrameResult<BytesMut> {
         if let Some(i) = memchr::memchr(b'\n', src) {
             if i > 0 && src[i - 1] == b'\r' {
                 let line = src.split_to(i - 1);
                 src.advance(2);
 
-                return Some(line);
+                return Ok(line);
             }
         }
 
-        None
+        Err(FrameError::Incomplete)
     }
 
     #[inline]
-    fn decode_until(src: &mut BytesMut, byte: u8) -> Option<BytesMut> {
+    fn decode_until(src: &mut BytesMut, byte: u8) -> FrameResult<BytesMut> {
         if let Some(i) = memchr::memchr(byte, src) {
             let line = src.split_to(i);
             src.advance(1);
-            return Some(line);
+            return Ok(line);
         }
 
-        None
+        Err(FrameError::Incomplete)
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src))]
-    fn decode_decimal(src: &mut BytesMut) -> io::Result<Option<Int>> {
-        let line = if let Some(l) = Resp3::decode_line(src) {
-            l
+    fn decode_exact(src: &mut BytesMut, len: usize) -> FrameResult<BytesMut> {
+        if src.len() >= len {
+            Ok(src.split_to(len))
         } else {
-            return Ok(None);
-        };
-        let decimal = util::atoi(&line)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        Ok(Some(decimal))
+            Err(FrameError::Incomplete)
+        }
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src))]
-    fn decode_length(src: &mut BytesMut) -> io::Result<Option<usize>> {
-        let line = if let Some(l) = Resp3::decode_line(src) {
-            l
-        } else {
-            return Ok(None);
-        };
-        let len = util::atoi(&line)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        Ok(Some(len))
+    fn decode_decimal(src: &mut BytesMut) -> FrameResult<Int> {
+        let line = Resp3::decode_line(src)?;
+        let decimal = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
+        Ok(decimal)
     }
 
     #[inline]
-    #[instrument(level = "trace", skip(src))]
-    fn decode_string<S: AsRef<str> + for<'a> From<&'a str>>(
-        src: &mut BytesMut,
-    ) -> io::Result<Option<S>> {
-        let line = if let Some(l) = Resp3::decode_line(src) {
-            l
-        } else {
-            return Ok(None);
-        };
+    fn decode_length(src: &mut BytesMut) -> FrameResult<usize> {
+        let line = Resp3::decode_line(src)?;
+        let len = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
+        Ok(len)
+    }
 
+    #[inline]
+    fn decode_string<S: AsRef<str> + for<'a> From<&'a str>>(src: &mut BytesMut) -> FrameResult<S> {
+        let line = Resp3::decode_line(src)?;
         let string = S::from(
             std::str::from_utf8(&line)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?,
+                .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?,
         );
-        Ok(Some(string))
+        Ok(string)
+    }
+
+    #[inline]
+    fn get_u8(src: &mut BytesMut) -> FrameResult<u8> {
+        if !src.is_empty() {
+            Ok(src.get_u8())
+        } else {
+            Err(FrameError::Incomplete)
+        }
+    }
+
+    #[inline]
+    fn get(src: &BytesMut, range: Range<usize>) -> FrameResult<&[u8]> {
+        if src.len() >= range.end {
+            Ok(&src[range])
+        } else {
+            Err(FrameError::Incomplete)
+        }
     }
 }
 
@@ -1222,7 +1210,7 @@ where
     B: AsRef<[u8]> + PartialEq,
     S: AsRef<str> + PartialEq,
 {
-    type Error = tokio::io::Error;
+    type Error = FrameError;
 
     fn encode(&mut self, item: Resp3<B, S>, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode_buf(dst);
@@ -1245,7 +1233,7 @@ impl Default for RESP3Decoder {
 }
 
 impl Decoder for RESP3Decoder {
-    type Error = tokio::io::Error;
+    type Error = FrameError;
     type Item = Resp3;
 
     // 如果src中的数据不完整，会引发io::ErrorKind::UnexpectedEof错误
@@ -1260,65 +1248,38 @@ impl Decoder for RESP3Decoder {
 
         fn _decode(
             decoder: &mut RESP3Decoder,
-        ) -> Result<Option<<RESP3Decoder as Decoder>::Item>, <RESP3Decoder as Decoder>::Error>
-        {
+        ) -> Result<<RESP3Decoder as Decoder>::Item, <RESP3Decoder as Decoder>::Error> {
             let src = &mut decoder.buf;
 
             if src.is_empty() {
-                return Ok(None);
+                return Err(FrameError::Incomplete);
             }
 
             let res = match src.get_u8() {
                 SIMPLE_STRING_PREFIX => Resp3::SimpleString {
-                    inner: (if let Some(s) = Resp3::decode_string(src)? {
-                        s
-                    } else {
-                        return Ok(None);
-                    }),
+                    inner: Resp3::decode_string(src)?,
                     attributes: None,
                 },
                 ERROR_PREFIX => Resp3::SimpleError {
-                    inner: (if let Some(s) = Resp3::decode_string(src)? {
-                        s
-                    } else {
-                        return Ok(None);
-                    }),
+                    inner: Resp3::decode_string(src)?,
                     attributes: None,
                 },
                 INTEGER_PREFIX => Resp3::Integer {
-                    inner: (if let Some(i) = Resp3::decode_decimal(src)? {
-                        i
-                    } else {
-                        return Ok(None);
-                    }),
-
+                    inner: Resp3::decode_decimal(src)?,
                     attributes: None,
                 },
                 BLOB_STRING_PREFIX => {
-                    let line = if let Some(l) = Resp3::decode_line(src) {
-                        l
-                    } else {
-                        return Ok(None);
-                    };
+                    let line = Resp3::decode_line(src)?;
 
-                    if line.len() == 1 && line[0] == STREAMED_LENGTH {
+                    if Resp3::get(&line, 0..1)?[0] == CHUNKED_STRING_PREFIX {
                         let mut chunks = Vec::new();
                         loop {
-                            let mut line = if let Some(l) = Resp3::decode_line(src) {
-                                l
-                            } else {
-                                return Ok(None);
-                            };
+                            let mut line = Resp3::decode_line(src)?;
 
-                            if line.is_empty() {
-                                return Ok(None);
-                            }
-
-                            if line.get_u8() != CHUNKED_STRING_PREFIX {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    "invalid chunk",
-                                ));
+                            if Resp3::get_u8(&mut line)? != CHUNKED_STRING_LENGTH_PREFIX {
+                                return Err(FrameError::InvalidFormat {
+                                    msg: "invalid chunk length prefix".to_string(),
+                                });
                             }
 
                             let len = util::atoi(&line).map_err(|_| {
@@ -1329,6 +1290,7 @@ impl Decoder for RESP3Decoder {
                                 break;
                             }
 
+                            Resp3::need_bytes(src, len + 2)?;
                             let res = src.split_to(len);
                             src.advance(2);
 
@@ -1341,10 +1303,7 @@ impl Decoder for RESP3Decoder {
                             io::Error::new(io::ErrorKind::InvalidData, "invalid length")
                         })?;
 
-                        if src.remaining() < len + 2 {
-                            return Ok(None);
-                        }
-
+                        Resp3::need_bytes(src, len + 2)?;
                         let res = src.split_to(len);
                         src.advance(2);
 
@@ -1355,19 +1314,11 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 ARRAY_PREFIX => {
-                    let len = if let Some(len) = Resp3::decode_length(src)? {
-                        len
-                    } else {
-                        return Ok(None);
-                    };
+                    let len = Resp3::decode_length(src)?;
 
                     let mut frames = Vec::with_capacity(len);
                     for _ in 0..len {
-                        let frame = if let Some(f) = _decode(decoder)? {
-                            f
-                        } else {
-                            return Ok(None);
-                        };
+                        let frame = _decode(decoder)?;
                         frames.push(frame);
                     }
 
@@ -1377,44 +1328,34 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 NULL_PREFIX => {
-                    if src.remaining() < 2 {
-                        return Ok(None);
-                    }
+                    Resp3::need_bytes(src, 2)?;
                     src.advance(2);
                     Resp3::Null
                 }
                 BOOLEAN_PREFIX => {
-                    if src.remaining() < 3 {
-                        return Ok(None);
-                    }
+                    Resp3::need_bytes(src, 3)?;
 
-                    let b = match src.get_u8() {
+                    let b = match src[0] {
                         b't' => true,
                         b'f' => false,
                         _ => {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "invalid boolean value",
-                            ));
+                            return Err(FrameError::InvalidFormat {
+                                msg: "invalid boolean".to_string(),
+                            });
                         }
                     };
+                    src.advance(3);
 
-                    src.advance(2);
                     Resp3::Boolean {
                         inner: b,
                         attributes: None,
                     }
                 }
                 DOUBLE_PREFIX => {
-                    let line = if let Some(l) = Resp3::decode_line(src) {
-                        l
-                    } else {
-                        return Ok(None);
-                    };
+                    let line = Resp3::decode_line(src)?;
 
-                    let double = atof(&line).map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidData, "invalid double")
-                    })?;
+                    let double = atof(&line)
+                        .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?;
 
                     Resp3::Double {
                         inner: double,
@@ -1422,31 +1363,23 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 BIG_NUMBER_PREFIX => {
-                    let line = if let Some(l) = Resp3::decode_line(src) {
-                        l
-                    } else {
-                        return Ok(None);
-                    };
+                    let line = Resp3::decode_line(src)?;
 
                     let n = BigInt::parse_bytes(&line, 10).ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "invalid big number")
+                        FrameError::InvalidFormat {
+                            msg: "invalid big number".to_string(),
+                        }
                     })?;
+
                     Resp3::BigNumber {
                         inner: n,
                         attributes: None,
                     }
                 }
                 BLOB_ERROR_PREFIX => {
-                    let len = if let Some(len) = Resp3::decode_length(src)? {
-                        len
-                    } else {
-                        return Ok(None);
-                    };
+                    let len = Resp3::decode_length(src)?;
 
-                    if src.remaining() < len + 2 {
-                        return Ok(None);
-                    }
-
+                    Resp3::need_bytes(src, len + 2)?;
                     let e = src.split_to(len);
                     src.advance(2);
 
@@ -1457,15 +1390,9 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 VERBATIM_STRING_PREFIX => {
-                    let len = if let Some(len) = Resp3::decode_length(src)? {
-                        len
-                    } else {
-                        return Ok(None);
-                    };
+                    let len = Resp3::decode_length(src)?;
 
-                    if src.remaining() < len + 2 {
-                        return Ok(None);
-                    }
+                    Resp3::need_bytes(src, len + 2)?;
 
                     let format = src[0..3].try_into().unwrap();
                     src.advance(4);
@@ -1480,24 +1407,12 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 MAP_PREFIX => {
-                    let len = if let Some(len) = Resp3::decode_length(src)? {
-                        len
-                    } else {
-                        return Ok(None);
-                    };
+                    let len = Resp3::decode_length(src)?;
 
                     let mut map = AHashMap::with_capacity(len);
                     for _ in 0..len {
-                        let k = if let Some(f) = _decode(decoder)? {
-                            f
-                        } else {
-                            return Ok(None);
-                        };
-                        let v = if let Some(f) = _decode(decoder)? {
-                            f
-                        } else {
-                            return Ok(None);
-                        };
+                        let k = _decode(decoder)?;
+                        let v = _decode(decoder)?;
                         map.insert(k, v);
                     }
 
@@ -1508,19 +1423,11 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 SET_PREFIX => {
-                    let len = if let Some(len) = Resp3::decode_length(src)? {
-                        len
-                    } else {
-                        return Ok(None);
-                    };
+                    let len = Resp3::decode_length(src)?;
 
                     let mut set = AHashSet::with_capacity(len);
                     for _ in 0..len {
-                        let frame = if let Some(f) = _decode(decoder)? {
-                            f
-                        } else {
-                            return Ok(None);
-                        };
+                        let frame = _decode(decoder)?;
                         set.insert(frame);
                     }
 
@@ -1531,19 +1438,11 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 PUSH_PREFIX => {
-                    let len = if let Some(len) = Resp3::decode_length(src)? {
-                        len
-                    } else {
-                        return Ok(None);
-                    };
+                    let len = Resp3::decode_length(src)?;
 
                     let mut frames = Vec::with_capacity(len);
                     for _ in 0..len {
-                        let frame = if let Some(f) = _decode(decoder)? {
-                            f
-                        } else {
-                            return Ok(None);
-                        };
+                        let frame = _decode(decoder)?;
                         frames.push(frame);
                     }
 
@@ -1552,61 +1451,22 @@ impl Decoder for RESP3Decoder {
                         attributes: None,
                     }
                 }
-                b'|' => {
-                    let len = if let Some(len) = Resp3::decode_length(src)? {
-                        len
-                    } else {
-                        return Ok(None);
-                    };
-
-                    let mut attributes = AHashMap::with_capacity(len);
-                    for _ in 0..len {
-                        let k = if let Some(f) = _decode(decoder)? {
-                            f
-                        } else {
-                            return Ok(None);
-                        };
-                        let v = if let Some(f) = _decode(decoder)? {
-                            f
-                        } else {
-                            return Ok(None);
-                        };
-                        attributes.insert(k, v);
-                    }
-
-                    let mut resp = if let Some(f) = _decode(decoder)? {
-                        f
-                    } else {
-                        return Ok(None);
-                    };
-
-                    resp.add_attributes(attributes);
-
-                    return Ok(Some(resp));
-                }
                 b'H' => {
-                    let mut line = if let Some(l) = Resp3::decode_line(src) {
-                        l
-                    } else {
-                        return Ok(None);
-                    };
+                    let mut line = Resp3::decode_line(src)?;
 
-                    let ello = Resp3::decode_until(&mut line, b' ').ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "failed to parse hello")
-                    })?;
+                    let ello = Resp3::decode_until(&mut line, b' ')?;
                     if ello != b"ELLO".as_slice() {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "failed to parse hello",
-                        ));
+                        return Err(FrameError::InvalidFormat {
+                            msg: "expect 'HELLO'".to_string(),
+                        });
                     }
 
-                    let version = Resp3::decode_until(&mut line, b' ').ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::InvalidData, "failed to parse version")
-                    })?;
-                    let version = util::atoi(&version).map_err(|_| {
-                        io::Error::new(io::ErrorKind::InvalidData, "failed to parse version")
-                    })?;
+                    let version =
+                        util::atoi(&Resp3::decode_until(&mut line, b' ')?).map_err(|e| {
+                            FrameError::InvalidFormat {
+                                msg: format!("invalid version: {}", e),
+                            }
+                        })?;
 
                     if line.is_empty() {
                         Resp3::Hello {
@@ -1614,24 +1474,14 @@ impl Decoder for RESP3Decoder {
                             auth: None,
                         }
                     } else {
-                        let auth = Resp3::decode_until(&mut line, b' ').ok_or_else(|| {
-                            io::Error::new(io::ErrorKind::InvalidData, "failed to parse auth")
-                        })?;
+                        let auth = Resp3::decode_until(&mut line, b' ')?;
                         if auth != b"AUTH".as_slice() {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "failed to parse auth",
-                            ));
+                            return Err(FrameError::InvalidFormat {
+                                msg: "invalid auth".to_string(),
+                            });
                         }
 
-                        let username = Resp3::decode_until(&mut line, b' ')
-                            .ok_or_else(|| {
-                                io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    "failed to parse username",
-                                )
-                            })?
-                            .freeze();
+                        let username = Resp3::decode_until(&mut line, b' ')?.freeze();
 
                         let password = line.split().freeze();
 
@@ -1642,30 +1492,31 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 prefix => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("invalid frame prefix: {prefix}"),
-                    ));
+                    return Err(FrameError::InvalidFormat {
+                        msg: format!("invalid prefix: {}", prefix),
+                    });
                 }
             };
 
-            Ok(Some(res))
+            Ok(res)
         }
 
         let res = _decode(self);
-        if matches!(res, Ok(None)) {
-            // 恢复消耗的数据
-            let consume = unsafe {
-                slice_from_raw_parts(origin, self.buf.as_ptr() as usize - origin as usize)
-                    .as_ref()
-                    .unwrap()
-            };
-            let temp = self.buf.split();
-            self.buf.put_slice(consume);
-            self.buf.unsplit(temp);
+        match res {
+            Err(FrameError::Incomplete) => {
+                // 恢复消耗的数据
+                let consume = unsafe {
+                    slice_from_raw_parts(origin, self.buf.as_ptr() as usize - origin as usize)
+                        .as_ref()
+                        .unwrap()
+                };
+                let temp = self.buf.split();
+                self.buf.put_slice(consume);
+                self.buf.unsplit(temp);
+                Ok(None)
+            }
+            res => Ok(Some(res?)),
         }
-
-        res
     }
 }
 
@@ -2415,7 +2266,7 @@ mod frame_tests {
             );
 
             // Decode the encoded data
-            println!("{:?}", buf);
+            println!("parsing {:?}", buf);
             let decoded = decoder.decode(&mut buf).unwrap().unwrap();
 
             // Assert the decoded value is the same as the original case

@@ -4,27 +4,31 @@ mod set;
 mod str;
 mod zset;
 
-use bytes::Bytes;
-use dashmap::mapref::entry::Entry;
-use flume::Sender;
 pub use hash::*;
 pub use list::*;
 pub use set::*;
-use std::sync::Arc;
 pub use str::*;
-use strum::{EnumDiscriminants, EnumProperty};
-use tracing::instrument;
 pub use zset::*;
 
-use crate::{frame::Resp3, server::ID, shared::db::DbError, Id, Key};
-use tokio::{sync::Notify, time::Instant};
-
-use super::{
-    object_entry::{NotifyUnlock, ObjectEntryMut},
-    Db,
+use crate::{
+    frame::Resp3,
+    server::ID,
+    shared::db::{
+        object_entry::{NotifyUnlock, ObjectEntryMut},
+        Db, DbError,
+    },
+    Id, Key,
 };
+use bytes::Bytes;
+use dashmap::mapref::entry::Entry;
+use flume::Sender;
+use std::sync::Arc;
+use strum::{EnumDiscriminants, EnumProperty};
+use tokio::{sync::Notify, time::Instant};
+use tracing::instrument;
 
 // 对象可以为空对象(不存储对象值)，只存储事件
+// TODO: LRU
 #[derive(Debug, Default)]
 pub struct Object {
     inner: Option<ObjectInner>,
@@ -533,37 +537,37 @@ pub struct ObjectInner {
 }
 
 impl ObjectInner {
-    pub fn new_str(s: Str, expire: Option<Instant>) -> Self {
+    pub fn new_str(s: impl Into<Str>, expire: Option<Instant>) -> Self {
         ObjectInner {
-            value: ObjValue::Str(s),
+            value: ObjValue::Str(s.into()),
             expire,
         }
     }
 
-    pub fn new_list(l: List, expire: Option<Instant>) -> Self {
+    pub fn new_list(l: impl Into<List>, expire: Option<Instant>) -> Self {
         ObjectInner {
-            value: ObjValue::List(l),
+            value: ObjValue::List(l.into()),
             expire,
         }
     }
 
-    pub fn new_set(s: Set, expire: Option<Instant>) -> Self {
+    pub fn new_set(s: impl Into<Set>, expire: Option<Instant>) -> Self {
         ObjectInner {
-            value: ObjValue::Set(s),
+            value: ObjValue::Set(s.into()),
             expire,
         }
     }
 
-    pub fn new_hash(h: Hash, expire: Option<Instant>) -> Self {
+    pub fn new_hash(h: impl Into<Hash>, expire: Option<Instant>) -> Self {
         ObjectInner {
-            value: ObjValue::Hash(h),
+            value: ObjValue::Hash(h.into()),
             expire,
         }
     }
 
-    pub fn new_zset(z: ZSet, expire: Option<Instant>) -> Self {
+    pub fn new_zset(z: impl Into<ZSet>, expire: Option<Instant>) -> Self {
         ObjectInner {
-            value: ObjValue::ZSet(z),
+            value: ObjValue::ZSet(z.into()),
             expire,
         }
     }
@@ -816,7 +820,7 @@ mod object_tests {
 
         let notifiy = Arc::new(Notify::const_new());
 
-        db.insert_object("".into(), ObjectInner::new_str("".into(), None))
+        db.insert_object("".into(), ObjectInner::new_str("", None))
             .await;
         db.add_lock_event("".into(), 0).await;
 

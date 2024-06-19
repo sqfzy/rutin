@@ -88,8 +88,11 @@ pub fn epoch() -> Instant {
             .unwrap()
 }
 
-pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, &str> {
-    atoi::atoi(text).ok_or("failed to parse integer")
+pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, String> {
+    atoi::atoi(text).ok_or(format!(
+        "failed to convert {} to integer",
+        std::str::from_utf8(text).unwrap_or_default()
+    ))
 }
 
 pub fn atof(text: &[u8]) -> Result<f64, String> {

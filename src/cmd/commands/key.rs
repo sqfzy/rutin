@@ -104,7 +104,7 @@ impl CmdExecutor for Dump {
             })
             .await?;
 
-        Ok(Some(Resp3::new_blob(buf.freeze())))
+        Ok(Some(Resp3::new_blob_string(buf.freeze())))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -358,7 +358,7 @@ impl CmdExecutor for ExpireTime {
 
         if let Some(ex) = ex {
             Ok(Some(Resp3::new_integer(
-                ex.duration_since(epoch()).as_secs() as Int
+                ex.duration_since(epoch()).as_secs() as Int,
             )))
         } else {
             // 无过期时间
@@ -400,7 +400,8 @@ impl CmdExecutor for Keys {
                     .par_iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key).then(|| Resp3::new_blob(entry.key().clone()))
+                            re.is_match(key)
+                                .then(|| Resp3::new_blob_string(entry.key().clone()))
                         })
                     })
                     .collect::<Vec<Resp3>>()
@@ -409,7 +410,8 @@ impl CmdExecutor for Keys {
                     .iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key).then(|| Resp3::new_blob(entry.key().clone()))
+                            re.is_match(key)
+                                .then(|| Resp3::new_blob_string(entry.key().clone()))
                         })
                     })
                     .collect::<Vec<Resp3>>()
@@ -469,7 +471,8 @@ impl CmdExecutor for NBKeys {
                     .par_iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key).then(|| Resp3::new_blob(entry.key().clone()))
+                            re.is_match(key)
+                                .then(|| Resp3::new_blob_string(entry.key().clone()))
                         })
                     })
                     .collect::<Vec<Resp3>>()
@@ -478,7 +481,8 @@ impl CmdExecutor for NBKeys {
                     .iter()
                     .filter_map(|entry| {
                         std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key).then(|| Resp3::new_blob(entry.key().clone()))
+                            re.is_match(key)
+                                .then(|| Resp3::new_blob_string(entry.key().clone()))
                         })
                     })
                     .collect::<Vec<Resp3>>()
@@ -692,11 +696,8 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
         assert!(db.contains_object(&"key1".into()).await);
 
         // case: 键存在
@@ -716,11 +717,8 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
         assert!(db.contains_object(&"key1".into()).await);
 
         // case: 键存在
@@ -739,11 +737,8 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
         assert!(db
             .get_object_entry(&"key1".into())
             .await
@@ -772,14 +767,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
         // case: with EX option
@@ -798,14 +793,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -825,14 +820,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -850,14 +845,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -878,11 +873,8 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
         assert!(db
             .get_object_entry(&"key1".into())
             .await
@@ -919,14 +911,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -948,14 +940,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -977,14 +969,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -1006,14 +998,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(epoch() + Duration::from_secs(1893427200)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -1038,11 +1030,8 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
         assert!(db
             .get_object_entry(&"key1".into())
             .await
@@ -1053,7 +1042,7 @@ mod cmd_key_tests {
         let expire = Instant::now() + Duration::from_secs(10);
         db.insert_object(
             Key::from("key_with_ex"),
-            ObjectInner::new_str("value_with_ex".into(), Some(expire)),
+            ObjectInner::new_str("value_with_ex", Some(expire)),
         )
         .await;
 
@@ -1082,26 +1071,14 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
-        db.insert_object(
-            Key::from("key2"),
-            ObjectInner::new_str("value2".into(), None),
-        )
-        .await;
-        db.insert_object(
-            Key::from("key3"),
-            ObjectInner::new_str("value3".into(), None),
-        )
-        .await;
-        db.insert_object(
-            Key::from("key4"),
-            ObjectInner::new_str("value4".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
+        db.insert_object(Key::from("key2"), ObjectInner::new_str("value2", None))
+            .await;
+        db.insert_object(Key::from("key3"), ObjectInner::new_str("value3", None))
+            .await;
+        db.insert_object(Key::from("key4"), ObjectInner::new_str("value4", None))
+            .await;
 
         let keys = Keys::parse(&mut CmdUnparsed::from([".*"].as_ref())).unwrap();
         let result = keys
@@ -1113,10 +1090,10 @@ mod cmd_key_tests {
             .unwrap()
             .to_vec();
         assert!(
-            result.contains(&Resp3::new_blob("key1".into()))
-                && result.contains(&Resp3::new_blob("key2".into()))
-                && result.contains(&Resp3::new_blob("key3".into()))
-                && result.contains(&Resp3::new_blob("key4".into()))
+            result.contains(&Resp3::new_blob_string("key1".into()))
+                && result.contains(&Resp3::new_blob_string("key2".into()))
+                && result.contains(&Resp3::new_blob_string("key3".into()))
+                && result.contains(&Resp3::new_blob_string("key4".into()))
         );
 
         let keys = Keys::parse(&mut CmdUnparsed::from(["key*"].as_ref())).unwrap();
@@ -1129,10 +1106,10 @@ mod cmd_key_tests {
             .unwrap()
             .to_vec();
         assert!(
-            result.contains(&Resp3::new_blob("key1".into()))
-                && result.contains(&Resp3::new_blob("key2".into()))
-                && result.contains(&Resp3::new_blob("key3".into()))
-                && result.contains(&Resp3::new_blob("key4".into()))
+            result.contains(&Resp3::new_blob_string("key1".into()))
+                && result.contains(&Resp3::new_blob_string("key2".into()))
+                && result.contains(&Resp3::new_blob_string("key3".into()))
+                && result.contains(&Resp3::new_blob_string("key4".into()))
         );
 
         let keys = Keys::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
@@ -1144,7 +1121,7 @@ mod cmd_key_tests {
             .try_array()
             .unwrap()
             .to_vec();
-        assert!(result.contains(&Resp3::new_blob("key1".into())));
+        assert!(result.contains(&Resp3::new_blob_string("key1".into())));
     }
 
     #[tokio::test]
@@ -1155,14 +1132,14 @@ mod cmd_key_tests {
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
-                "value_with_ex".into(),
+                "value_with_ex",
                 Some(Instant::now() + Duration::from_secs(10)),
             ),
         )
         .await;
         db.insert_object(
             Key::from("key_without_ex"),
-            ObjectInner::new_str("value_without_ex".into(), None),
+            ObjectInner::new_str("value_without_ex", None),
         )
         .await;
 
@@ -1194,11 +1171,8 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
         assert!(db
             .get_object_entry(&"key1".into())
             .await
@@ -1210,7 +1184,7 @@ mod cmd_key_tests {
         let expire = Instant::now() + dur;
         db.insert_object(
             Key::from("key_with_ex"),
-            ObjectInner::new_str("value_with_ex".into(), Some(expire)),
+            ObjectInner::new_str("value_with_ex", Some(expire)),
         )
         .await;
 
@@ -1241,11 +1215,8 @@ mod cmd_key_tests {
         let shared = Shared::default();
         let db = shared.db();
 
-        db.insert_object(
-            Key::from("key1"),
-            ObjectInner::new_str("value1".into(), None),
-        )
-        .await;
+        db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
+            .await;
         assert!(db
             .get_object_entry(&"key1".into())
             .await
@@ -1257,7 +1228,7 @@ mod cmd_key_tests {
         let expire = Instant::now() + dur;
         db.insert_object(
             Key::from("key_with_ex"),
-            ObjectInner::new_str("value_with_ex".into(), Some(expire)),
+            ObjectInner::new_str("value_with_ex", Some(expire)),
         )
         .await;
 

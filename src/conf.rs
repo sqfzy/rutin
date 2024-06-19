@@ -406,19 +406,19 @@ mod conf_tests {
 
         let frames = vec![
             Resp3::new_array(vec![
-                Resp3::new_blob("SET".into()),
-                Resp3::new_blob("key:000000000015".into()),
-                Resp3::new_blob("VXK".into()),
+                Resp3::new_blob_string("SET".into()),
+                Resp3::new_blob_string("key:000000000015".into()),
+                Resp3::new_blob_string("VXK".into()),
             ]),
             Resp3::new_array(vec![
-                Resp3::new_blob("SET".into()),
-                Resp3::new_blob("key:000000000003".into()),
-                Resp3::new_blob("VXK".into()),
+                Resp3::new_blob_string("SET".into()),
+                Resp3::new_blob_string("key:000000000003".into()),
+                Resp3::new_blob_string("VXK".into()),
             ]),
             Resp3::new_array(vec![
-                Resp3::new_blob("SET".into()),
-                Resp3::new_blob("key:000000000025".into()),
-                Resp3::new_blob("VXK".into()),
+                Resp3::new_blob_string("SET".into()),
+                Resp3::new_blob_string("key:000000000025".into()),
+                Resp3::new_blob_string("VXK".into()),
             ]),
         ];
 

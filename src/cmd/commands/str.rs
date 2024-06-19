@@ -151,7 +151,7 @@ impl CmdExecutor for Get {
         shared
             .db()
             .visit_object(&self.key, |obj| {
-                res = Some(Resp3::new_blob(obj.on_str()?.to_bytes()));
+                res = Some(Resp3::new_blob_string(obj.on_str()?.to_bytes()));
                 Ok(())
             })
             .await?;
@@ -199,7 +199,7 @@ impl CmdExecutor for GetRange {
             })
             .await?;
 
-        Ok(Some(Resp3::new_blob(res)))
+        Ok(Some(Resp3::new_blob_string(res)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -245,7 +245,7 @@ impl CmdExecutor for GetSet {
             })
             .await?;
 
-        Ok(Some(Resp3::new_blob(old)))
+        Ok(Some(Resp3::new_blob_string(old)))
     }
 
     fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
@@ -363,7 +363,7 @@ impl CmdExecutor for MGet {
                 })
                 .await?;
 
-            res.push(Resp3::new_blob(str));
+            res.push(Resp3::new_blob_string(str));
         }
 
         Ok(Some(Resp3::new_array(res)))
@@ -396,7 +396,7 @@ impl CmdExecutor for MSet {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, ObjectInner::new_str(value.into(), None))
+                .insert_object(key, ObjectInner::new_str(value, None))
                 .await;
         }
 
@@ -441,7 +441,7 @@ impl CmdExecutor for MSetNx {
         for (key, value) in self.pairs {
             shared
                 .db()
-                .insert_object(key, ObjectInner::new_str(value.into(), None))
+                .insert_object(key, ObjectInner::new_str(value, None))
                 .await;
         }
 
@@ -529,11 +529,13 @@ impl CmdExecutor for Set {
             None
         };
 
-        let new_obj = ObjectInner::new_str(self.value.into(), new_ex);
+        let new_obj = ObjectInner::new_str(self.value, new_ex);
         let (_, old) = entry.insert_object(new_obj);
 
         if self.get {
-            Ok(Some(Resp3::new_blob(old.unwrap().on_str()?.to_bytes())))
+            Ok(Some(Resp3::new_blob_string(
+                old.unwrap().on_str()?.to_bytes(),
+            )))
         } else {
             Ok(Some(Resp3::new_simple_string("OK".into())))
         }
@@ -677,7 +679,7 @@ impl CmdExecutor for SetEx {
             .db()
             .insert_object(
                 self.key,
-                ObjectInner::new_str(self.value.into(), Some(Instant::now() + self.expire)),
+                ObjectInner::new_str(self.value, Some(Instant::now() + self.expire)),
             )
             .await;
 
@@ -718,7 +720,7 @@ impl CmdExecutor for SetNx {
 
         shared
             .db()
-            .insert_object(self.key, ObjectInner::new_str(self.value.into(), None))
+            .insert_object(self.key, ObjectInner::new_str(self.value, None))
             .await;
 
         Ok(Some(Resp3::new_integer(1)))

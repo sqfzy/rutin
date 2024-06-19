@@ -119,22 +119,14 @@ impl Index<usize> for List {
     }
 }
 
-impl From<Vec<Bytes>> for List {
-    fn from(mut list: Vec<Bytes>) -> Self {
-        list.reverse();
-        List::LinkedList(list.into())
-    }
-}
-
-impl From<Vec<&'static str>> for List {
-    fn from(mut list: Vec<&'static str>) -> Self {
-        list.reverse();
-        List::LinkedList(list.into_iter().map(|s| s.into()).collect())
-    }
-}
-
 impl Default for List {
     fn default() -> Self {
         List::LinkedList(VecDeque::new())
+    }
+}
+
+impl<L: Into<VecDeque<Bytes>>> From<L> for List {
+    fn from(list: L) -> Self {
+        List::LinkedList(list.into())
     }
 }

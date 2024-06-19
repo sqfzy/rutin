@@ -263,7 +263,7 @@ impl From<&[&str]> for CmdUnparsed {
     fn from(val: &[&str]) -> Self {
         let inner: Vec<_> = val
             .iter()
-            .map(|s| Resp3::new_blob(Bytes::copy_from_slice(s.as_bytes())))
+            .map(|s| Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
             .collect();
         if inner.is_empty() {
             Self::default()

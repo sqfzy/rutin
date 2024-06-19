@@ -1,4 +1,4 @@
-use crate::frame::Resp3;
+use crate::frame::{FrameResult, Resp3};
 use bytes::{Buf, BufMut, BytesMut};
 use flume::{
     r#async::{RecvFut, SendFut},
@@ -81,16 +81,14 @@ impl<S: AsyncStream> Connection<S> {
 
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frame(&mut self) -> io::Result<Option<Resp3>> {
-        Resp3::decode_async(&mut self.stream, &mut self.reader_buf)
-            .await
-            .map_err(Into::into)
+    pub async fn read_frame(&mut self) -> FrameResult<Option<Resp3>> {
+        Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await
     }
 
     // 尝试读取多个frame，直到buffer和stream都为空
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frames(&mut self) -> io::Result<Option<Vec<Resp3>>> {
+    pub async fn read_frames(&mut self) -> FrameResult<Option<Vec<Resp3>>> {
         let mut frames = Vec::with_capacity(32);
 
         loop {
@@ -117,7 +115,7 @@ impl<S: AsyncStream> Connection<S> {
                 match s.poll_read(&mut cx, &mut ReadBuf::new(&mut self.reader_buf)) {
                     Poll::Ready(Ok(())) => {}
                     // 读取失败，如果客户端已关闭则正常关闭连接，否则返回错误
-                    Poll::Ready(Err(e)) => return Err(e),
+                    Poll::Ready(Err(e)) => return Err(e.into()),
                     // 已读取所有可读的frame，返回
                     Poll::Pending => return Ok(Some(frames)),
                 }

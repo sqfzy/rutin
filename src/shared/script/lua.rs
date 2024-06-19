@@ -87,7 +87,7 @@ impl LuaScript {
                                 LuaValue::String(s) => {
                                     // PERF: 拷贝
                                     cmd_frame
-                                        .push(Resp3::new_blob(Bytes::copy_from_slice(s.as_bytes())))
+                                        .push(Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
                                 }
                                 _ => {
                                     return Err(LuaError::external(
@@ -129,7 +129,7 @@ impl LuaScript {
                                 LuaValue::String(s) => {
                                     // PERF: 拷贝
                                     cmd_frame
-                                        .push(Resp3::new_blob(Bytes::copy_from_slice(s.as_bytes())))
+                                        .push(Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
                                 }
                                 _ => {
                                     return Err(LuaError::external(
@@ -268,12 +268,12 @@ impl LuaScript {
                 // 传入KEYS和ARGV
                 let lua_keys = global.get::<_, LuaTable>("KEYS")?;
                 for (i, key) in keys.into_iter().enumerate() {
-                    lua_keys.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob(key))?;
+                    lua_keys.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(key))?;
                 }
 
                 let lua_argv = global.get::<_, LuaTable>("ARGV")?;
                 for (i, arg) in argv.into_iter().enumerate() {
-                    lua_argv.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob(arg))?;
+                    lua_argv.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(arg))?;
                 }
 
                 // 执行脚本，若脚本有错误则中断脚本
@@ -413,7 +413,7 @@ async fn lua_tests() {
             )
             .await
             .unwrap();
-        assert_eq!(res, Resp3::new_blob("value".into()));
+        assert_eq!(res, Resp3::new_blob_string("value".into()));
 
         let res = lua_script
             .eval(

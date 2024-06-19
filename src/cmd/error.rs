@@ -37,6 +37,15 @@ impl From<&str> for CmdError {
     }
 }
 
+impl From<String> for CmdError {
+    fn from(value: String) -> Self {
+        Err::Other {
+            message: value.into(),
+        }
+        .into()
+    }
+}
+
 impl From<anyhow::Error> for CmdError {
     fn from(value: anyhow::Error) -> Self {
         Err::Other {

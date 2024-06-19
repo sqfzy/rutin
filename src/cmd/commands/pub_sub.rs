@@ -38,9 +38,9 @@ impl CmdExecutor for Publish {
         for listener in listeners {
             let res = listener
                 .send_async(Resp3::new_array(vec![
-                    Resp3::new_blob("message".into()),
-                    Resp3::new_blob(self.topic.clone()),
-                    Resp3::new_blob(self.msg.clone()),
+                    Resp3::new_blob_string("message".into()),
+                    Resp3::new_blob_string(self.topic.clone()),
+                    Resp3::new_blob_string(self.msg.clone()),
                 ]))
                 .await;
 
@@ -107,8 +107,8 @@ impl CmdExecutor for Subscribe {
             }
 
             conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
-                Resp3::new_blob("subscribe".into()),
-                Resp3::new_blob(topic),
+                Resp3::new_blob_string("subscribe".into()),
+                Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await
@@ -168,8 +168,8 @@ impl CmdExecutor for Unsubscribe {
         } else {
             for topic in self.topics {
                 conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
-                    Resp3::new_blob("unsubscribe".into()),
-                    Resp3::new_blob(topic),
+                    Resp3::new_blob_string("unsubscribe".into()),
+                    Resp3::new_blob_string(topic),
                     Resp3::new_integer(0),
                 ]))
                 .await
@@ -191,8 +191,8 @@ impl CmdExecutor for Unsubscribe {
             }
 
             conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
-                Resp3::new_blob("unsubscribe".into()),
-                Resp3::new_blob(topic),
+                Resp3::new_blob_string("unsubscribe".into()),
+                Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int),
             ]))
             .await
@@ -286,9 +286,15 @@ mod cmd_pub_sub_tests {
             .try_array()
             .unwrap()
             .to_vec();
-        assert_eq!(msg.first().unwrap(), &Resp3::new_blob("message".into()));
-        assert_eq!(msg.get(1).unwrap(), &Resp3::new_blob("channel1".into()));
-        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob("hello".into()));
+        assert_eq!(
+            msg.first().unwrap(),
+            &Resp3::new_blob_string("message".into())
+        );
+        assert_eq!(
+            msg.get(1).unwrap(),
+            &Resp3::new_blob_string("channel1".into())
+        );
+        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob_string("hello".into()));
 
         // 向channel2发布消息
         let publish =
@@ -309,9 +315,15 @@ mod cmd_pub_sub_tests {
             .try_array()
             .unwrap()
             .to_vec();
-        assert_eq!(msg.first().unwrap(), &Resp3::new_blob("message".into()));
-        assert_eq!(msg.get(1).unwrap(), &Resp3::new_blob("channel2".into()));
-        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob("world".into()));
+        assert_eq!(
+            msg.first().unwrap(),
+            &Resp3::new_blob_string("message".into())
+        );
+        assert_eq!(
+            msg.get(1).unwrap(),
+            &Resp3::new_blob_string("channel2".into())
+        );
+        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob_string("world".into()));
 
         // 尝试向未订阅的频道发布消息
         let publish = Publish::parse(&mut CmdUnparsed::from(
