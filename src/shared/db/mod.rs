@@ -152,7 +152,10 @@ impl Db {
     }
 
     #[instrument(level = "debug", skip(self))]
-    pub async fn get_object_entry(&self, key: &Key) -> Option<Ref<'_, Bytes, Object>> {
+    pub async fn get_object_entry(
+        &self,
+        key: &Key,
+    ) -> Option<Ref<'_, Bytes, Object, ahash::RandomState>> {
         // 键存在
         if let Some(e) = self.entries.get(key) {
             // 对象不为空

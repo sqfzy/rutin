@@ -18,14 +18,15 @@ use serde::Deserialize;
 use std::{fs::File, io::BufReader, sync::Arc, time::Duration};
 use tokio::{runtime::Handle, time::Instant};
 use tokio_rustls::rustls;
+use tracing::{error, info};
 
 #[derive(Debug, Deserialize)]
 pub struct Conf {
     pub server: ServerConf,
     pub security: SecurityConf,
     pub replica: ReplicaConf,
-    pub rdb: RDBConf,
-    pub aof: AOFConf,
+    pub rdb: Option<RDBConf>,
+    pub aof: Option<AOFConf>,
     pub memory: MemoryConf,
     pub tls: Option<TLSConf>,
 }
@@ -73,15 +74,14 @@ pub struct ReplicaConf {
 #[derive(Debug, Deserialize)]
 #[serde(rename = "rdb")]
 pub struct RDBConf {
-    pub enable: bool,               // 是否启用RDB持久化
-    pub file_path: String,          // RDB文件路径
-    pub interval: Option<Interval>, // RDB持久化间隔。格式为"seconds changes"，seconds表示间隔时间，changes表示键的变化次数
-    pub version: u32,               // RDB版本号
-    pub enable_checksum: bool,      // 是否启用RDB校验和
+    pub file_path: String,     // RDB文件路径
+    pub save: Option<Save>, // RDB持久化间隔。格式为"seconds changes"，seconds表示间隔时间，changes表示键的变化次数
+    pub version: u32,       // RDB版本号
+    pub enable_checksum: bool, // 是否启用RDB校验和
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Interval {
+pub struct Save {
     pub seconds: u64,
     pub changes: u64,
 }
@@ -89,7 +89,6 @@ pub struct Interval {
 #[derive(Debug, Deserialize)]
 #[serde(rename = "aof")]
 pub struct AOFConf {
-    pub enable: bool, // 是否启用AOF持久化
     pub use_rdb_preamble: bool,
     pub file_path: String,
     pub append_fsync: AppendFSync,
@@ -141,20 +140,18 @@ impl Default for Conf {
                 replicaof: None,
                 masterauth: None,
             },
-            rdb: RDBConf {
-                enable: false,
+            rdb: Some(RDBConf {
                 file_path: "dump.rdb".to_string(),
-                interval: None,
+                save: None,
                 version: 6,
                 enable_checksum: false,
-            },
-            aof: AOFConf {
-                enable: false,
+            }),
+            aof: Some(AOFConf {
                 use_rdb_preamble: false,
                 file_path: "appendonly.aof".to_string(),
                 append_fsync: AppendFSync::EverySec,
                 auto_aof_rewrite_min_size: 64,
-            },
+            }),
             memory: MemoryConf {
                 // max_memory: 0,
                 // max_memory_policy: "noeviction".to_string(),
@@ -208,23 +205,23 @@ impl Conf {
         /*********************/
         /* 是否开启RDB持久化 */
         /*********************/
-        if conf.rdb.enable && !conf.aof.enable {
-            let mut rdb = RDB::new(shared, conf.rdb.file_path.clone(), conf.rdb.enable_checksum);
+        if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
+            let mut rdb = RDB::new(shared, rdb.file_path.clone(), rdb.enable_checksum);
 
             let start = std::time::Instant::now();
-            println!("Loading RDB file...");
+            info!("Loading RDB file...");
             if let Err(e) = rdb.load().await {
-                println!("Failed to load RDB file: {:?}", e);
+                error!("Failed to load RDB file: {:?}", e);
             } else {
-                println!("RDB file loaded. Time elapsed: {:?}", start.elapsed());
+                info!("RDB file loaded. Time elapsed: {:?}", start.elapsed());
             }
         }
 
         /*********************/
         /* 是否开启AOF持久化 */
         /*********************/
-        if conf.aof.enable {
-            enable_aof(shared.clone(), conf.clone()).await?;
+        if let Some(aof) = conf.aof.as_ref() {
+            enable_aof(shared.clone(), conf.clone(), aof.file_path.clone()).await?;
         }
 
         /**********************/
@@ -284,25 +281,29 @@ impl Conf {
     }
 }
 
-async fn enable_aof(shared: Shared, conf: Arc<Conf>) -> anyhow::Result<()> {
-    let mut aof = AOF::new(shared.clone(), conf.clone()).await?;
+async fn enable_aof(
+    shared: Shared,
+    conf: Arc<Conf>,
+    file_path: impl AsRef<std::path::Path>,
+) -> anyhow::Result<()> {
+    let mut aof = AOF::new(shared.clone(), conf.clone(), file_path).await?;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let handle = Handle::current();
     std::thread::spawn(move || {
         handle.block_on(async move {
             let start = std::time::Instant::now();
-            println!("Loading AOF file...");
+            info!("Loading AOF file...");
             if let Err(e) = aof.load().await {
-                println!("Failed to load AOF file: {:?}", e);
+                error!("Failed to load AOF file: {:?}", e);
             } else {
-                println!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
+                info!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
             }
 
             tx.send(()).unwrap();
 
             if let Err(e) = aof.save().await {
-                println!("Failed to save AOF file: {:?}", e);
+                error!("Failed to save AOF file: {:?}", e);
             }
         });
     });
@@ -344,20 +345,19 @@ mod conf_tests {
         drop(file);
 
         let conf = Conf {
-            aof: AOFConf {
-                enable: true,
+            aof: Some(AOFConf {
                 use_rdb_preamble: false,
                 file_path: test_file_path.to_string(),
                 append_fsync: AppendFSync::Always,
                 auto_aof_rewrite_min_size: 64,
-            },
+            }),
             ..Default::default()
         };
 
         let shutdown = async_shutdown::ShutdownManager::new();
         let shared = Shared::new(Arc::new(Db::default()), Arc::new(conf), shutdown.clone());
         // 启用AOF，开始AOF save，将AOF文件中的命令加载到内存中
-        enable_aof(shared.clone(), shared.conf().clone())
+        enable_aof(shared.clone(), shared.conf().clone(), test_file_path)
             .await
             .unwrap();
 

@@ -1,5 +1,3 @@
-//! 执行命令时不应该长时间持有某个键的锁，否则会导致其他命令无法执行
-
 mod commands;
 mod error;
 
@@ -29,12 +27,20 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         let res = cmd.execute(handler).await?;
 
         if Self::CMD_TYPE == CmdType::Write {
+            // 也许存在replicate需要传播
             handler
                 .shared
                 .wcmd_propagator()
                 .clone()
                 .may_propagate(args, handler)
                 .await;
+
+            // TODO:
+            // if let Some(rdb) =  handler.shared.conf().rdb.as_ref() {
+            // if let Some(save) = rdb.save {
+            //
+            // }
+            // }
         }
 
         Ok(res)

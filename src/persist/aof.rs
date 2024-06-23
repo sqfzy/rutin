@@ -9,7 +9,7 @@ use crate::{
 use anyhow::Result;
 use bytes::BytesMut;
 use serde::Deserialize;
-use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
+use std::{os::unix::fs::MetadataExt, path::Path, sync::Arc, time::Duration};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -23,13 +23,13 @@ pub struct AOF {
 }
 
 impl AOF {
-    pub async fn new(shared: Shared, conf: Arc<Conf>) -> Result<Self> {
+    pub async fn new(shared: Shared, conf: Arc<Conf>, file_path: impl AsRef<Path>) -> Result<Self> {
         Ok(AOF {
             file: tokio::fs::OpenOptions::new()
                 .read(true)
                 .append(true)
                 .create(true)
-                .open(conf.aof.file_path.as_str())
+                .open(file_path)
                 .await?,
             shared,
             conf,
@@ -43,7 +43,7 @@ impl AOF {
     }
 
     async fn rewrite(&mut self) -> anyhow::Result<()> {
-        let path = self.conf.aof.file_path.clone();
+        let path = self.conf.aof.as_ref().unwrap().file_path.clone();
         let temp_path = format!("{}.tmp", path);
         let bak_path = format!("{}.bak", path);
         // 创建临时文件，先使用RDB格式保存数据
@@ -71,14 +71,14 @@ impl AOF {
 
 impl AOF {
     pub async fn save(&mut self) -> anyhow::Result<()> {
-        let aof_conf = &self.conf.aof;
+        let aof_conf = self.conf.aof.as_ref().unwrap();
 
         // 为了避免在shutdown的时候，还有数据没有写入到文件中，shutdown时必须等待该函数执行完毕
         let shutdown = self.shared.shutdown().clone();
         let _delay_token = shutdown.delay_shutdown_token()?;
 
         let mut curr_aof_size = 0_u128; // 单位为byte
-        let auto_aof_rewrite_min_size = (self.conf.aof.auto_aof_rewrite_min_size as u128) << 20;
+        let auto_aof_rewrite_min_size = (aof_conf.auto_aof_rewrite_min_size as u128) << 20;
         let wcmd_receiver = self
             .shared
             .wcmd_propagator()

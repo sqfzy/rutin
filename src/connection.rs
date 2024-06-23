@@ -108,16 +108,13 @@ impl<S: AsyncStream> Connection<S> {
 
             // 尝试继续从stream读取数据到buffer，如果buffer为空则继续读取，如果阻塞则返回结果
             while self.reader_buf.is_empty() {
-                let s = &mut self.stream;
-                pin_mut!(s);
+                let fut = self.stream.read_buf(&mut self.reader_buf);
+                pin_mut!(fut);
 
                 let mut cx = Context::from_waker(noop_waker_ref());
-                match s.poll_read(&mut cx, &mut ReadBuf::new(&mut self.reader_buf)) {
-                    Poll::Ready(Ok(())) => {}
-                    // 读取失败，如果客户端已关闭则正常关闭连接，否则返回错误
-                    Poll::Ready(Err(e)) => return Err(e.into()),
-                    // 已读取所有可读的frame，返回
-                    Poll::Pending => return Ok(Some(frames)),
+                match fut.poll(&mut cx) {
+                    Poll::Ready(Ok(n)) if n != 0 => {}
+                    _ => return Ok(Some(frames)),
                 }
             }
         }

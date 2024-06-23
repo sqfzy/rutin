@@ -8,14 +8,14 @@ use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
 
 pub struct ObjectEntryMut<'a> {
-    pub(super) entry: Entry<'a, Bytes, Object>,
+    pub(super) entry: Entry<'a, Bytes, Object, ahash::RandomState>,
     db: &'a Db,
     intention_lock: Option<IntentionLock>,
 }
 
 impl<'a> ObjectEntryMut<'a> {
     pub fn new(
-        entry: Entry<'a, Bytes, Object>,
+        entry: Entry<'a, Bytes, Object, ahash::RandomState>,
         db: &'a Db,
         intention_lock: Option<IntentionLock>,
     ) -> Self {

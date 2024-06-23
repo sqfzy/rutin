@@ -24,7 +24,10 @@ impl Shared {
     pub fn new(db: Arc<Db>, conf: Arc<Conf>, shutdown: ShutdownManager<()>) -> Self {
         let db = db;
         let conf = conf;
-        let wcmd_propagator = Arc::new(Propagator::new(conf.aof.enable, conf.replica.max_replica));
+        let wcmd_propagator = Arc::new(Propagator::new(
+            conf.aof.is_some(),
+            conf.replica.max_replica,
+        ));
         let script = Arc::new(Script::new());
         Self {
             db,

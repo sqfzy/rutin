@@ -206,7 +206,12 @@ impl CmdExecutor for BgSave {
         let rdb_conf = &handler.shared.conf().rdb;
         let shared = &handler.shared;
 
-        let mut rdb = RDB::new(shared, rdb_conf.file_path.clone(), rdb_conf.enable_checksum);
+        let mut rdb = if let Some(rdb) = rdb_conf {
+            RDB::new(shared, rdb.file_path.clone(), rdb.enable_checksum)
+        } else {
+            RDB::new(shared, "./dump.rdb".into(), false)
+        };
+        // let mut rdb = RDB::new(shared, rdb_conf.unwrap_or("").file_path.clone(), rdb_conf.enable_checksum);
         tokio::spawn(async move {
             if let Err(e) = rdb.save().await {
                 tracing::error!("save rdb error: {:?}", e);

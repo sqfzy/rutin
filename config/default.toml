@@ -22,9 +22,9 @@ file_path = "dump.rdb" # RDB文件路径
 
 # RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
 # 每seconds时间内有changes个键发生变化，则触发RDB快照
-interval = { seconds = 1, changes = 0 }
-version = 6                             # RDB版本
-enable_checksum = true                  # 是否开启RDB校验和
+save = { seconds = 1, changes = 0 }
+version = 6                         # RDB版本
+enable_checksum = true              # 是否开启RDB校验和
 
 [aof]
 enable = false                 # 是否开启AOF持久化

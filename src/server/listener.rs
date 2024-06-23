@@ -84,12 +84,8 @@ impl Listener {
 
     pub async fn clean(&mut self) {
         let conf = self.shared.conf();
-        if conf.rdb.enable && !conf.aof.enable {
-            let mut rdb = RDB::new(
-                &self.shared,
-                conf.rdb.file_path.clone(),
-                conf.rdb.enable_checksum,
-            );
+        if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
+            let mut rdb = RDB::new(&self.shared, rdb.file_path.clone(), rdb.enable_checksum);
             let start = tokio::time::Instant::now();
             rdb.save().await.ok();
             println!("RDB file saved. Time elapsed: {:?}", start.elapsed());

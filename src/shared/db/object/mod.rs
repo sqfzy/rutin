@@ -287,6 +287,10 @@ impl Object {
     #[inline]
     pub fn remove_flag(&mut self, flag: u8) {
         self.events.flags &= !flag;
+
+        if self.events.flags == 0 {
+            self.events.inner.clear();
+        }
     }
 
     pub(super) fn add_lock_event(&mut self, target_id: Id) -> IntentionLock {

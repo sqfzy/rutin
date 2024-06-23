@@ -837,12 +837,11 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "6.0.0"
+version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23fadfd577acfd4485fb258011b0fd080882ea83359b6fd41304900b94ccf487"
+checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
 dependencies = [
  "cfg-if",
- "crossbeam-utils",
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
@@ -2411,7 +2410,6 @@ dependencies = [
  "mlua",
  "num-bigint",
  "num_cpus",
- "once_cell",
  "owning_ref",
  "parking_lot",
  "pin-project",

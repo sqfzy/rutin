@@ -12,14 +12,14 @@ keywords = ["redis", "async", "database", "kv"]
 categories = ["database"]
 
 [dependencies]
-anyhow = "1.0.59"                                                            # error handling
+anyhow = "1.0.59"                                                          # error handling
 futures = "0.3"
-bytes = "1.5"                                                                # helps manage buffers
+bytes = "1.5"                                                              # helps manage buffers
 clap = { version = "4.5", features = ["derive"] }
 config = "0.14.0"
 crc = "3.0.1"
-dashmap = { version = "6.0.0", features = ["raw-api", "inline", "rayon"] }
-once_cell = "1.19.0"
+dashmap = { version = "5.5.3", features = ["raw-api", "inline", "rayon"] }
+# once_cell = "1.19.0"
 rand = "0.8.5"
 skiplist = "0.5.1"
 tokio = { version = "1", features = ["full", "tracing"] }                    # async networking
@@ -94,7 +94,7 @@ opt-level = 3 # 最大优化
 # lto = "fat"   # 启用链接时优化（Link Time Optimization）
 lto = true
 # debug = false # 关闭调试信息
-debug = false     # 关闭调试信息
+debug = true      # 关闭调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 panic = "abort"
 
