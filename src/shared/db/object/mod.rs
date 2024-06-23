@@ -14,7 +14,7 @@ use crate::{
     frame::Resp3,
     server::ID,
     shared::db::{
-        object_entry::{NotifyUnlock, ObjectEntryMut},
+        object_entry::{IntentionLock, ObjectEntryMut},
         Db, DbError,
     },
     Id, Key,
@@ -289,13 +289,13 @@ impl Object {
         self.events.flags &= !flag;
     }
 
-    pub(super) fn add_lock_event(&mut self, target_id: Id) -> NotifyUnlock {
+    pub(super) fn add_lock_event(&mut self, target_id: Id) -> IntentionLock {
         let id = target_id;
         if self.events.contains(INTENTION_LOCK_FLAG) {
             for e in self.events.inner.iter_mut() {
                 if let Event::IntentionLock {
                     target_id,
-                    notify_unlock,
+                    intention_lock: notify_unlock,
                     ..
                 } = e
                 {
@@ -307,10 +307,10 @@ impl Object {
             unreachable!()
         }
 
-        let notify_unlock = NotifyUnlock::new(Arc::new(Notify::const_new()));
+        let notify_unlock = IntentionLock::new(Arc::new(Notify::const_new()));
         let event = Event::IntentionLock {
             target_id: id,
-            notify_unlock: notify_unlock.clone(),
+            intention_lock: notify_unlock.clone(),
             count: 0,
         };
 
@@ -320,12 +320,14 @@ impl Object {
         notify_unlock
     }
 
+    #[inline]
     pub(super) fn add_may_update_event(&mut self, sender: Sender<Bytes>) {
         let event = Event::MayUpdate(sender);
         self.set_flag(event.flag());
         self.events.inner.push(event);
     }
 
+    #[inline]
     pub(super) fn add_track_event(&mut self, sender: Sender<Resp3>) {
         let event = Event::Track(sender);
         self.set_flag(event.flag());
@@ -341,7 +343,6 @@ impl Object {
         self.events.inner.swap_remove(index);
     }
 
-    #[inline]
     #[instrument(level = "debug", skip(db))]
     pub(super) async fn trigger_lock_event(db: &Db, key: Key) -> ObjectEntryMut {
         let mut entry = db.entries.entry(key);
@@ -360,12 +361,12 @@ impl Object {
                         // 找到IntentionLock事件
                         Event::IntentionLock {
                             target_id,
-                            notify_unlock,
+                            intention_lock,
                             count,
                         } => {
                             // 如果正在执行的不是带有目标ID的task，则释放读写锁后等待意向锁释放
                             if ID.get() != *target_id {
-                                let notify_unlock = notify_unlock.clone();
+                                let intention_lock = intention_lock.clone();
 
                                 // 等待者数目加1
                                 *count += 1;
@@ -375,7 +376,7 @@ impl Object {
                                 let key = entry.into_key();
 
                                 // 多个任务有序等待获取写锁的许可
-                                let _ = notify_unlock.wait().await;
+                                let _ = intention_lock.lock().await;
 
                                 // 重新获取写锁
                                 let mut new_entry = db.entries.entry(key.clone());
@@ -399,7 +400,7 @@ impl Object {
                                 // 获取写锁并带上notify，当写锁释放时通知下一个等待的任务。在使用写锁时，
                                 // 可能会有新的任务想要获取写锁，因此不能简单地通知唤醒所有等待的任务（这
                                 // 还会导致写锁争用，从而引起阻塞），而是应该一个接一个的唤醒
-                                return ObjectEntryMut::new(new_entry, db, Some(notify_unlock));
+                                return ObjectEntryMut::new(new_entry, db, Some(intention_lock));
                             }
 
                             return ObjectEntryMut::new(entry, db, None);
@@ -506,7 +507,7 @@ pub enum Event {
         // 设置意向锁的handler的ID，只有该ID的handler可以访问该键值对
         target_id: Id,
         // 用于通知等待的handler，可以获取写锁了。通知是one by one的
-        notify_unlock: NotifyUnlock,
+        intention_lock: IntentionLock,
         // 用于记录等待的handler数目，最后一个获取写锁的handler，负责移除该事件
         count: usize,
     },
@@ -533,10 +534,12 @@ impl Event {
 #[derive(Debug, Clone)]
 pub struct ObjectInner {
     value: ObjValue,
+    // TODO: 优化内存占用
     expire: Option<Instant>, // None代表永不过期
 }
 
 impl ObjectInner {
+    #[inline]
     pub fn new_str(s: impl Into<Str>, expire: Option<Instant>) -> Self {
         ObjectInner {
             value: ObjValue::Str(s.into()),
@@ -544,6 +547,7 @@ impl ObjectInner {
         }
     }
 
+    #[inline]
     pub fn new_list(l: impl Into<List>, expire: Option<Instant>) -> Self {
         ObjectInner {
             value: ObjValue::List(l.into()),
@@ -551,6 +555,7 @@ impl ObjectInner {
         }
     }
 
+    #[inline]
     pub fn new_set(s: impl Into<Set>, expire: Option<Instant>) -> Self {
         ObjectInner {
             value: ObjValue::Set(s.into()),
@@ -558,6 +563,7 @@ impl ObjectInner {
         }
     }
 
+    #[inline]
     pub fn new_hash(h: impl Into<Hash>, expire: Option<Instant>) -> Self {
         ObjectInner {
             value: ObjValue::Hash(h.into()),
@@ -565,6 +571,7 @@ impl ObjectInner {
         }
     }
 
+    #[inline]
     pub fn new_zset(z: impl Into<ZSet>, expire: Option<Instant>) -> Self {
         ObjectInner {
             value: ObjValue::ZSet(z.into()),
@@ -572,6 +579,7 @@ impl ObjectInner {
         }
     }
 
+    #[inline]
     pub fn is_expired(&self) -> bool {
         if let Some(ex) = self.expire {
             if ex <= Instant::now() {

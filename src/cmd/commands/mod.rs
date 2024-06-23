@@ -14,9 +14,3 @@ pub use other::*;
 pub use pub_sub::*;
 pub use script::*;
 pub use str::*;
-
-// TODO: 实现
-// SAVE, BGSAVE, BGREWRITEAOF
-// CLIENT
-// BCAST
-// REPLICAOF

@@ -2,6 +2,14 @@
 name = "rutin"
 version = "0.1.0"
 edition = "2021"
+author = "sqfzy"
+license = "MIT"
+description = "redis implemented using rust"
+readme = "README.md"
+homepage = "https://github.com/sqfzy/rutin"
+repository = "https://github.com/sqfzy/rutin"
+keywords = ["redis", "async", "database", "kv"]
+categories = ["database"]
 
 [dependencies]
 anyhow = "1.0.59"                                                            # error handling
@@ -10,7 +18,7 @@ bytes = "1.5"                                                                # h
 clap = { version = "4.5", features = ["derive"] }
 config = "0.14.0"
 crc = "3.0.1"
-dashmap = { version = "5.5.3", features = ["raw-api", "inline", "rayon"] }
+dashmap = { version = "6.0.0", features = ["raw-api", "inline", "rayon"] }
 once_cell = "1.19.0"
 rand = "0.8.5"
 skiplist = "0.5.1"
@@ -61,6 +69,7 @@ tokio-uring = "0.5.0"
 event-listener = "5.3.1"
 # bstr = "1.9.1"
 bytestring = "1.3.1"
+# neat-date-time = "0.2.0"
 
 # [target.'cfg(not(target_env = "msvc"))'.dependencies]
 # tikv-jemallocator = "0.5"
@@ -82,9 +91,10 @@ harness = false
 # rustflags = ["--cfg", "tokio_unstable"]
 # opt-level = "z"   # 或者 "s"，表示进行更小的尺寸优化
 opt-level = 3 # 最大优化
-lto = "fat"   # 启用链接时优化（Link Time Optimization）
+# lto = "fat"   # 启用链接时优化（Link Time Optimization）
+lto = true
 # debug = false # 关闭调试信息
-debug = true      # 关闭调试信息
+debug = false     # 关闭调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 panic = "abort"
 

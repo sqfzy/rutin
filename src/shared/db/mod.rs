@@ -5,7 +5,7 @@ mod object_entry;
 use bytes::Bytes;
 pub use error::DbError;
 pub use object::*;
-use object_entry::NotifyUnlock;
+use object_entry::IntentionLock;
 pub use object_entry::ObjectEntryMut;
 
 use crate::{
@@ -80,7 +80,7 @@ impl Db {
         self.client_records.get(&client_id).map(|e| e.clone())
     }
 
-    pub async fn add_lock_event(&self, key: Key, target_id: Id) -> Option<NotifyUnlock> {
+    pub async fn add_lock_event(&self, key: Key, target_id: Id) -> Option<IntentionLock> {
         self.get_object_entry_mut(key)
             .await
             .add_lock_event(target_id)
@@ -152,7 +152,7 @@ impl Db {
     }
 
     #[instrument(level = "debug", skip(self))]
-    pub async fn get_object_entry(&self, key: &Key) -> Option<Ref<'_, Bytes, Object, RandomState>> {
+    pub async fn get_object_entry(&self, key: &Key) -> Option<Ref<'_, Bytes, Object>> {
         // 键存在
         if let Some(e) = self.entries.get(key) {
             // 对象不为空

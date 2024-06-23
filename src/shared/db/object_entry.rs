@@ -8,21 +8,21 @@ use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
 
 pub struct ObjectEntryMut<'a> {
-    pub(super) entry: Entry<'a, Bytes, Object, ahash::RandomState>,
+    pub(super) entry: Entry<'a, Bytes, Object>,
     db: &'a Db,
-    notify_unlock: Option<NotifyUnlock>,
+    intention_lock: Option<IntentionLock>,
 }
 
 impl<'a> ObjectEntryMut<'a> {
     pub fn new(
-        entry: Entry<'a, Bytes, Object, ahash::RandomState>,
+        entry: Entry<'a, Bytes, Object>,
         db: &'a Db,
-        intention_lock: Option<NotifyUnlock>,
+        intention_lock: Option<IntentionLock>,
     ) -> Self {
         Self {
             entry,
             db,
-            notify_unlock: intention_lock,
+            intention_lock,
         }
     }
 }
@@ -48,9 +48,6 @@ impl ObjectEntryMut<'_> {
         self.entry.key()
     }
 
-    /// # Warn:
-    ///
-    ///
     #[inline]
     pub fn value(&self) -> Option<&ObjectInner> {
         if let Entry::Occupied(e) = &self.entry {
@@ -68,7 +65,7 @@ impl ObjectEntryMut<'_> {
 
     #[inline]
     pub fn set_notify_unlock(&mut self, notify: Arc<Notify>) {
-        self.notify_unlock = Some(NotifyUnlock(notify));
+        self.intention_lock = Some(IntentionLock(notify));
     }
 
     /// # Desc:
@@ -98,7 +95,7 @@ impl ObjectEntryMut<'_> {
                 Self {
                     entry: entry::Entry::Occupied(new_entry),
                     db,
-                    notify_unlock: None,
+                    intention_lock: None,
                 }
             }
         }
@@ -143,7 +140,7 @@ impl ObjectEntryMut<'_> {
                     Self {
                         entry: entry::Entry::Occupied(new_entry),
                         db: self.db,
-                        notify_unlock: self.notify_unlock,
+                        intention_lock: self.intention_lock,
                     },
                     None,
                 )
@@ -291,7 +288,7 @@ impl ObjectEntryMut<'_> {
                 Ok(Self {
                     entry: entry::Entry::Occupied(new_entry),
                     db: self.db,
-                    notify_unlock: self.notify_unlock,
+                    intention_lock: self.intention_lock,
                 })
             }
         }
@@ -302,7 +299,7 @@ impl ObjectEntryMut<'_> {
     /// 如果对象存在且不为空，则添加监听事件
     #[inline]
     #[instrument(level = "debug", skip(self))]
-    pub fn add_lock_event(mut self, target_id: Id) -> (Self, Option<NotifyUnlock>) {
+    pub fn add_lock_event(mut self, target_id: Id) -> (Self, Option<IntentionLock>) {
         match self.entry {
             Entry::Occupied(ref mut e) => {
                 let obj = e.get_mut();
@@ -341,7 +338,7 @@ impl ObjectEntryMut<'_> {
                 Self {
                     entry: entry::Entry::Occupied(new_entry),
                     db: self.db,
-                    notify_unlock: self.notify_unlock,
+                    intention_lock: self.intention_lock,
                 }
             }
         }
@@ -374,7 +371,7 @@ impl ObjectEntryMut<'_> {
                 Self {
                     entry: entry::Entry::Occupied(new_entry),
                     db: self.db,
-                    notify_unlock: self.notify_unlock,
+                    intention_lock: self.intention_lock,
                 }
             }
         }
@@ -382,23 +379,23 @@ impl ObjectEntryMut<'_> {
 }
 
 #[derive(Debug, Clone)]
-pub struct NotifyUnlock(Arc<Notify>);
+pub struct IntentionLock(Arc<Notify>);
 
-impl NotifyUnlock {
+impl IntentionLock {
     pub fn new(notify: Arc<Notify>) -> Self {
         Self(notify)
     }
 
-    pub fn notify_one(&self) {
+    pub fn unlock(&self) {
         self.0.notify_one();
     }
 
-    pub async fn wait(&self) {
+    pub async fn lock(&self) {
         self.0.notified().await;
     }
 }
 
-impl Drop for NotifyUnlock {
+impl Drop for IntentionLock {
     fn drop(&mut self) {
         self.0.notify_one();
     }

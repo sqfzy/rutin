@@ -57,9 +57,7 @@ impl Listener {
                             error!(cause = ?err, "connection error");
                         }
 
-                        // move delay_token 并且在handler结束时释放，对于run()函数中可能会长时间阻塞本协程的，
-                        // 应该考虑使用wrap_cancel()；对于持续阻塞的操作，必须使用wrap_cancel()，否则无法正常
-                        // 关闭服务
+                        // handler.run()不应该block，这会导致delay_token无法释放
                         drop(delay_token);
                         #[cfg(not(feature = "debug"))]
                         drop(permit);

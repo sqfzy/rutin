@@ -86,8 +86,9 @@ impl LuaScript {
                             match v {
                                 LuaValue::String(s) => {
                                     // PERF: 拷贝
-                                    cmd_frame
-                                        .push(Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
+                                    cmd_frame.push(Resp3::new_blob_string(Bytes::copy_from_slice(
+                                        s.as_bytes(),
+                                    )))
                                 }
                                 _ => {
                                     return Err(LuaError::external(
@@ -128,8 +129,9 @@ impl LuaScript {
                             match v {
                                 LuaValue::String(s) => {
                                     // PERF: 拷贝
-                                    cmd_frame
-                                        .push(Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
+                                    cmd_frame.push(Resp3::new_blob_string(Bytes::copy_from_slice(
+                                        s.as_bytes(),
+                                    )))
                                 }
                                 _ => {
                                     return Err(LuaError::external(
@@ -281,7 +283,7 @@ impl LuaScript {
 
                 // 脚本执行完毕，唤醒一个等待的任务
                 for intention_lock in intention_locks {
-                    intention_lock.notify_one();
+                    intention_lock.unlock();
                 }
 
                 // 清理Lua环境

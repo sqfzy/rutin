@@ -1,13 +1,12 @@
 mod test;
 
-use std::{num::ParseFloatError, time::SystemTime};
-
 pub use test::*;
-use tokio::time::Instant;
 
 use crate::Int;
 use anyhow::anyhow;
 use atoi::FromRadix10SignedChecked;
+use std::{num::ParseFloatError, time::SystemTime};
+use tokio::time::Instant;
 
 // 模拟服务端，接收客户端的命令并打印
 #[cfg(feature = "fake_server")]
@@ -89,10 +88,12 @@ pub fn epoch() -> Instant {
 }
 
 pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, String> {
-    atoi::atoi(text).ok_or(format!(
-        "failed to convert {} to integer",
-        std::str::from_utf8(text).unwrap_or_default()
-    ))
+    atoi::atoi(text).ok_or_else(|| {
+        format!(
+            "failed to convert {} to integer",
+            std::str::from_utf8(text).unwrap_or_default()
+        )
+    })
 }
 
 pub fn atof(text: &[u8]) -> Result<f64, String> {

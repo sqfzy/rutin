@@ -21,16 +21,7 @@ impl<S: AsyncStream> Handler<S> {
     #[inline]
     pub fn new(shared: Shared, stream: S) -> Self {
         let bg_task_channel = BgTaskChannel::default();
-
-        // 获取一个有效的客户端ID
-        let id_may_occupied = CLIENT_ID_COUNT.fetch_add(1);
-        let client_id = shared
-            .db()
-            .record_client_id(id_may_occupied, bg_task_channel.new_sender());
-        if id_may_occupied != client_id {
-            CLIENT_ID_COUNT.store(client_id);
-        }
-        let client_id = CLIENT_ID_COUNT.fetch_add(1);
+        let client_id = Self::create_client_id(&shared, &bg_task_channel);
 
         Self {
             conn: Connection::new(stream, shared.conf().server.max_batch),
@@ -79,6 +70,40 @@ impl<S: AsyncStream> Handler<S> {
     pub async fn dispatch(&mut self, cmd_frame: Resp3) -> Result<Option<Resp3>, ServerError> {
         ID.scope(self.context.client_id, dispatch(cmd_frame, self))
             .await
+    }
+
+    #[inline]
+    pub fn create_client_id(shared: &Shared, bg_task_channel: &BgTaskChannel) -> Id {
+        let id_may_occupied = CLIENT_ID_COUNT.fetch_add(1);
+        let client_id = shared
+            .db()
+            .record_client_id(id_may_occupied, bg_task_channel.new_sender());
+        if id_may_occupied != client_id {
+            CLIENT_ID_COUNT.store(client_id);
+        }
+        client_id
+    }
+}
+
+#[derive(Debug)]
+pub struct HandlerContext {
+    pub client_id: Id,
+    // 客户端订阅的频道
+    pub subscribed_channels: Option<Vec<Key>>,
+    // 是否开启缓存追踪
+    pub client_track: Option<BgTaskSender>,
+    // 用于缓存需要传播的写命令
+    pub wcmd_buf: BytesMut,
+}
+
+impl HandlerContext {
+    fn new(client_id: Id) -> Self {
+        Self {
+            client_id,
+            subscribed_channels: None,
+            client_track: None,
+            wcmd_buf: BytesMut::with_capacity(64),
+        }
     }
 }
 
@@ -134,27 +159,5 @@ impl Handler<FakeStream> {
             },
             Connection::new(FakeStream::new(client_tx, client_rx), max_batch),
         )
-    }
-}
-
-#[derive(Debug)]
-pub struct HandlerContext {
-    pub client_id: Id,
-    // 客户端订阅的频道
-    pub subscribed_channels: Option<Vec<Key>>,
-    // 是否开启缓存追踪
-    pub client_track: Option<BgTaskSender>,
-    // 用于缓存需要传播的写命令
-    pub wcmd_buf: BytesMut,
-}
-
-impl HandlerContext {
-    fn new(client_id: Id) -> Self {
-        Self {
-            client_id,
-            subscribed_channels: None,
-            client_track: None,
-            wcmd_buf: BytesMut::with_capacity(64),
-        }
     }
 }
