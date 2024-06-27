@@ -36,7 +36,7 @@ Rutin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 
 
-## 6）事务
+## 6）事务（Lua脚本）
 
 ​	目前，rutin通过Lua脚本支持事务，满足Isolation和Consistency，但不保证Atomicity和Durability。用户可以通过SCRIPT REGISTER命令注册一个带有名称的脚本， 然后通过EVALNAME命令执行该脚本，也可以直接使用EVAL命令执行临时脚本。
 
