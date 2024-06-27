@@ -1246,6 +1246,7 @@ impl Decoder for RESP3Decoder {
 
         let origin = self.buf.as_ptr();
 
+        #[inline]
         fn _decode(
             decoder: &mut RESP3Decoder,
         ) -> Result<<RESP3Decoder as Decoder>::Item, <RESP3Decoder as Decoder>::Error> {
@@ -2266,7 +2267,7 @@ mod frame_tests {
             );
 
             // Decode the encoded data
-            println!("parsing {:?}", buf);
+            tracing::info!("parsing {:?}", buf);
             let decoded = decoder.decode(&mut buf).unwrap().unwrap();
 
             // Assert the decoded value is the same as the original case

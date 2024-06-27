@@ -7,6 +7,7 @@ mod zset;
 pub use hash::*;
 pub use list::*;
 pub use set::*;
+use smallvec::SmallVec;
 pub use str::*;
 pub use zset::*;
 
@@ -466,13 +467,13 @@ pub const MAY_UPDATE_FLAG: u8 = 1 << 2;
 
 #[derive(Debug, Default)]
 struct Events {
-    inner: Vec<Event>,
+    inner: SmallVec<[Event; 8]>,
     // 事件类型标志位，用于快速判断是否包含某种事件
     flags: u8,
 }
 
 impl Events {
-    pub const fn new(inner: Vec<Event>) -> Self {
+    pub const fn new(inner: SmallVec<[Event; 8]>) -> Self {
         Self { inner, flags: 0 }
     }
 

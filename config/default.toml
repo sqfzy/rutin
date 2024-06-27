@@ -7,9 +7,31 @@ max_connections = 256           # 最大连接数
 max_batch = 1024                # 最大批量操作数
 
 [security]
-# requirepass = "passwd" # 主服务器密码。当设置该值之后，客户端连接到服务器时需要发送AUTH命令进行认证
+# 默认ACL。设置后，所有连接初始化时都会使用该ACL。default_ac不支持设置密码
+default_ac = { enable = true, allow_commands = [
+  "ALL",
+], deny_commands = [
+], allow_category = [
+], deny_category = [
+] }
+[security.acl]
+test = { enable = true, password = "test", allow_commands = [
+  "GET",
+  "SET",
+], deny_commands = [
+  "ECHO",
+], allow_category = [
+  "LIST",
+], deny_category = [
+  "HASH",
+], deny_read_key_patterns = [
+  "foo",
+], deny_write_key_patterns = [
+  "bar",
+] }
 
 
+# 用户名为"admin"，密码为空，代表无密码
 [replica]
 # replicaof = "127.0.0.1:6380" # 主服务器地址
 max_replica = 10 # 最多允许多少个从服务器连接到当前服务器
@@ -73,3 +95,4 @@ auto_aof_rewrite_min_size = 64 # 单位为mb
 #
 # cert_file = "ca/rutin.crt"
 # key_file = "ca/rutin.key"
+# requirepass = "passwd" # 主服务器密码。当设置该值之后，客户端连接到服务器时需要发送AUTH命令进行认证

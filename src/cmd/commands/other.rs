@@ -1,14 +1,15 @@
+use super::*;
 use crate::{
     cmd::{
         error::{CmdError, Err},
         CmdExecutor, CmdType, CmdUnparsed,
     },
+    conf::AccessControl,
     connection::AsyncStream,
     frame::Resp3,
     persist::rdb::RDB,
     server::Handler,
-    shared::Shared,
-    util, Id,
+    util, CmdFlag, Id,
 };
 use bytes::Bytes;
 
@@ -43,9 +44,14 @@ pub struct Ping {
 }
 
 impl CmdExecutor for Ping {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "PING";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = PING_FLAG;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        _handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let res = match self.msg {
             Some(msg) => Resp3::new_simple_string(
                 msg.try_into()
@@ -57,7 +63,7 @@ impl CmdExecutor for Ping {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if !args.is_empty() && args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -75,13 +81,18 @@ pub struct Echo {
 }
 
 impl CmdExecutor for Echo {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "ECHO";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = ECHO_FLAG;
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        _handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         Ok(Some(Resp3::new_blob_string(self.msg)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
@@ -197,7 +208,9 @@ impl CmdExecutor for Echo {
 pub struct BgSave;
 
 impl CmdExecutor for BgSave {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "BGSAVE";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = BGSAVE_FLAG;
 
     async fn execute(
         self,
@@ -225,11 +238,7 @@ impl CmdExecutor for BgSave {
         )))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        Ok(None)
-    }
-
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if !args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -240,49 +249,50 @@ impl CmdExecutor for BgSave {
 
 // pub struct BgRewriteAof;
 
-// pub struct Auth {
-//     pub username: Option<String>,
-//     pub password: String,
-// }
-//
-// impl TryFrom<RESP3> for Auth {
-//     type Error = CmdError;
-//
-//     fn try_from(cmd_frame: RESP3) -> Result<Self, CmdError> {
-//         let mut bulks = cmd_frame.ininto_bulks()?;
-//         if cmd_frame.array_len()? < 2 {
-//             return Err(Err::WrongArgNum.into());
-//         }
-//
-//         let password = String::from_utf8(bulks.pop().unwrap())?;
-//         let username = if let Some(user) = bulks.pop() {
-//             Some(String::from_utf8(user)?)
-//         } else {
-//             None
-//         };
-//
-//         Ok(Auth { username, password })
-//     }
-// }
-//
-// impl Auth {
-//     pub async fn execute(
-//         self,
-//         conn: &mut Connection,
-//         passwd: Option<String>,
-//     ) -> Result<(), CmdError> {
-//         if let Some(passwd) = &passwd {
-//             if &self.password != passwd {
-//                 conn.write_error("wrong password").await?;
-//                 return Ok(());
-//             }
-//         }
-//
-//         conn.authed.store(true);
-//         conn.write_simple("OK").await?;
-//         Ok(())
-//     }
-// }CmdError
+#[derive(Debug)]
+pub struct Auth {
+    pub username: Bytes,
+    pub password: Bytes,
+}
+
+impl CmdExecutor for Auth {
+    const NAME: &'static str = "AUTH";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = AUTH_FLAG;
+
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
+        if let Some(acl) = handler.shared.conf().security.acl.as_ref() {
+            if let Some(ac) = acl.get(&self.username) {
+                if !ac.is_pwd_correct(&self.password) {
+                    Err("ERR invalid password".into())
+                } else {
+                    // 设置客户端的权限
+                    handler.context.ac = ac.clone();
+                    Ok(Some(Resp3::new_simple_string("OK".into())))
+                }
+            } else {
+                Err("ERR invalid username".into())
+            }
+        } else {
+            // 没有设置ACL
+            Ok(Some(Resp3::new_simple_string("OK".into())))
+        }
+    }
+
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+        if args.len() != 1 && args.len() != 2 {
+            return Err(Err::WrongArgNum.into());
+        }
+
+        Ok(Auth {
+            username: args.next().unwrap(),
+            password: args.next().unwrap_or_default(),
+        })
+    }
+}
 
 /// # Desc:
 ///
@@ -305,7 +315,9 @@ pub struct ClientTracking {
 }
 
 impl CmdExecutor for ClientTracking {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "TRACKING";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = CLIENT_TRACKING_FLAG;
 
     async fn execute(
         self,
@@ -331,11 +343,7 @@ impl CmdExecutor for ClientTracking {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        Ok(None)
-    }
-
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() > 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -367,8 +375,63 @@ impl CmdExecutor for ClientTracking {
 
 #[cfg(test)]
 mod cmd_other_tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::util::test_init;
+    use crate::{
+        conf::{AccessControl, Acl, Conf},
+        shared::Shared,
+        util::test_init,
+    };
+
+    #[tokio::test]
+    async fn auth_test() {
+        test_init();
+
+        let username = "admin";
+        let password = "123456";
+        let cmd_flag = 0x010;
+        let acl = Acl::new();
+        acl.insert(
+            Bytes::from(username),
+            AccessControl::new(true, Bytes::from(password), cmd_flag, None, None),
+        );
+
+        let conf = Conf {
+            security: crate::conf::SecurityConf {
+                acl: Some(acl),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let shared = Shared::new(Default::default(), Arc::new(conf), Default::default());
+        let (mut handler, _) = Handler::new_fake_with(shared, None, None);
+
+        let auth = Auth::parse(
+            &mut CmdUnparsed::from([username, "1234567"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let res = auth.execute(&mut handler).await;
+        assert_eq!(res.unwrap_err().to_string(), "ERR invalid password");
+
+        let auth = Auth::parse(
+            &mut CmdUnparsed::from(["admin1", password].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let res = auth.execute(&mut handler).await;
+        assert_eq!(res.unwrap_err().to_string(), "ERR invalid username");
+
+        let auth = Auth::parse(
+            &mut CmdUnparsed::from([username, password].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        auth.execute(&mut handler).await.unwrap();
+        assert_eq!(handler.context.ac.cmd_flag(), cmd_flag);
+    }
 
     #[tokio::test]
     async fn client_tracking_test() {
@@ -376,11 +439,19 @@ mod cmd_other_tests {
 
         let (mut handler, _) = Handler::new_fake();
 
-        let tracking = ClientTracking::parse(&mut CmdUnparsed::from(["ON"].as_ref())).unwrap();
+        let tracking = ClientTracking::parse(
+            &mut CmdUnparsed::from(["ON"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         tracking.execute(&mut handler).await.unwrap();
         assert!(handler.context.client_track.is_some());
 
-        let tracking = ClientTracking::parse(&mut CmdUnparsed::from(["OFF"].as_ref())).unwrap();
+        let tracking = ClientTracking::parse(
+            &mut CmdUnparsed::from(["OFF"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         tracking.execute(&mut handler).await.unwrap();
         assert!(handler.context.client_track.is_none());
     }

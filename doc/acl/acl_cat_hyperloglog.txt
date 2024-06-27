@@ -1,0 +1,6 @@
+127.0.0.1:6379> ACL cat hyperloglog
+1) "pfadd"
+2) "pfcount"
+3) "pfdebug"
+4) "pfmerge"
+5) "pfselftest"

@@ -1,17 +1,19 @@
+use super::*;
 use crate::{
     cmd::{
         error::{CmdError, Err},
         CmdExecutor, CmdType, CmdUnparsed,
     },
+    conf::AccessControl,
     connection::AsyncStream,
     frame::Resp3,
     persist::rdb::{
         encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
     },
     server::Handler,
-    shared::{db::ObjValueType, Shared},
+    shared::db::ObjValueType,
     util::{atoi, epoch},
-    Id, Int, Key,
+    CmdFlag, Id, Int, Key,
 };
 use bytes::{Bytes, BytesMut};
 use rayon::prelude::*;
@@ -50,12 +52,17 @@ pub struct Del {
 }
 
 impl CmdExecutor for Del {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "DEL";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = DEL_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut count = 0;
         for key in self.keys {
-            if shared.db().remove_object(&key).await.is_some() {
+            if handler.shared.db().remove_object(&key).await.is_some() {
                 count += 1;
             }
         }
@@ -63,14 +70,17 @@ impl CmdExecutor for Del {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Del {
-            keys: args.collect(),
-        })
+        let keys: Vec<_> = args.collect();
+        if ac.is_forbidden_keys(&keys, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Del { keys })
     }
 }
 
@@ -85,11 +95,17 @@ pub struct Dump {
 }
 
 impl CmdExecutor for Dump {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "DUMP";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = DUMP_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut buf = BytesMut::with_capacity(1024);
-        shared
+        handler
+            .shared
             .db()
             .visit_object(&self.key, |obj| {
                 match obj.typ() {
@@ -107,14 +123,17 @@ impl CmdExecutor for Dump {
         Ok(Some(Resp3::new_blob_string(buf.freeze())))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Dump {
-            key: args.next().unwrap(),
-        })
+        let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Dump { key })
     }
 }
 
@@ -128,11 +147,16 @@ pub struct Exists {
 }
 
 impl CmdExecutor for Exists {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "EXISTS";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = EXISTS_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         for key in self.keys {
-            if !shared.db().contains_object(&key).await {
+            if !handler.shared.db().contains_object(&key).await {
                 return Err(0.into());
             }
         }
@@ -140,14 +164,17 @@ impl CmdExecutor for Exists {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Exists {
-            keys: args.collect(),
-        })
+        let keys: Vec<_> = args.collect();
+        if ac.is_forbidden_keys(&keys, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Exists { keys })
     }
 }
 
@@ -164,13 +191,19 @@ pub struct Expire {
 }
 
 impl CmdExecutor for Expire {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "EXPIRE";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = EXPIRE_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut res = None;
 
         let new_ex = Instant::now() + self.seconds;
-        shared
+        handler
+            .shared
             .db()
             .update_object(&self.key, |obj| {
                 let ex = obj.expire();
@@ -224,12 +257,16 @@ impl CmdExecutor for Expire {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 2 && args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
 
         let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
         let seconds = Duration::from_secs(atoi(&args.next().unwrap())?);
         let opt = match args.next() {
             Some(b) => Some(Opt::try_from(b.as_ref())?),
@@ -252,11 +289,17 @@ pub struct ExpireAt {
 }
 
 impl CmdExecutor for ExpireAt {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "EXPIREAT";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = EXPIREAT_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut res = None;
-        shared
+        handler
+            .shared
             .db()
             .update_object(&self.key, |obj| {
                 let ex = obj.expire();
@@ -307,12 +350,16 @@ impl CmdExecutor for ExpireAt {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 2 && args.len() != 3 {
             return Err(Err::WrongArgNum.into());
         }
 
         let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
         let timestamp = atoi::<u64>(&args.next().unwrap())?;
         let timestamp = epoch() + Duration::from_secs(timestamp);
         if timestamp <= Instant::now() {
@@ -343,11 +390,17 @@ pub struct ExpireTime {
 }
 
 impl CmdExecutor for ExpireTime {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "EXPIRETIME";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = EXPIRETIME_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut ex = None;
-        shared
+        handler
+            .shared
             .db()
             .visit_object(&self.key, |obj| {
                 ex = obj.expire();
@@ -366,14 +419,17 @@ impl CmdExecutor for ExpireTime {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(ExpireTime {
-            key: args.next().unwrap(),
-        })
+        let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(ExpireTime { key })
     }
 }
 
@@ -387,32 +443,35 @@ pub struct Keys {
 
 // TODO: 提供非阻塞操作
 impl CmdExecutor for Keys {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "KEYS";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = KEYS_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))
-            .map_err(|_| "ERR invalid pattern is given")?;
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
+        let re = regex::bytes::Regex::new(
+            std::str::from_utf8(&self.pattern).map_err(|_| "ERR invalid pattern is given")?,
+        )
+        .map_err(|_| "ERR invalid pattern is given")?;
 
         let matched_keys = tokio::task::block_in_place(|| {
-            let db = shared.db();
+            let db = handler.shared.db();
             let matched_keys = if db.size() > (1024 << 32) {
                 db.entries()
                     .par_iter()
                     .filter_map(|entry| {
-                        std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key)
-                                .then(|| Resp3::new_blob_string(entry.key().clone()))
-                        })
+                        re.is_match(entry.key())
+                            .then(|| Resp3::new_blob_string(entry.key().clone()))
                     })
                     .collect::<Vec<Resp3>>()
             } else {
                 db.entries()
                     .iter()
                     .filter_map(|entry| {
-                        std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key)
-                                .then(|| Resp3::new_blob_string(entry.key().clone()))
-                        })
+                        re.is_match(entry.key())
+                            .then(|| Resp3::new_blob_string(entry.key().clone()))
                     })
                     .collect::<Vec<Resp3>>()
             };
@@ -423,19 +482,24 @@ impl CmdExecutor for Keys {
         Ok(Some(Resp3::new_array(matched_keys)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Keys {
-            pattern: args.next().unwrap(),
-        })
+        let pattern = args.next().unwrap();
+        if ac.is_forbidden_key(&pattern, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Keys { pattern })
     }
 }
+
 /// # Reply:
 ///
 /// **Array reply:** a list of keys matching pattern.
+// TODO: 也许应该返回Resp3::Push?
 #[derive(Debug)]
 pub struct NBKeys {
     pattern: Bytes,
@@ -443,7 +507,9 @@ pub struct NBKeys {
 }
 
 impl CmdExecutor for NBKeys {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "NBKEYS";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = NBKEYS_FLAG;
 
     async fn execute(
         self,
@@ -493,17 +559,19 @@ impl CmdExecutor for NBKeys {
 
         Ok(None)
     }
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        Ok(None)
-    }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
 
+        let pattern = args.next().unwrap();
+        if ac.is_forbidden_key(&pattern, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
         Ok(NBKeys {
-            pattern: args.next().unwrap(),
+            pattern,
             redirect: atoi::atoi::<Id>(&args.next().unwrap()).ok_or(Err::A2IParse)?,
         })
     }
@@ -520,10 +588,16 @@ pub struct Persist {
 }
 
 impl CmdExecutor for Persist {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "PERSIST";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = PERSIST_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        shared
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
+        handler
+            .shared
             .db()
             .update_object(&self.key, |obj| {
                 if obj.expire().is_none() {
@@ -539,14 +613,17 @@ impl CmdExecutor for Persist {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Persist {
-            key: args.next().unwrap(),
-        })
+        let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Persist { key })
     }
 }
 
@@ -562,12 +639,18 @@ pub struct Pttl {
 }
 
 impl CmdExecutor for Pttl {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "PTTL";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = PTTL_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut ex = None;
 
-        shared
+        handler
+            .shared
             .db()
             .visit_object(&self.key, |obj| {
                 ex = obj.expire();
@@ -584,14 +667,17 @@ impl CmdExecutor for Pttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Pttl {
-            key: args.next().unwrap(),
-        })
+        let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Pttl { key })
     }
 }
 
@@ -607,12 +693,18 @@ pub struct Ttl {
 }
 
 impl CmdExecutor for Ttl {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "TTL";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = TTL_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut ex = None;
 
-        shared
+        handler
+            .shared
             .db()
             .visit_object(&self.key, |obj| {
                 ex = obj.expire();
@@ -629,14 +721,17 @@ impl CmdExecutor for Ttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Ttl {
-            key: args.next().unwrap(),
-        })
+        let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Ttl { key })
     }
 }
 
@@ -650,12 +745,18 @@ pub struct Type {
 }
 
 impl CmdExecutor for Type {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "TYPE";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = TYPE_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let mut typ = "";
 
-        shared
+        handler
+            .shared
             .db()
             .visit_object(&self.key, |obj| {
                 typ = obj.type_str();
@@ -666,14 +767,17 @@ impl CmdExecutor for Type {
         Ok(Some(Resp3::new_simple_string(typ.into())))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 1 {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Type {
-            key: args.next().unwrap(),
-        })
+        let key = args.next().unwrap();
+        if ac.is_forbidden_key(&key, Self::TYPE) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Type { key })
     }
 }
 
@@ -681,10 +785,7 @@ impl CmdExecutor for Type {
 mod cmd_key_tests {
     use super::*;
     use crate::{
-        shared::{
-            db::{Hash, List, ObjectInner, Set, Str, ZSet},
-            Shared,
-        },
+        shared::db::{Hash, List, ObjectInner, Set, Str, ZSet},
         util::epoch,
     };
 
@@ -693,49 +794,65 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn del_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
         assert!(db.contains_object(&"key1".into()).await);
 
         // case: 键存在
-        let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key1"].as_ref())).unwrap();
-        let result = del._execute(&shared).await.unwrap().unwrap();
+        let del = Del::parse(
+            &mut CmdUnparsed::from(["DEL", "key1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = del.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
         assert!(!db.contains_object(&"key1".into()).await);
 
         // case: 键不存在
-        let del = Del::parse(&mut CmdUnparsed::from(["DEL", "key_nil"].as_ref())).unwrap();
-        let result = del._execute(&shared).await.unwrap().unwrap();
+        let del = Del::parse(
+            &mut CmdUnparsed::from(["DEL", "key_nil"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = del.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(0));
     }
 
     #[tokio::test]
     async fn exists_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
         assert!(db.contains_object(&"key1".into()).await);
 
         // case: 键存在
-        let exists = Exists::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
-        let result = exists._execute(&shared).await.unwrap().unwrap();
+        let exists = Exists::parse(
+            &mut CmdUnparsed::from(["key1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = exists.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
         // case: 键不存在
-        let exists = Exists::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
-        let result = exists._execute(&shared).await.unwrap_err();
+        let exists = Exists::parse(
+            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = exists.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
     }
 
     #[tokio::test]
     async fn expire_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
@@ -748,8 +865,12 @@ mod cmd_key_tests {
             .is_none());
 
         // case: 键存在，设置过期时间
-        let expire = Expire::parse(&mut CmdUnparsed::from(["key1", "10"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap().unwrap();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key1", "10"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
         assert!(db
             .get_object_entry(&"key1".into())
@@ -760,8 +881,12 @@ mod cmd_key_tests {
             .is_some());
 
         // case: 键不存在
-        let expire = Expire::parse(&mut CmdUnparsed::from(["key_nil", "10"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap_err();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_nil", "10"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
         db.insert_object(
@@ -778,16 +903,20 @@ mod cmd_key_tests {
         )
         .await;
         // case: with EX option
-        let expire =
-            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap_err();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire = Expire::parse(&mut CmdUnparsed::from(
-            ["key_without_ex", "10", "NX"].as_ref(),
-        ))
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_without_ex", "10", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire._execute(&shared).await.unwrap().unwrap();
+        let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
         db.insert_object(
@@ -805,16 +934,20 @@ mod cmd_key_tests {
         .await;
 
         // case: with NX option
-        let expire =
-            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap_err();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire = Expire::parse(&mut CmdUnparsed::from(
-            ["key_without_ex", "10", "NX"].as_ref(),
-        ))
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_without_ex", "10", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire._execute(&shared).await.unwrap().unwrap();
+        let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
         db.insert_object(
@@ -832,14 +965,20 @@ mod cmd_key_tests {
         .await;
 
         // case: with GT option
-        let expire =
-            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "5", "GT"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap_err();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "5", "GT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire =
-            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "20", "GT"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap().unwrap();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "20", "GT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
         db.insert_object(
@@ -857,21 +996,27 @@ mod cmd_key_tests {
         .await;
 
         // case: with LT option
-        let expire =
-            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "20", "LT"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap_err();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "20", "LT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire =
-            Expire::parse(&mut CmdUnparsed::from(["key_with_ex", "5", "LT"].as_ref())).unwrap();
-        let result = expire._execute(&shared).await.unwrap().unwrap();
+        let expire = Expire::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "5", "LT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
     }
 
     #[tokio::test]
     async fn expire_at_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
@@ -884,15 +1029,18 @@ mod cmd_key_tests {
             .is_none());
 
         // case: 键存在，设置过期时间
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            [
-                "key1",
-                "1893427200", // 2030-01-01 00:00:00
-            ]
-            .as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(
+                [
+                    "key1",
+                    "1893427200", // 2030-01-01 00:00:00
+                ]
+                .as_ref(),
+            ),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
         assert!(db
             .get_object_entry(&"key1".into())
@@ -903,9 +1051,12 @@ mod cmd_key_tests {
             .is_some());
 
         // case: 键不存在
-        let expire_at =
-            ExpireAt::parse(&mut CmdUnparsed::from(["key_nil", "1893427200"].as_ref())).unwrap();
-        let result = expire_at._execute(&shared).await.unwrap_err();
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_nil", "1893427200"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire_at.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
         db.insert_object(
@@ -923,18 +1074,20 @@ mod cmd_key_tests {
         .await;
 
         // case: with EX option
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_with_ex", "1893427200", "NX"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "1893427200", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap_err();
+        let result = expire_at.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_without_ex", "1893427200", "NX"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_without_ex", "1893427200", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
         db.insert_object(
@@ -952,18 +1105,20 @@ mod cmd_key_tests {
         .await;
 
         // case: with NX option
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_with_ex", "1893427200", "NX"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "1893427200", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap_err();
+        let result = expire_at.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_without_ex", "1893427200", "NX"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_without_ex", "1893427200", "NX"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
         db.insert_object(
@@ -981,18 +1136,20 @@ mod cmd_key_tests {
         .await;
 
         // case: with GT option
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_with_ex", "1893427000", "GT"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "1893427000", "GT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap_err();
+        let result = expire_at.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_with_ex", "1893427201", "GT"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "1893427201", "GT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
         db.insert_object(
@@ -1010,25 +1167,27 @@ mod cmd_key_tests {
         .await;
 
         // case: with LT option
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_with_ex", "1893427201", "LT"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "1893427201", "LT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap_err();
+        let result = expire_at.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
-        let expire_at = ExpireAt::parse(&mut CmdUnparsed::from(
-            ["key_with_ex", "1893427000", "LT"].as_ref(),
-        ))
+        let expire_at = ExpireAt::parse(
+            &mut CmdUnparsed::from(["key_with_ex", "1893427000", "LT"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
-        let result = expire_at._execute(&shared).await.unwrap().unwrap();
+        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
     }
 
     #[tokio::test]
     async fn expire_time_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
@@ -1047,19 +1206,30 @@ mod cmd_key_tests {
         .await;
 
         // case: 键存在，但没有过期时间
-        let expire_time = ExpireTime::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
-        let result = expire_time._execute(&shared).await.unwrap_err();
+        let expire_time = ExpireTime::parse(
+            &mut CmdUnparsed::from(["key1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire_time.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == -1);
 
         // case: 键不存在
-        let expire_time = ExpireTime::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
-        let result = expire_time._execute(&shared).await.unwrap_err();
+        let expire_time = ExpireTime::parse(
+            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire_time.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == -2);
 
         // case: 键存在且有过期时间
-        let expire_time =
-            ExpireTime::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
-        let result = expire_time._execute(&shared).await.unwrap().unwrap();
+        let expire_time = ExpireTime::parse(
+            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = expire_time.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(
             result,
             Resp3::new_integer(expire.duration_since(epoch()).as_secs() as Int)
@@ -1068,8 +1238,8 @@ mod cmd_key_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn keys_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
@@ -1080,9 +1250,13 @@ mod cmd_key_tests {
         db.insert_object(Key::from("key4"), ObjectInner::new_str("value4", None))
             .await;
 
-        let keys = Keys::parse(&mut CmdUnparsed::from([".*"].as_ref())).unwrap();
+        let keys = Keys::parse(
+            &mut CmdUnparsed::from([".*"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = keys
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1096,9 +1270,13 @@ mod cmd_key_tests {
                 && result.contains(&Resp3::new_blob_string("key4".into()))
         );
 
-        let keys = Keys::parse(&mut CmdUnparsed::from(["key*"].as_ref())).unwrap();
+        let keys = Keys::parse(
+            &mut CmdUnparsed::from(["key*"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = keys
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1112,9 +1290,13 @@ mod cmd_key_tests {
                 && result.contains(&Resp3::new_blob_string("key4".into()))
         );
 
-        let keys = Keys::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let keys = Keys::parse(
+            &mut CmdUnparsed::from(["key1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = keys
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1126,8 +1308,8 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn persist_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(
             Key::from("key_with_ex"),
@@ -1144,8 +1326,12 @@ mod cmd_key_tests {
         .await;
 
         // case: 键存在，有过期时间
-        let persist = Persist::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
-        let result = persist._execute(&shared).await.unwrap().unwrap();
+        let persist = Persist::parse(
+            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = persist.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
         assert!(db
             .get_object_entry(&"key_with_ex".into())
@@ -1156,20 +1342,28 @@ mod cmd_key_tests {
             .is_none());
 
         // case: 键存在，没有过期时间
-        let persist = Persist::parse(&mut CmdUnparsed::from(["key_without_ex"].as_ref())).unwrap();
-        let result = persist._execute(&shared).await.unwrap_err();
+        let persist = Persist::parse(
+            &mut CmdUnparsed::from(["key_without_ex"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = persist.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
 
         // case: 键不存在
-        let persist = Persist::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
-        let result = persist._execute(&shared).await.unwrap_err();
+        let persist = Persist::parse(
+            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = persist.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == 0);
     }
 
     #[tokio::test]
     async fn pttl_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
@@ -1189,19 +1383,31 @@ mod cmd_key_tests {
         .await;
 
         // case: 键存在，但没有过期时间
-        let pttl = Pttl::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
-        let result = pttl._execute(&shared).await.unwrap_err();
+        let pttl = Pttl::parse(
+            &mut CmdUnparsed::from(["key1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = pttl.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == -1);
 
         // case: 键不存在
-        let pttl = Pttl::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
-        let result = pttl._execute(&shared).await.unwrap_err();
+        let pttl = Pttl::parse(
+            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = pttl.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == -2);
 
         // case: 键存在且有过期时间
-        let pttl = Pttl::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
+        let pttl = Pttl::parse(
+            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = pttl
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1212,8 +1418,8 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn ttl_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db();
 
         db.insert_object(Key::from("key1"), ObjectInner::new_str("value1", None))
             .await;
@@ -1233,19 +1439,31 @@ mod cmd_key_tests {
         .await;
 
         // case: 键存在，但没有过期时间
-        let ttl = Ttl::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
-        let result = ttl._execute(&shared).await.unwrap_err();
+        let ttl = Ttl::parse(
+            &mut CmdUnparsed::from(["key1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = ttl.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == -1);
 
         // case: 键不存在
-        let ttl = Ttl::parse(&mut CmdUnparsed::from(["key_nil"].as_ref())).unwrap();
-        let result = ttl._execute(&shared).await.unwrap_err();
+        let ttl = Ttl::parse(
+            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let result = ttl.execute(&mut handler).await.unwrap_err();
         matches!(result, CmdError::ErrorCode { code } if code == -2);
 
         // case: 键存在且有过期时间
-        let ttl = Ttl::parse(&mut CmdUnparsed::from(["key_with_ex"].as_ref())).unwrap();
+        let ttl = Ttl::parse(
+            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = ttl
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1256,8 +1474,8 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn type_test() {
-        let shared = Shared::default();
-        let db = shared.db();
+        let (mut handler, _) = Handler::new_fake();
+        let db = handler.shared.db().clone();
 
         db.insert_object(
             Key::from("key1"),
@@ -1286,9 +1504,13 @@ mod cmd_key_tests {
         .await;
 
         // case: 键存在
-        let typ = Type::parse(&mut CmdUnparsed::from(["key1"].as_ref())).unwrap();
+        let typ = Type::parse(
+            &mut CmdUnparsed::from(["key1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = typ
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1297,9 +1519,13 @@ mod cmd_key_tests {
             .to_string();
         assert_eq!(result, "string");
 
-        let typ = Type::parse(&mut CmdUnparsed::from(["key2"].as_ref())).unwrap();
+        let typ = Type::parse(
+            &mut CmdUnparsed::from(["key2"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = typ
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1308,9 +1534,13 @@ mod cmd_key_tests {
             .to_string();
         assert_eq!(result, "list");
 
-        let typ = Type::parse(&mut CmdUnparsed::from(["key3"].as_ref())).unwrap();
+        let typ = Type::parse(
+            &mut CmdUnparsed::from(["key3"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = typ
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1319,9 +1549,13 @@ mod cmd_key_tests {
             .to_string();
         assert_eq!(result, "set");
 
-        let typ = Type::parse(&mut CmdUnparsed::from(["key4"].as_ref())).unwrap();
+        let typ = Type::parse(
+            &mut CmdUnparsed::from(["key4"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = typ
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -1330,9 +1564,13 @@ mod cmd_key_tests {
             .to_string();
         assert_eq!(result, "hash");
 
-        let typ = Type::parse(&mut CmdUnparsed::from(["key5"].as_ref())).unwrap();
+        let typ = Type::parse(
+            &mut CmdUnparsed::from(["key5"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let result = typ
-            ._execute(&shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()

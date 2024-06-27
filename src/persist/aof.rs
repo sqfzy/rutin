@@ -172,7 +172,7 @@ impl AOF {
 
         self.file.sync_data().await?;
         self.rewrite().await?; // 最后再重写一次，确保数据完整
-        println!("AOF file rewrited.");
+        tracing::info!("AOF file rewrited.");
         Ok(())
     }
 

@@ -12,13 +12,18 @@ keywords = ["redis", "async", "database", "kv"]
 categories = ["database"]
 
 [dependencies]
-anyhow = "1.0.59"                                                          # error handling
+anyhow = "1.0.59" # error handling
 futures = "0.3"
-bytes = "1.5"                                                              # helps manage buffers
+bytes = { version = "1.5", features = ["serde"] } # helps manage buffers
 clap = { version = "4.5", features = ["derive"] }
 config = "0.14.0"
 crc = "3.0.1"
-dashmap = { version = "5.5.3", features = ["raw-api", "inline", "rayon"] }
+dashmap = { version = "6.0.1", features = [
+  "raw-api",
+  "inline",
+  "rayon",
+  "serde",
+] }
 # once_cell = "1.19.0"
 rand = "0.8.5"
 skiplist = "0.5.1"
@@ -37,7 +42,7 @@ parking_lot = "0.12.1"
 ahash = "0.8.11"
 strum = { version = "0.26", features = ["derive"] }
 num_cpus = "1.16.0"
-regex = "1.10.4"
+regex = { version = "1.10.4", features = ["perf"] }
 # monoio = "0.2.3"
 # lockfree-object-pool = "0.1.5"
 # async-recursion = "1.1.1"
@@ -61,7 +66,7 @@ owning_ref = "0.4.1"
 polonius-the-crab = "0.4.1"
 num-bigint = "0.4.5"
 memchr = "2.7.2"
-smallvec = "1.13.2"
+smallvec = { version = "1.13.2", features = ["const_new", "union"] }
 mimalloc = "0.1"
 arc-swap = "1.7.1"
 bus = "2.4.1"
@@ -69,6 +74,8 @@ tokio-uring = "0.5.0"
 event-listener = "5.3.1"
 # bstr = "1.9.1"
 bytestring = "1.3.1"
+serde_with = "3.8.1"
+enum_dispatch = "0.3.13"
 # neat-date-time = "0.2.0"
 
 # [target.'cfg(not(target_env = "msvc"))'.dependencies]
@@ -84,17 +91,14 @@ criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
 name = "rutin_benchmark"
 harness = false
 
-# [profile.dev]
-# rustflags = ["--cfg", "tokio_unstable"]
-#
+
 [profile.release]
-# rustflags = ["--cfg", "tokio_unstable"]
 # opt-level = "z"   # 或者 "s"，表示进行更小的尺寸优化
 opt-level = 3 # 最大优化
 # lto = "fat"   # 启用链接时优化（Link Time Optimization）
 lto = true
-# debug = false # 关闭调试信息
-debug = true      # 关闭调试信息
+debug = false # 关闭调试信息
+# debug = true      # 关闭调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 panic = "abort"
 

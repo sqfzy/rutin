@@ -1,13 +1,14 @@
-mod commands;
-mod error;
+pub mod commands;
+pub mod error;
 
 pub use error::*;
 
 use crate::{
+    conf::AccessControl,
     connection::AsyncStream,
     frame::Resp3,
     server::{Handler, ServerError},
-    shared::Shared,
+    CmdFlag,
 };
 use bytes::Bytes;
 use commands::*;
@@ -15,18 +16,25 @@ use tracing::instrument;
 
 #[allow(async_fn_in_trait)]
 pub trait CmdExecutor: Sized + std::fmt::Debug {
-    const CMD_TYPE: CmdType;
+    const NAME: &'static str;
+    const TYPE: CmdType;
+    const FLAG: CmdFlag;
 
     #[inline]
     async fn apply(
         mut args: CmdUnparsed,
         handler: &mut Handler<impl AsyncStream>,
     ) -> Result<Option<Resp3>, CmdError> {
-        let cmd = Self::parse(&mut args)?;
+        // 检查是否有权限执行该命令
+        if handler.context.ac.is_forbidden_cmd(Self::FLAG) {
+            return Err(Err::NoPermission.into());
+        }
+
+        let cmd = Self::parse(&mut args, &handler.context.ac)?;
 
         let res = cmd.execute(handler).await?;
 
-        if Self::CMD_TYPE == CmdType::Write {
+        if Self::TYPE == CmdType::Write {
             // 也许存在replicate需要传播
             handler
                 .shared
@@ -46,17 +54,12 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         Ok(res)
     }
 
-    #[inline]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
-        self._execute(&handler.shared).await
-    }
+    ) -> Result<Option<Resp3>, CmdError>;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError>;
-
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError>;
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError>;
 }
 
 #[derive(PartialEq)]
@@ -80,100 +83,165 @@ pub async fn dispatch(
     }
 }
 
-#[allow(clippy::type_complexity)]
 #[inline]
 #[instrument(level = "debug", skip(handler), err, ret)]
 pub async fn _dispatch(
     cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
 ) -> Result<Option<Resp3>, CmdError> {
-    let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
-    let mut cmd_name = [0; 16];
-    let len = cmd.get_uppercase(0, &mut cmd_name).ok_or(Err::Syntax)?;
-    cmd.advance(1);
+    macro_rules! dispatch_command {
+        ( $cmd:expr, $handler:expr, $( $cmd_type:ident ),*; $( $cmd_group:expr => $( $cmd_type2:ident ),* );* ) => {
+            {
+                let mut cmd_name_buf = [0; 32];
+                let len = $cmd.get_uppercase(0, &mut cmd_name_buf).ok_or(Err::Syntax)?;
+                $cmd.advance(1);
 
-    let res = match &cmd_name[..len] {
-        // commands::other
-        // b"COMMAND" => _Command::apply(cmd_frame, handler).await?,
-        b"BGSAVE" => BgSave::apply(cmd, handler).await?,
-        b"ECHO" => Echo::apply(cmd, handler).await?,
-        b"PING" => Ping::apply(cmd, handler).await?,
-        b"CLIENT" => {
-            let len = cmd.get_uppercase(0, &mut cmd_name).ok_or(Err::Syntax)?;
-            cmd.advance(1);
+                let cmd_name = if let Ok(s) = std::str::from_utf8(&cmd_name_buf[..len]) {
+                    s
+                } else {
+                    return Err(Err::UnknownCmd.into());
+                };
 
-            match &cmd_name[..len] {
-                b"TRACKING" => ClientTracking::apply(cmd, handler).await?,
-                _ => return Err(Err::UnknownCmd.into()),
+                match cmd_name {
+                    $(
+                        $cmd_type::NAME => $cmd_type::apply($cmd, $handler).await,
+                    )*
+                    $(
+                        $cmd_group => {
+                            let len2 = $cmd.get_uppercase(0, &mut cmd_name_buf[len..]).ok_or(Err::Syntax)?;
+                            $cmd.advance(1);
+
+                            let cmd_name = if let Ok(s) = std::str::from_utf8(&cmd_name_buf[..(len + len2)]) {
+                                s
+                            } else {
+                                return Err(Err::UnknownCmd.into());
+                            };
+                            match cmd_name {
+                                $(
+                                    $cmd_type2::NAME => $cmd_type2::apply($cmd, $handler).await,
+                                )*
+                                _ => Err(Err::UnknownCmd.into()),
+                            }
+                        }
+                    )*
+                    _ => Err(Err::UnknownCmd.into()),
+                }
             }
-        }
+        };
+    }
+
+    let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
+
+    dispatch_command!(
+        cmd,
+        handler,
+        // commands::other
+        BgSave, Ping, Echo, Auth,
 
         // commands::key
-        b"DEL" => Del::apply(cmd, handler).await?,
-        b"EXISTS" => Exists::apply(cmd, handler).await?,
-        b"EXPIRE" => Expire::apply(cmd, handler).await?,
-        b"EXPIREAT" => ExpireAt::apply(cmd, handler).await?,
-        b"EXPIRETIME" => ExpireTime::apply(cmd, handler).await?,
-        b"KEYS" => Keys::apply(cmd, handler).await?,
-        b"PERSIST" => Persist::apply(cmd, handler).await?,
-        b"PTTL" => Pttl::apply(cmd, handler).await?,
-        b"TTL" => Ttl::apply(cmd, handler).await?,
-        b"TYPE" => Type::apply(cmd, handler).await?,
+        Del, Dump, Exists, Expire, ExpireAt, ExpireTime, Keys, NBKeys, Persist,
+        Pttl, Ttl, Type,
 
         // commands::str
-        b"APPEND" => Append::apply(cmd, handler).await?,
-        b"DECR" => Decr::apply(cmd, handler).await?,
-        b"DECRBY" => DecrBy::apply(cmd, handler).await?,
-        b"GET" => Get::apply(cmd, handler).await?,
-        b"GETRANGE" => GetRange::apply(cmd, handler).await?,
-        b"GETSET" => GetSet::apply(cmd, handler).await?,
-        b"INCR" => Incr::apply(cmd, handler).await?,
-        b"INCRBY" => IncrBy::apply(cmd, handler).await?,
-        b"MGET" => MGet::apply(cmd, handler).await?,
-        b"MSET" => MSet::apply(cmd, handler).await?,
-        b"MSETNX" => MSetNx::apply(cmd, handler).await?,
-        b"SET" => Set::apply(cmd, handler).await?,
-        b"SETEX" => SetEx::apply(cmd, handler).await?,
-        b"SETNX" => SetNx::apply(cmd, handler).await?,
-        b"STRLEN" => StrLen::apply(cmd, handler).await?,
+        Append, Decr, DecrBy, Get, GetRange, GetSet, Incr, IncrBy, MGet, MSet,
+        MSetNx, Set, SetEx, SetNx, StrLen,
 
         // commands::list
-        b"LLEN" => LLen::apply(cmd, handler).await?,
-        b"LPUSH" => LPush::apply(cmd, handler).await?,
-        b"LPOP" => LPop::apply(cmd, handler).await?,
-        b"BLPOP" => BLPop::apply(cmd, handler).await?,
-        b"NBLPOP" => NBLPop::apply(cmd, handler).await?,
-        b"BLMOVE" => BLMove::apply(cmd, handler).await?,
+        LLen, LPush, LPop, BLPop, LPos, NBLPop, BLMove,
 
         // commands::hash
-        b"HDEL" => HDel::apply(cmd, handler).await?,
-        b"HEXISTS" => HExists::apply(cmd, handler).await?,
-        b"HGET" => HGet::apply(cmd, handler).await?,
-        b"HSET" => HSet::apply(cmd, handler).await?,
+        HDel, HExists, HGet, HSet,
 
         // commands::pub_sub
-        b"PUBLISH" => Publish::apply(cmd, handler).await?,
-        b"SUBSCRIBE" => Subscribe::apply(cmd, handler).await?,
-        b"UNSUBSCRIBE" => Unsubscribe::apply(cmd, handler).await?,
+        Publish, Subscribe, Unsubscribe,
 
         // commands::script
-        b"EVAL" => Eval::apply(cmd, handler).await?,
-        b"EVALNAME" => EvalName::apply(cmd, handler).await?,
-        b"SCRIPT" => {
-            let len = cmd.get_uppercase(0, &mut cmd_name).ok_or(Err::Syntax)?;
-            cmd.advance(1);
+        Eval, EvalName;
 
-            match &cmd_name[..len] {
-                b"EXISTS" => ScriptExists::apply(cmd, handler).await?,
-                b"FLUSH" => ScriptFlush::apply(cmd, handler).await?,
-                b"REGISTER" => ScriptRegister::apply(cmd, handler).await?,
-                _ => return Err(Err::UnknownCmd.into()),
+        "CLIENT" => ClientTracking;
+
+        "SCRIPT" => ScriptExists, ScriptFlush, ScriptRegister
+    )
+}
+
+pub fn cmd_name_to_flag(cmd_name: &mut [u8]) -> Result<CmdFlag, &'static str> {
+    macro_rules! cmd_name_to_flag {
+        ( $cmd_name:expr,  $( $cmd_type:ident ),*) => {
+            match $cmd_name {
+                $(
+                    $cmd_type::NAME => Ok($cmd_type::FLAG),
+                )*
+                _ => Err("unknown command"),
             }
-        }
-        _ => return Err(Err::UnknownCmd.into()),
-    };
+        };
+    }
 
-    Ok(res)
+    cmd_name.make_ascii_uppercase();
+    let cmd_name = std::str::from_utf8(cmd_name).map_err(|_| "unknown command")?;
+
+    cmd_name_to_flag!(
+        cmd_name,
+        // commands::other
+        BgSave,
+        Ping,
+        Echo,
+        Auth,
+        // commands::key
+        Del,
+        Dump,
+        Exists,
+        Expire,
+        ExpireAt,
+        ExpireTime,
+        Keys,
+        NBKeys,
+        Persist,
+        Pttl,
+        Ttl,
+        Type,
+        // commands::str
+        Append,
+        Decr,
+        DecrBy,
+        Get,
+        GetRange,
+        GetSet,
+        Incr,
+        IncrBy,
+        MGet,
+        MSet,
+        MSetNx,
+        Set,
+        SetEx,
+        SetNx,
+        StrLen,
+        // commands::list
+        LLen,
+        LPush,
+        LPop,
+        BLPop,
+        LPos,
+        NBLPop,
+        BLMove,
+        // commands::hash
+        HDel,
+        HExists,
+        HGet,
+        HSet,
+        // commands::pub_sub
+        Publish,
+        Subscribe,
+        Unsubscribe,
+        // commands::script
+        Eval,
+        EvalName,
+        //
+        ClientTracking,
+        //
+        ScriptExists,
+        ScriptFlush,
+        ScriptRegister
+    )
 }
 
 #[derive(Debug)]
@@ -186,11 +254,11 @@ pub struct CmdUnparsed {
 impl CmdUnparsed {
     #[inline]
     pub fn len(&self) -> usize {
-        self.end - self.start + 1
+        // self.end - self.start + 1
+        self.end.saturating_sub(self.start) + 1
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.start > self.end
     }
 

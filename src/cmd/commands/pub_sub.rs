@@ -1,13 +1,14 @@
+use super::*;
 use crate::{
     cmd::{
         error::{CmdError, Err},
         CmdExecutor, CmdType, CmdUnparsed,
     },
+    conf::AccessControl,
     connection::AsyncStream,
     frame::Resp3,
     server::Handler,
-    shared::Shared,
-    Int, Key,
+    CmdFlag, Int, Key,
 };
 use bytes::Bytes;
 use snafu::location;
@@ -24,11 +25,17 @@ pub struct Publish {
 }
 
 impl CmdExecutor for Publish {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "PUBLISH";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = PUBLISH_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         // 获取正在监听的订阅者
-        let listeners = shared
+        let listeners = handler
+            .shared
             .db()
             .get_channel_all_listener(&self.topic)
             .ok_or(CmdError::from(0))?;
@@ -46,7 +53,10 @@ impl CmdExecutor for Publish {
 
             // 如果发送失败，证明订阅者已经关闭连接，此时应该从Db中移除该订阅者
             if res.is_err() {
-                shared.db().remove_channel_listener(&self.topic, &listener);
+                handler
+                    .shared
+                    .db()
+                    .remove_channel_listener(&self.topic, &listener);
             } else {
                 count += 1;
             }
@@ -55,7 +65,7 @@ impl CmdExecutor for Publish {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -73,7 +83,9 @@ pub struct Subscribe {
 }
 
 impl CmdExecutor for Subscribe {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "SUBSCRIBE";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = SUBSCRIBE_FLAG;
 
     async fn execute(
         self,
@@ -121,11 +133,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        Ok(None)
-    }
-
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -147,7 +155,9 @@ pub struct Unsubscribe {
 }
 
 impl CmdExecutor for Unsubscribe {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "UNSUBSCRIBE";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = UNSUBSCRIBE_FLAG;
 
     async fn execute(
         self,
@@ -205,11 +215,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    async fn _execute(self, _shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        Ok(None)
-    }
-
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -232,8 +238,11 @@ mod cmd_pub_sub_tests {
         let (mut handler, _) = Handler::new_fake();
 
         // 订阅channel1和channel2
-        let subscribe =
-            Subscribe::parse(&mut CmdUnparsed::from(["channel1", "channel2"].as_ref())).unwrap();
+        let subscribe = Subscribe::parse(
+            &mut CmdUnparsed::from(["channel1", "channel2"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         subscribe.execute(&mut handler).await.unwrap();
 
         assert!(handler
@@ -253,7 +262,11 @@ mod cmd_pub_sub_tests {
         );
 
         // 订阅channel3
-        let subscribe = Subscribe::parse(&mut CmdUnparsed::from(["channel3"].as_ref())).unwrap();
+        let subscribe = Subscribe::parse(
+            &mut CmdUnparsed::from(["channel3"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         subscribe.execute(&mut handler).await.unwrap();
 
         assert!(handler
@@ -268,10 +281,13 @@ mod cmd_pub_sub_tests {
         );
 
         // 向channel1发布消息
-        let publish =
-            Publish::parse(&mut CmdUnparsed::from(["channel1", "hello"].as_ref())).unwrap();
+        let publish = Publish::parse(
+            &mut CmdUnparsed::from(["channel1", "hello"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let res = publish
-            ._execute(&handler.shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -297,10 +313,13 @@ mod cmd_pub_sub_tests {
         assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob_string("hello".into()));
 
         // 向channel2发布消息
-        let publish =
-            Publish::parse(&mut CmdUnparsed::from(["channel2", "world"].as_ref())).unwrap();
+        let publish = Publish::parse(
+            &mut CmdUnparsed::from(["channel2", "world"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let res = publish
-            ._execute(&handler.shared)
+            .execute(&mut handler)
             .await
             .unwrap()
             .unwrap()
@@ -326,16 +345,20 @@ mod cmd_pub_sub_tests {
         assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob_string("world".into()));
 
         // 尝试向未订阅的频道发布消息
-        let publish = Publish::parse(&mut CmdUnparsed::from(
-            ["channel_not_exist", "hello"].as_ref(),
-        ))
+        let publish = Publish::parse(
+            &mut CmdUnparsed::from(["channel_not_exist", "hello"].as_ref()),
+            &AccessControl::new_loose(),
+        )
         .unwrap();
         let res = publish.execute(&mut handler).await.unwrap_err();
         matches!(res, CmdError::ErrorCode { code } if code == 0);
 
         // 取消订阅channel1
-        let unsubscribe =
-            Unsubscribe::parse(&mut CmdUnparsed::from(["channel1"].as_ref())).unwrap();
+        let unsubscribe = Unsubscribe::parse(
+            &mut CmdUnparsed::from(["channel1"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         unsubscribe.execute(&mut handler).await.unwrap();
 
         assert!(handler

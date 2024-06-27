@@ -2,6 +2,22 @@
 /// 2. 如果提供了配置文件，读取配置文件并更新
 /// 3. 如果命令行参数有 --server.addr 之类的配置项，merge 该配置
 /// 4. 如果环境变量有 SERVER_ADDR 之类配置，进行 merge
+mod aof;
+mod memory;
+mod rdb;
+mod replica;
+mod security;
+mod server;
+mod tls;
+
+pub use aof::*;
+pub use memory::*;
+pub use rdb::*;
+pub use replica::*;
+pub use security::*;
+pub use server::*;
+pub use tls::*;
+
 use crate::{
     cli::Cli,
     persist::{
@@ -31,86 +47,6 @@ pub struct Conf {
     pub tls: Option<TLSConf>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename = "server")]
-pub struct ServerConf {
-    pub addr: String,
-    pub port: u16,
-    #[serde(skip)]
-    pub run_id: String, // 服务器的运行ID。由40个随机字符组成
-    pub expire_check_interval_secs: u64, // 检查过期键的周期
-    pub log_level: String,
-    pub max_connections: usize,
-    pub max_batch: usize,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "security")]
-pub struct SecurityConf {
-    pub requirepass: Option<String>, // 访问密码
-    // TODO:
-    #[serde(skip)]
-    pub forbaiden_commands: Vec<bool>,
-    // TODO:
-    #[serde(skip)]
-    pub rename_commands: Vec<Option<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "replication")]
-pub struct ReplicaConf {
-    pub replicaof: Option<String>, // 主服务器的地址
-    /// 最多允许多少个从服务器连接到当前服务器
-    pub max_replica: u8,
-    /// 用于记录当前服务器的复制偏移量。当从服务器发送 PSYNC
-    /// 命令给主服务器时，比较从服务器和主服务器的ACK_OFFSET，从而判断主从是否一致。
-    #[serde(skip)]
-    pub offset: AtomicCell<u64>,
-    #[serde(skip)]
-    // pub repli_backlog: RepliBackLog, // 复制积压缓冲区大小
-    pub masterauth: Option<String>, // 主服务器密码，设置该值之后，当从服务器连接到主服务器时会发送该值
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "rdb")]
-pub struct RDBConf {
-    pub file_path: String,     // RDB文件路径
-    pub save: Option<Save>, // RDB持久化间隔。格式为"seconds changes"，seconds表示间隔时间，changes表示键的变化次数
-    pub version: u32,       // RDB版本号
-    pub enable_checksum: bool, // 是否启用RDB校验和
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Save {
-    pub seconds: u64,
-    pub changes: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "aof")]
-pub struct AOFConf {
-    pub use_rdb_preamble: bool,
-    pub file_path: String,
-    pub append_fsync: AppendFSync,
-    pub auto_aof_rewrite_min_size: usize,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "memory")]
-pub struct MemoryConf {
-    // pub max_memory: u64,
-    // pub max_memory_policy: String,
-    // pub max_memory_samples: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename = "tls")]
-pub struct TLSConf {
-    pub port: u16,
-    pub cert_file: String,
-    pub key_file: String,
-}
-
 impl Default for Conf {
     fn default() -> Self {
         let run_id: String = rand::thread_rng()
@@ -132,6 +68,8 @@ impl Default for Conf {
                 requirepass: None,
                 forbaiden_commands: vec![false; 128],
                 rename_commands: vec![None; 128],
+                default_ac: Some(AccessControl::new_loose()),
+                acl: Default::default(),
             },
             replica: ReplicaConf {
                 max_replica: 3,

@@ -105,6 +105,8 @@ pub enum Err {
     A2IParse,
     #[snafu(display("ERR syntax error"))]
     Syntax,
-    #[snafu(display("ERR {}", message))]
+    #[snafu(display("NOPERM this user has insufficient permissions"))]
+    NoPermission,
+    #[snafu(display("{}", message))]
     Other { message: ByteString },
 }

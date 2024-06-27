@@ -757,7 +757,7 @@ mod lzf {
 
             let compressed = lzf_compress(input.as_slice());
             let compressibility = compressed.len() as f64 / len as f64;
-            println!(
+            tracing::info!(
                 "压缩前的数据长度: {}, 压缩后的数据长度: {}, 压缩率: {:.2}%",
                 len,
                 compressed.len(),

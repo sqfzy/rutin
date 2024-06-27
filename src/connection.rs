@@ -32,7 +32,7 @@ where
     writer_buf: BytesMut,
     /// 支持批处理
     batch_count: usize,
-    max_batch_count: usize,
+    pub max_batch_count: usize,
 }
 
 impl<S: AsyncStream> Connection<S> {

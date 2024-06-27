@@ -19,7 +19,7 @@ pub struct Listener {
 impl Listener {
     #[inline]
     pub async fn run(&mut self) -> Result<(), io::Error> {
-        println!(
+        tracing::info!(
             "server is running on {}:{}...",
             &self.shared.conf().server.addr,
             self.shared.conf().server.port
@@ -88,7 +88,7 @@ impl Listener {
             let mut rdb = RDB::new(&self.shared, rdb.file_path.clone(), rdb.enable_checksum);
             let start = tokio::time::Instant::now();
             rdb.save().await.ok();
-            println!("RDB file saved. Time elapsed: {:?}", start.elapsed());
+            tracing::info!("RDB file saved. Time elapsed: {:?}", start.elapsed());
         }
     }
 }

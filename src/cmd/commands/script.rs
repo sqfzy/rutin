@@ -1,7 +1,10 @@
+use super::*;
 use crate::{
     cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err, ServerErrSnafu},
+    conf::AccessControl,
+    connection::AsyncStream,
     frame::Resp3,
-    shared::Shared,
+    server::Handler,
     util::atoi,
 };
 use bytes::Bytes;
@@ -15,20 +18,26 @@ pub struct Eval {
 }
 
 impl CmdExecutor for Eval {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "EVAL";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = EVAL_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        let res = shared
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
+        let res = handler
+            .shared
             .script()
             .lua_script
-            .eval(shared.clone(), self.script, self.keys, self.args)
+            .eval(handler, self.script, self.keys, self.args)
             .await
             .context(ServerErrSnafu)?;
 
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -52,19 +61,25 @@ pub struct EvalName {
 }
 
 impl CmdExecutor for EvalName {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "EVALNAME";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = EVALNAME_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        let res = shared
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
+        let res = handler
+            .shared
             .script()
             .lua_script
-            .eval_name(shared.clone(), self.name, self.keys, self.args)
+            .eval_name(handler, self.name, self.keys, self.args)
             .await?;
 
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() < 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -86,14 +101,19 @@ pub struct ScriptExists {
 }
 
 impl CmdExecutor for ScriptExists {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "SCRIPTEXISTS";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = SCRIPT_EXISTS_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
         let res: Vec<_> = self
             .names
             .iter()
             .map(|name| {
-                let res = shared.script().lua_script.contain(name);
+                let res = handler.shared.script().lua_script.contain(name);
                 Resp3::<Bytes, bytestring::ByteString>::new_boolean(res)
             })
             .collect();
@@ -101,7 +121,7 @@ impl CmdExecutor for ScriptExists {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -116,15 +136,20 @@ impl CmdExecutor for ScriptExists {
 pub struct ScriptFlush {}
 
 impl CmdExecutor for ScriptFlush {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "SCRIPTFLUSH";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = SCRIPT_FLUSH_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        shared.script().lua_script.flush();
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
+        handler.shared.script().lua_script.flush();
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if !args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
@@ -140,10 +165,16 @@ pub struct ScriptRegister {
 }
 
 impl CmdExecutor for ScriptRegister {
-    const CMD_TYPE: CmdType = CmdType::Other;
+    const NAME: &'static str = "SCRIPTREGISTER";
+    const TYPE: CmdType = CmdType::Other;
+    const FLAG: CmdFlag = SCRIPT_REGISTER_FLAG;
 
-    async fn _execute(self, shared: &Shared) -> Result<Option<Resp3>, CmdError> {
-        shared
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> Result<Option<Resp3>, CmdError> {
+        handler
+            .shared
             .script()
             .lua_script
             .register_script(self.name, self.script)?;
@@ -151,7 +182,7 @@ impl CmdExecutor for ScriptRegister {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
@@ -169,62 +200,83 @@ mod cmd_script_tests {
 
     #[tokio::test]
     async fn eval_test() {
-        let shared = Shared::default();
+        let (mut handler, _) = Handler::new_fake();
 
-        let eval = Eval::parse(&mut ["return 1", "0"].as_ref().into()).unwrap();
-        let res = eval._execute(&shared).await.unwrap().unwrap();
+        let eval = Eval::parse(
+            &mut ["return 1", "0"].as_ref().into(),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let res = eval.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_integer(1));
 
         let eval = Eval::parse(
             &mut ["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"]
                 .as_ref()
                 .into(),
+            &AccessControl::new_loose(),
         )
         .unwrap();
-        let res = eval._execute(&shared).await.unwrap().unwrap();
+        let res = eval.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let eval = Eval::parse(
             &mut ["return redis.call('get', KEYS[1])", "1", "key"]
                 .as_ref()
                 .into(),
+            &AccessControl::new_loose(),
         )
         .unwrap();
-        let res = eval._execute(&shared).await.unwrap().unwrap();
+        let res = eval.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_blob_string("value".into()));
     }
 
     #[tokio::test]
     async fn script_test() {
-        let shared = Shared::default();
+        let (mut handler, _) = Handler::new_fake();
 
         let script_register = ScriptRegister::parse(
             &mut ["test", "redis.call('set', KEYS[1], ARGV[1])"]
                 .as_ref()
                 .into(),
+            &AccessControl::new_loose(),
         )
         .unwrap();
-        let res = script_register._execute(&shared).await.unwrap().unwrap();
+        let res = script_register
+            .execute(&mut handler)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
-        let script_exists = ScriptExists::parse(&mut ["test", "nothing"].as_ref().into()).unwrap();
-        let res = script_exists._execute(&shared).await.unwrap().unwrap();
+        let script_exists = ScriptExists::parse(
+            &mut ["test", "nothing"].as_ref().into(),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let res = script_exists.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(
             res,
             Resp3::new_array(vec![Resp3::new_boolean(true), Resp3::new_boolean(false)])
         );
 
-        let eval_name =
-            EvalName::parse(&mut ["test", "1", "key", "value"].as_ref().into()).unwrap();
-        let res = eval_name._execute(&shared).await.unwrap().unwrap();
+        let eval_name = EvalName::parse(
+            &mut ["test", "1", "key", "value"].as_ref().into(),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let res = eval_name.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
-        let script_flush = ScriptFlush::parse(&mut [].as_ref().into()).unwrap();
-        let res = script_flush._execute(&shared).await.unwrap().unwrap();
+        let script_flush =
+            ScriptFlush::parse(&mut [].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let res = script_flush.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
-        let script_exists = ScriptExists::parse(&mut ["test"].as_ref().into()).unwrap();
-        let res = script_exists._execute(&shared).await.unwrap().unwrap();
+        let script_exists =
+            ScriptExists::parse(&mut ["test"].as_ref().into(), &AccessControl::new_loose())
+                .unwrap();
+        let res = script_exists.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_array(vec![Resp3::new_boolean(false)]));
     }
 }

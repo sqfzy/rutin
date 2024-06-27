@@ -1,0 +1,8 @@
+127.0.0.1:6379> ACL cat bitmap
+1) "bitop"
+2) "getbit"
+3) "bitfield_ro"
+4) "bitcount"
+5) "bitpos"
+6) "bitfield"
+7) "setbit"

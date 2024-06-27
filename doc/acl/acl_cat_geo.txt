@@ -1,0 +1,11 @@
+127.0.0.1:6379> ACL cat geo
+ 1) "geoadd"
+ 2) "geohash"
+ 3) "geosearchstore"
+ 4) "georadius"
+ 5) "geosearch"
+ 6) "georadiusbymember"
+ 7) "geopos"
+ 8) "geodist"
+ 9) "georadius_ro"
+10) "georadiusbymember_ro"

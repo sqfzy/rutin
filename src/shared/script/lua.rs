@@ -1,7 +1,9 @@
 use crate::{
     cmd::{CmdError, ServerErrSnafu},
+    conf::AccessControl,
+    connection::{AsyncStream, FakeStream},
     frame::Resp3,
-    server::{Handler, ServerError, ID},
+    server::{Handler, HandlerContext, ServerError, ID},
     shared::Shared,
     Id, Key,
 };
@@ -11,7 +13,6 @@ use bytestring::ByteString;
 use crossbeam::queue::ArrayQueue;
 use dashmap::{mapref::entry::Entry, DashMap};
 use event_listener::listener;
-use futures::FutureExt;
 use mlua::{prelude::*, StdLib};
 use snafu::ResultExt;
 use std::sync::{
@@ -20,16 +21,39 @@ use std::sync::{
 };
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
+use try_lock::TryLock;
 
 // TODO: 新增排序辅助函数
 #[derive(Debug)]
 pub struct LuaScript {
+    /// 由于Lua的异步function不满足Send，因此Lua脚本需要在线程池[`LocalPoolHandle`]中执行(该线程池中的异步任务
+    /// 不会被其它线程窃取，因此不必满足Send)。
     pool: LocalPoolHandle,
-    max: usize,                                      // 最大创建的Lua环境的数量
-    count: AtomicUsize,                              // 当前创建的Lua环境的数量
-    event: Arc<event_listener::Event>,               // 用于通知等待的任务，有可用的Lua环境
-    luas: ArrayQueue<(Id, Lua)>, // 可用的Lua环境，当没有可用的Lua环境时，等待event通知
-    lua_scripts: DashMap<Bytes, Bytes, RandomState>, // script_name -> script
+
+    /// 最大创建的Lua环境的数量
+    max: usize,
+
+    /// 当前创建的Lua环境的数量
+    count: AtomicUsize,
+
+    /// 用于通知等待的任务，有可用的Lua环境
+    event: Arc<event_listener::Event>,
+
+    /// Lua环境保存在无锁队列[`ArrayQueue`]中，Lua环境最多有[`max`]个，当没有可用的Lua环境时，异步等待空闲的Lua环境。
+    luas: ArrayQueue<LuaEnv>,
+
+    /// script_name -> script
+    lua_scripts: DashMap<Bytes, Bytes, RandomState>,
+}
+
+/// Lua环境包含：
+/// 全局的KEYS table: 用于存储Redis的键
+/// 全局的ARGV table: 用于存储Redis的参数
+/// 全局的redis table: 包含了redis.call, redis.pcall, redis.status_reply, redis.error_reply, redis.log等方法
+/// fake handler: 用于执行Redis命令。fake handler的执行权限应当与客户端的权限保持一致
+struct LuaEnv {
+    lua: Lua,
+    fake_handler: Arc<TryLock<Handler<FakeStream>>>,
 }
 
 impl Default for LuaScript {
@@ -53,8 +77,16 @@ impl LuaScript {
             let libs = StdLib::TABLE | StdLib::STRING | StdLib::MATH;
             let lua = Lua::new_with(libs, LuaOptions::default())?;
 
-            let old_count = Box::leak(Box::new(self.count.fetch_add(1, Ordering::Acquire) as Id));
-            let shared = Box::leak(Box::new(shared));
+            let old_count = self.count.fetch_add(1, Ordering::Acquire) as Id;
+            let handler = Handler::new_fake_with(
+                shared,
+                None,
+                Some(HandlerContext::new(old_count, AccessControl::new_strict())),
+            )
+            .0;
+            let handler = Arc::new(TryLock::new(handler));
+
+            // LuaEnv, 可修改的
             {
                 // 停止自动GC，只通过手动方式触发GC
                 lua.gc_stop();
@@ -77,84 +109,98 @@ impl LuaScript {
 
                 // redis.call
                 // 执行脚本，当发生运行时错误时，中断脚本
-                let call = lua.create_async_function(|lua, cmd: LuaMultiValue| {
-                    async {
-                        let (mut handler, _) = Handler::with_shared(shared.clone());
+                let call = lua.create_async_function({
+                    let handler = handler.clone();
 
-                        let mut cmd_frame = Vec::with_capacity(cmd.len());
-                        for v in cmd {
-                            match v {
-                                LuaValue::String(s) => {
-                                    // PERF: 拷贝
-                                    cmd_frame.push(Resp3::new_blob_string(Bytes::copy_from_slice(
-                                        s.as_bytes(),
-                                    )))
-                                }
-                                _ => {
-                                    return Err(LuaError::external(
-                                        "redis.call only accept string arguments",
-                                    ));
+                    move |lua, cmd: LuaMultiValue| {
+                        let handler = handler.clone();
+
+                        async move {
+                            let mut cmd_frame = Vec::with_capacity(cmd.len());
+                            for v in cmd {
+                                match v {
+                                    LuaValue::String(s) => {
+                                        // PERF: 拷贝
+                                        cmd_frame.push(Resp3::new_blob_string(
+                                            Bytes::copy_from_slice(s.as_bytes()),
+                                        ))
+                                    }
+                                    _ => {
+                                        return Err(LuaError::external(
+                                            "redis.call only accept string arguments",
+                                        ));
+                                    }
                                 }
                             }
+                            let cmd_frame = Resp3::new_array(cmd_frame);
+
+                            debug!("lua call: {:?}", cmd_frame);
+
+                            let mut handler = handler.try_lock().unwrap();
+                            // 将old_count作为fake handler的ID，大小不超过[`RESERVE_MAX_ID`]，
+                            // 确保每个Lua环境的handler的ID唯一且不与client handler的ID冲突
+                            ID.scope(handler.context.client_id, async move {
+                                match handler.dispatch(cmd_frame).await {
+                                    Ok(ei) => match ei {
+                                        Some(res) => Ok(res.into_lua(lua)),
+                                        None => Ok(Resp3::<Bytes, ByteString>::Null.into_lua(lua)),
+                                    },
+                                    // 中断脚本，返回运行时错误
+                                    Err(e) => Err(LuaError::external(format!("ERR {}", e))),
+                                }
+                            })
+                            .await
                         }
-                        let cmd_frame = Resp3::new_array(cmd_frame);
-
-                        debug!("lua call: {:?}", cmd_frame);
-
-                        // 将old_count作为fake handler的ID，大小不超过[`RESERVE_MAX_ID`]，
-                        // 确保每个Lua环境的handler的ID唯一且不与client handler的ID冲突
-                        ID.scope(*old_count, async {
-                            match handler.dispatch(cmd_frame).await {
-                                Ok(ei) => match ei {
-                                    Some(res) => Ok(res.into_lua(lua)),
-                                    None => Ok(Resp3::<Bytes, ByteString>::Null.into_lua(lua)),
-                                },
-                                // 中断脚本，返回运行时错误
-                                Err(e) => Err(LuaError::external(format!("ERR {}", e))),
-                            }
-                        })
-                        .await
                     }
                 })?;
                 redis.set("call", call)?;
 
                 // redis.pcall
                 // 执行脚本，当发生运行时错误时，返回一张表，{ err: Lua String }
-                let pcall = lua.create_async_function(|lua, cmd: LuaMultiValue| {
-                    async {
-                        let (mut handler, _) = Handler::with_shared(shared.clone());
+                let pcall = lua.create_async_function({
+                    let handler = handler.clone();
 
-                        let mut cmd_frame = Vec::with_capacity(cmd.len());
-                        for v in cmd {
-                            match v {
-                                LuaValue::String(s) => {
-                                    // PERF: 拷贝
-                                    cmd_frame.push(Resp3::new_blob_string(Bytes::copy_from_slice(
-                                        s.as_bytes(),
-                                    )))
-                                }
-                                _ => {
-                                    return Err(LuaError::external(
-                                        "redis.call only accept string arguments",
-                                    ));
+                    move |lua, cmd: LuaMultiValue| {
+                        let handler = handler.clone();
+
+                        async move {
+                            let handler = handler;
+
+                            let mut cmd_frame = Vec::with_capacity(cmd.len());
+                            for v in cmd {
+                                match v {
+                                    LuaValue::String(s) => {
+                                        // PERF: 拷贝
+                                        cmd_frame.push(Resp3::new_blob_string(
+                                            Bytes::copy_from_slice(s.as_bytes()),
+                                        ))
+                                    }
+                                    _ => {
+                                        return Err(LuaError::external(
+                                            "redis.call only accept string arguments",
+                                        ));
+                                    }
                                 }
                             }
+                            let cmd_frame = Resp3::new_array(cmd_frame);
+
+                            debug!("lua call: {:?}", cmd_frame);
+
+                            let mut handler = handler.try_lock().unwrap();
+                            ID.scope(handler.context.client_id, async {
+                                match handler.dispatch(cmd_frame).await {
+                                    Ok(ei) => match ei {
+                                        Some(res) => Ok(res.into_lua(lua)),
+                                        None => Ok(Resp3::<Bytes, ByteString>::Null.into_lua(lua)),
+                                    },
+                                    // 不返回运行时错误，而是返回一个表 { err: Lua String }
+                                    Err(e) => {
+                                        Ok(Resp3::new_simple_error(e.to_string()).into_lua(lua))
+                                    }
+                                }
+                            })
+                            .await
                         }
-                        let cmd_frame = Resp3::new_array(cmd_frame);
-
-                        debug!("lua call: {:?}", cmd_frame);
-
-                        ID.scope(*old_count, async {
-                            match handler.dispatch(cmd_frame).await {
-                                Ok(ei) => match ei {
-                                    Some(res) => Ok(res.into_lua(lua)),
-                                    None => Ok(Resp3::<Bytes, ByteString>::Null.into_lua(lua)),
-                                },
-                                // 不返回运行时错误，而是返回一个表 { err: Lua String }
-                                Err(e) => Ok(Resp3::new_simple_error(e.to_string()).into_lua(lua)),
-                            }
-                        })
-                        .await
                     }
                 })?;
                 redis.set("pcall", pcall)?;
@@ -208,88 +254,126 @@ impl LuaScript {
                 global.set_metatable(Some(metatable));
             }
 
-            self.push_lua(*old_count, lua);
+            let lua_env = LuaEnv {
+                lua,
+                fake_handler: handler,
+            };
+            self.push_lua(lua_env);
 
             Ok(())
         })()
         .map_err(|e| ServerError::from(e.to_string()))
     }
 
-    async fn pop_lua(&self, shared: Shared) -> Result<(Id, Lua), ServerError> {
+    async fn pop_lua(&self, shared: &Shared) -> Result<LuaEnv, ServerError> {
         // 尝试从已有的Lua环境中获取一个可用的Lua环境
-        if let Some((id, lua)) = self.luas.pop() {
-            return Ok((id, lua));
+        if let Some(lua) = self.luas.pop() {
+            return Ok(lua);
         } else {
             let count = self.count.load(Ordering::Relaxed);
             if count == self.max {
                 // 等待一个可用的Lua环境
-                let event = self.event.clone();
+                let event = &self.event;
                 listener!(event => listener);
 
                 listener.await
             } else {
+                // 如果没有达到最大数量，则创建一个新的Lua环境
                 self.create_lua(shared.clone())?;
             }
         }
 
-        self.pop_lua(shared).boxed_local().await
+        // 只允许创建一次Lua环境，之后必须从已有的Lua环境中获取
+        loop {
+            if let Some(lua) = self.luas.pop() {
+                return Ok(lua);
+            } else {
+                // 等待一个可用的Lua环境
+                let event = &self.event;
+                listener!(event => listener);
+
+                listener.await
+            }
+        }
     }
 
-    fn push_lua(&self, id: Id, lua: Lua) {
-        self.event.notify_relaxed(1);
-
+    fn push_lua(&self, lua_env: LuaEnv) {
         debug_assert!(!self.luas.is_full());
 
-        let _ = self.luas.push((id, lua));
+        let _ = self.luas.push(lua_env);
+
+        // 通知等待的任务，有可用的Lua环境
+        self.event.notify_relaxed(1);
     }
 
     pub async fn eval(
         &self,
-        shared: Shared,
+        handler: &Handler<impl AsyncStream>,
         chunk: Bytes,
         keys: Vec<Key>,
         argv: Vec<Bytes>,
     ) -> Result<Resp3, ServerError> {
+        let shared = handler.shared.clone();
+        let client_ac = handler.context.ac.clone();
+
         let script = shared.script().clone();
 
         let res = self
             .pool
             .spawn_pinned(|| async move {
-                let (id, lua) = script.lua_script.pop_lua(shared.clone()).await?;
+                let lua_env = script.lua_script.pop_lua(&shared).await?;
 
-                let mut intention_locks = Vec::with_capacity(keys.len());
-                // 给需要操作的键加上意向锁
-                for key in &keys {
-                    if let Some(notify_unlock) = shared.db().add_lock_event(key.clone(), id).await {
-                        intention_locks.push(notify_unlock);
+                let res = {
+                    let LuaEnv { lua, fake_handler } = &lua_env;
+
+                    let mut fake_handler = fake_handler.try_lock().unwrap();
+                    // 脚本执行的权限与客户端的权限一致
+                    fake_handler.context.ac = client_ac;
+
+                    let mut intention_locks = Vec::with_capacity(keys.len());
+                    // 给需要操作的键加上意向锁
+                    for key in &keys {
+                        if let Some(notify_unlock) = shared
+                            .db()
+                            .add_lock_event(key.clone(), fake_handler.context.client_id)
+                            .await
+                        {
+                            intention_locks.push(notify_unlock);
+                        }
                     }
-                }
 
-                let global = lua.globals();
+                    drop(fake_handler);
 
-                // 传入KEYS和ARGV
-                let lua_keys = global.get::<_, LuaTable>("KEYS")?;
-                for (i, key) in keys.into_iter().enumerate() {
-                    lua_keys.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(key))?;
-                }
+                    let global = lua.globals();
 
-                let lua_argv = global.get::<_, LuaTable>("ARGV")?;
-                for (i, arg) in argv.into_iter().enumerate() {
-                    lua_argv.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(arg))?;
-                }
+                    // 传入KEYS和ARGV
+                    let lua_keys = global.get::<_, LuaTable>("KEYS")?;
+                    for (i, key) in keys.into_iter().enumerate() {
+                        lua_keys.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(key))?;
+                    }
 
-                // 执行脚本，若脚本有错误则中断脚本
-                let res: Resp3 = lua.load(chunk.as_ref()).eval_async().await?;
+                    let lua_argv = global.get::<_, LuaTable>("ARGV")?;
+                    for (i, arg) in argv.into_iter().enumerate() {
+                        lua_argv.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(arg))?;
+                    }
 
-                // 脚本执行完毕，唤醒一个等待的任务
-                for intention_lock in intention_locks {
-                    intention_lock.unlock();
-                }
+                    // 执行脚本，若脚本有错误则中断脚本
+                    let res: Resp3 = lua.load(chunk.as_ref()).eval_async().await?;
 
-                // 清理Lua环境
-                lua_keys.clear()?;
-                lua_argv.clear()?;
-                lua.gc_collect()?;
+                    // 脚本执行完毕，唤醒一个等待的任务
+                    for intention_lock in intention_locks {
+                        intention_lock.unlock();
+                    }
+
+                    // 清理Lua环境
+                    lua_keys.clear()?;
+                    lua_argv.clear()?;
+                    lua.gc_collect()?;
+                    res
+                };
+
+                // 将Lua环境放回队列
+                script.lua_script.push_lua(lua_env);
 
                 Ok::<Resp3, anyhow::Error>(res)
             })
@@ -302,7 +386,7 @@ impl LuaScript {
     // 通过脚本名称执行脚本
     pub async fn eval_name(
         &self,
-        shared: Shared,
+        handler: &Handler<impl AsyncStream>,
         script_name: Bytes,
         keys: Vec<Key>,
         argv: Vec<Bytes>,
@@ -312,7 +396,7 @@ impl LuaScript {
             None => return Err("script not found".into()),
         };
 
-        self.eval(shared, chunk, keys, argv)
+        self.eval(handler, chunk, keys, argv)
             .await
             .context(ServerErrSnafu)
     }
@@ -356,7 +440,7 @@ async fn lua_tests() {
         let lua_script = LuaScript::default();
 
         {
-            let (_id, lua) = lua_script.pop_lua(shared.clone()).await.unwrap();
+            let LuaEnv { lua, .. } = lua_script.pop_lua(&shared).await.unwrap();
 
             // 不允许require module
             lua.load(
@@ -379,14 +463,16 @@ async fn lua_tests() {
             .unwrap_err();
         }
 
+        let handler = Handler::new_fake().0;
+
         lua_script
-            .eval(shared.clone(), r#"print("exec")"#.into(), vec![], vec![])
+            .eval(&handler, r#"print("exec")"#.into(), vec![], vec![])
             .await
             .unwrap();
 
         let res = lua_script
             .eval(
-                shared.clone(),
+                &handler,
                 r#"return redis.call("ping")"#.into(),
                 vec![],
                 vec![],
@@ -397,7 +483,7 @@ async fn lua_tests() {
 
         let res = lua_script
             .eval(
-                shared.clone(),
+                &handler,
                 r#"return redis.call("set", KEYS[1], ARGV[1])"#.into(),
                 vec!["key".into()],
                 vec!["value".into()],
@@ -408,7 +494,7 @@ async fn lua_tests() {
 
         let res = lua_script
             .eval(
-                shared.clone(),
+                &handler,
                 r#"return redis.call("get", KEYS[1])"#.into(),
                 vec!["key".into()],
                 vec![],
@@ -419,7 +505,7 @@ async fn lua_tests() {
 
         let res = lua_script
             .eval(
-                shared.clone(),
+                &handler,
                 r#"return { err = 'ERR My very special table error' }"#.into(),
                 vec![],
                 vec![],
@@ -440,7 +526,7 @@ async fn lua_tests() {
 
         // 执行保存的脚本
         let res = lua_script
-            .eval_name(shared.clone(), "f1".into(), vec![], vec![])
+            .eval_name(&handler, "f1".into(), vec![], vec![])
             .await
             .unwrap();
         assert_eq!(res, Resp3::new_simple_string("PONG".into()));
@@ -449,7 +535,7 @@ async fn lua_tests() {
         lua_script.remove_script("f1".into()).unwrap();
 
         lua_script
-            .eval_name(shared, "f1".into(), vec![], vec![])
+            .eval_name(&handler, "f1".into(), vec![], vec![])
             .await
             .unwrap_err();
     });
