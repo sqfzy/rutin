@@ -65,13 +65,18 @@ impl CmdExecutor for Publish {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.len() != 2 {
             return Err(Err::WrongArgNum.into());
         }
 
+        let topic = args.next().unwrap();
+        if ac.is_forbidden_channel(&topic) {
+            return Err(Err::NoPermission.into());
+        }
+
         Ok(Publish {
-            topic: args.next().unwrap(),
+            topic,
             msg: args.next().unwrap(),
         })
     }
@@ -133,14 +138,17 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Subscribe {
-            topics: args.collect(),
-        })
+        let topics: Vec<_> = args.collect();
+        if ac.is_forbidden_channels(&topics) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Subscribe { topics })
     }
 }
 
@@ -215,14 +223,17 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
         if args.is_empty() {
             return Err(Err::WrongArgNum.into());
         }
 
-        Ok(Unsubscribe {
-            topics: args.collect(),
-        })
+        let topics: Vec<_> = args.collect();
+        if ac.is_forbidden_channels(&topics) {
+            return Err(Err::NoPermission.into());
+        }
+
+        Ok(Unsubscribe { topics })
     }
 }
 

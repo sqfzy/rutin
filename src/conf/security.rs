@@ -94,7 +94,6 @@ pub struct SecurityConf {
     // TODO:
     #[serde(skip)]
     pub rename_commands: Vec<Option<String>>,
-    // TODO:
     pub default_ac: Option<AccessControl>,
     pub acl: Option<Acl>,
 }
@@ -167,6 +166,8 @@ pub struct AccessControl {
     deny_read_key_patterns: Option<RegexSet>,
     // 写入key的限制模式
     deny_write_key_patterns: Option<RegexSet>,
+    // pubsub的限制模式
+    deny_channel_patterns: Option<RegexSet>,
 }
 
 impl AccessControl {
@@ -176,6 +177,7 @@ impl AccessControl {
         cmd_flag: CmdFlag,
         deny_read_key_patterns: Option<RegexSet>,
         deny_write_key_patterns: Option<RegexSet>,
+        deny_channel_patterns: Option<RegexSet>,
     ) -> Self {
         Self {
             enable,
@@ -183,6 +185,7 @@ impl AccessControl {
             cmd_flag,
             deny_read_key_patterns,
             deny_write_key_patterns,
+            deny_channel_patterns,
         }
     }
 
@@ -193,6 +196,7 @@ impl AccessControl {
             cmd_flag: NO_CMD_FLAG,
             deny_read_key_patterns: None,
             deny_write_key_patterns: None,
+            deny_channel_patterns: None,
         }
     }
 
@@ -203,6 +207,7 @@ impl AccessControl {
             cmd_flag: ALL_CMD_FLAG,
             deny_read_key_patterns: None,
             deny_write_key_patterns: None,
+            deny_channel_patterns: None,
         }
     }
 
@@ -222,18 +227,18 @@ impl AccessControl {
     }
 
     #[inline]
-    pub fn is_forbidden_key(&self, key: &[u8], cmd_type: CmdType) -> bool {
+    pub fn is_forbidden_key(&self, key: &dyn AsRef<[u8]>, cmd_type: CmdType) -> bool {
         match cmd_type {
             CmdType::Read => {
                 if let Some(patterns) = &self.deny_read_key_patterns {
-                    patterns.is_match(key)
+                    patterns.is_match(key.as_ref())
                 } else {
                     false
                 }
             }
             CmdType::Write => {
                 if let Some(patterns) = &self.deny_write_key_patterns {
-                    patterns.is_match(key)
+                    patterns.is_match(key.as_ref())
                 } else {
                     false
                 }
@@ -260,6 +265,26 @@ impl AccessControl {
 
         false
     }
+
+    #[inline]
+    pub fn is_forbidden_channel(&self, channel: &dyn AsRef<[u8]>) -> bool {
+        if let Some(patterns) = &self.deny_channel_patterns {
+            patterns.is_match(channel.as_ref())
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn is_forbidden_channels(&self, channels: &[impl AsRef<[u8]>]) -> bool {
+        if let Some(patterns) = &self.deny_channel_patterns {
+            return channels
+                .iter()
+                .any(|channel| patterns.is_match(channel.as_ref()));
+        }
+
+        false
+    }
 }
 
 impl<'de> Deserialize<'de> for AccessControl {
@@ -278,6 +303,7 @@ impl<'de> Deserialize<'de> for AccessControl {
             deny_categories: Option<Vec<BytesMut>>,
             deny_read_key_patterns: Option<Vec<String>>,
             deny_write_key_patterns: Option<Vec<String>>,
+            deny_channel_patterns: Option<Vec<String>>,
         }
 
         impl Default for AccessControlIntermedium {
@@ -291,6 +317,7 @@ impl<'de> Deserialize<'de> for AccessControl {
                     deny_categories: None,
                     deny_read_key_patterns: None,
                     deny_write_key_patterns: None,
+                    deny_channel_patterns: None,
                 }
             }
         }
@@ -370,12 +397,19 @@ impl<'de> Deserialize<'de> for AccessControl {
             None
         };
 
+        let deny_channel_patterns = if let Some(patterns) = ac.deny_channel_patterns {
+            Some(RegexSet::new(patterns).map_err(serde::de::Error::custom)?)
+        } else {
+            None
+        };
+
         Ok(AccessControl {
             enable: ac.enable,
             password: ac.password,
             cmd_flag,
             deny_read_key_patterns,
             deny_write_key_patterns,
+            deny_channel_patterns,
         })
     }
 }

@@ -31,8 +31,8 @@ where
     reader_buf: BytesMut,
     writer_buf: BytesMut,
     /// 支持批处理
-    batch_count: usize,
-    pub max_batch_count: usize,
+    batch: usize,
+    pub max_batch: usize,
 }
 
 impl<S: AsyncStream> Connection<S> {
@@ -41,17 +41,17 @@ impl<S: AsyncStream> Connection<S> {
             stream,
             reader_buf: BytesMut::with_capacity(1024),
             writer_buf: BytesMut::with_capacity(1024),
-            batch_count: 0,
-            max_batch_count,
+            batch: 0,
+            max_batch: max_batch_count,
         }
     }
 
     pub const fn unhandled_count(&self) -> usize {
-        self.batch_count
+        self.batch
     }
 
     pub fn set_count(&mut self, count: usize) {
-        self.batch_count = count;
+        self.batch = count;
     }
 
     #[inline]
@@ -99,10 +99,10 @@ impl<S: AsyncStream> Connection<S> {
 
             trace!(?frame, "read frame");
             frames.push(frame);
-            self.batch_count += 1;
+            self.batch += 1;
 
             // PERF: 该值影响pipeline的性能，以及内存占用
-            if self.batch_count > self.max_batch_count {
+            if self.batch > self.max_batch {
                 return Ok(Some(frames));
             }
 
@@ -129,11 +129,11 @@ impl<S: AsyncStream> Connection<S> {
     {
         frame.encode_buf(&mut self.writer_buf);
 
-        if self.batch_count > 0 {
-            self.batch_count -= 1;
+        if self.batch > 0 {
+            self.batch -= 1;
         }
 
-        if self.batch_count == 0 {
+        if self.batch == 0 {
             self.stream.write_buf(&mut self.writer_buf).await?;
             self.flush().await?;
         }

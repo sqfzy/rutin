@@ -394,7 +394,7 @@ mod cmd_other_tests {
         let acl = Acl::new();
         acl.insert(
             Bytes::from(username),
-            AccessControl::new(true, Bytes::from(password), cmd_flag, None, None),
+            AccessControl::new(true, Bytes::from(password), cmd_flag, None, None, None),
         );
 
         let conf = Conf {
