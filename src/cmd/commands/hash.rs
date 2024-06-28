@@ -14,6 +14,7 @@ use crate::{
     CmdFlag, Key,
 };
 use bytes::Bytes;
+use tracing::instrument;
 
 /// **Integer reply:** The number of fields that were removed from the hash, excluding any specified but non-existing fields.
 #[derive(Debug)]
@@ -27,6 +28,7 @@ impl CmdExecutor for HDel {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = HDEL_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -81,6 +83,7 @@ impl CmdExecutor for HExists {
     const TYPE: CmdType = CmdType::Read;
     const FLAG: CmdFlag = HEXISTS_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -131,6 +134,7 @@ impl CmdExecutor for HGet {
     const TYPE: CmdType = CmdType::Read;
     const FLAG: CmdFlag = HGET_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -180,6 +184,7 @@ impl CmdExecutor for HSet {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = HSET_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

@@ -13,7 +13,7 @@ use bytes::Bytes;
 use flume::{Receiver, Sender};
 use std::time::Duration;
 use tokio::time::Instant;
-use tracing::trace;
+use tracing::{instrument, trace};
 
 /// # Reply:
 ///
@@ -33,6 +33,7 @@ impl CmdExecutor for BLMove {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = BLMOVE_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -136,6 +137,7 @@ impl CmdExecutor for BLPop {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = BLPOP_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -207,6 +209,7 @@ impl CmdExecutor for LPos {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = LPOS_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -339,6 +342,7 @@ impl CmdExecutor for LLen {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = LLEN_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -389,6 +393,7 @@ impl CmdExecutor for LPop {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = LPOP_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -464,6 +469,7 @@ impl CmdExecutor for LPush {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = LPUSH_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -521,6 +527,7 @@ impl CmdExecutor for NBLPop {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = NBLPOP_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

@@ -295,11 +295,7 @@ impl Db {
 impl Default for Db {
     fn default() -> Self {
         Self {
-            entries: DashMap::with_capacity_and_hasher_and_shard_amount(
-                1024 * 16,
-                RandomState::new(),
-                64, // TODO: 根据max_memory配置
-            ),
+            entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
             pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
             client_records: DashMap::with_capacity_and_hasher(1024, RandomState::new()),

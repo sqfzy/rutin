@@ -2,7 +2,7 @@ use super::{BgTaskChannel, BgTaskSender, ServerError, CLIENT_ID_COUNT, ID};
 
 use crate::{
     cmd::dispatch,
-    conf::AccessControl,
+    conf::{AccessControl, DEFAULT_USER},
     connection::{AsyncStream, Connection, FakeStream},
     frame::Resp3,
     shared::Shared,
@@ -23,23 +23,19 @@ impl<S: AsyncStream> Handler<S> {
     pub fn new(shared: Shared, stream: S) -> Self {
         let bg_task_channel = BgTaskChannel::default();
         let client_id = Self::create_client_id(&shared, &bg_task_channel);
-        // 如果开启了ACL，则默认不允许执行任何命令，需要执行AUTH命令获取权限
-        let ac = if let Some(default_ac) = shared.conf().security.default_ac.as_ref() {
-            // 如果设置了默认的ACL，则使用默认的ACL
-            default_ac.clone()
-        } else if shared.conf().security.acl.is_some() {
-            // 如果设置了ACL，且没有设置默认的ACL，则默认不允许执行任何命令
+        let ac = if shared.conf().security.acl.is_some() {
+            // 如果开启了ACL，且没有设置默认的ACL，则设为严格模式
             AccessControl::new_strict()
         } else {
-            // 如果没有设置ACL，则默认允许执行所有命令
-            AccessControl::new_loose()
+            // 如果禁用了ACL，则使用默认ac
+            shared.conf().security.default_ac.clone()
         };
 
         Self {
             conn: Connection::new(stream, shared.conf().server.max_batch),
             shared,
             bg_task_channel,
-            context: HandlerContext::new(client_id, ac),
+            context: HandlerContext::new(client_id, DEFAULT_USER, ac),
         }
     }
 
@@ -106,16 +102,18 @@ pub struct HandlerContext {
     pub client_track: Option<BgTaskSender>,
     // 用于缓存需要传播的写命令
     pub wcmd_buf: BytesMut,
+    pub user: bytes::Bytes,
     pub ac: AccessControl,
 }
 
 impl HandlerContext {
-    pub fn new(client_id: Id, ac: AccessControl) -> Self {
+    pub fn new(client_id: Id, user: bytes::Bytes, ac: AccessControl) -> Self {
         Self {
             client_id,
             subscribed_channels: None,
             client_track: None,
             wcmd_buf: BytesMut::new(),
+            user,
             ac,
         }
     }
@@ -151,11 +149,11 @@ impl Handler<FakeStream> {
             let client_id = Self::create_client_id(&shared, &bg_task_channel);
 
             // 继承Access Control
-            HandlerContext::new(client_id, cx.ac.clone())
+            HandlerContext::new(client_id, cx.user, cx.ac.clone())
         } else {
             let client_id = Self::create_client_id(&shared, &bg_task_channel);
 
-            HandlerContext::new(client_id, AccessControl::new_loose())
+            HandlerContext::new(client_id, DEFAULT_USER, AccessControl::new_loose())
         };
 
         let max_batch = shared.conf().server.max_batch;

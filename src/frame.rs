@@ -121,7 +121,7 @@ where
     },
 
     // =<length>\r\n<encoding>:<data>\r\n
-    // 类似于Bulk，但是多了一个encoding字段用于指定数据的编码方式
+    // 类似于Blob，但是多了一个encoding字段用于指定数据的编码方式
     VerbatimString {
         format: [u8; 3],
         data: B,
@@ -274,7 +274,7 @@ where
         matches!(self, Resp3::Integer { .. })
     }
 
-    pub fn is_bulk(&self) -> bool {
+    pub fn is_blob(&self) -> bool {
         matches!(self, Resp3::BlobString { .. })
     }
 
@@ -298,7 +298,7 @@ where
         matches!(self, Resp3::BigNumber { .. })
     }
 
-    pub fn is_bulk_error(&self) -> bool {
+    pub fn is_blob_error(&self) -> bool {
         matches!(self, Resp3::BlobError { .. })
     }
 
@@ -339,7 +339,7 @@ where
         }
     }
 
-    pub fn try_bulk(&self) -> Option<&B> {
+    pub fn try_blob(&self) -> Option<&B> {
         match self {
             Resp3::BlobString { inner, .. } => Some(inner),
             _ => None,
@@ -381,7 +381,7 @@ where
         }
     }
 
-    pub fn try_bulk_error(&self) -> Option<&B> {
+    pub fn try_blob_error(&self) -> Option<&B> {
         match self {
             Resp3::BlobError { inner, .. } => Some(inner),
             _ => None,
@@ -438,7 +438,7 @@ where
         }
     }
 
-    pub fn try_bulk_mut(&mut self) -> Option<&mut B> {
+    pub fn try_blob_mut(&mut self) -> Option<&mut B> {
         match self {
             Resp3::BlobString { inner, .. } => Some(inner),
             _ => None,
@@ -473,7 +473,7 @@ where
         }
     }
 
-    pub fn try_bulk_error_mut(&mut self) -> Option<&mut B> {
+    pub fn try_blob_error_mut(&mut self) -> Option<&mut B> {
         match self {
             Resp3::BlobError { inner, .. } => Some(inner),
             _ => None,
@@ -506,6 +506,104 @@ where
         match self {
             Resp3::Push { inner, .. } => Some(inner),
             _ => None,
+        }
+    }
+
+    pub fn as_simple_string_uncheckd(&self) -> &S {
+        match self {
+            Resp3::SimpleString { inner, .. } => inner,
+            _ => panic!("not a simple string"),
+        }
+    }
+
+    pub fn as_simple_error_uncheckd(&self) -> &S {
+        match self {
+            Resp3::SimpleError { inner, .. } => inner,
+            _ => panic!("not a simple error"),
+        }
+    }
+
+    pub fn as_integer_uncheckd(&self) -> Int {
+        match self {
+            Resp3::Integer { inner, .. } => *inner,
+            _ => panic!("not an integer"),
+        }
+    }
+
+    pub fn as_blob_string_uncheckd(&self) -> &B {
+        match self {
+            Resp3::BlobString { inner, .. } => inner,
+            _ => panic!("not a blob string"),
+        }
+    }
+
+    pub fn as_array_uncheckd(&self) -> &Vec<Resp3<B, S>> {
+        match self {
+            Resp3::Array { inner, .. } => inner,
+            _ => panic!("not an array"),
+        }
+    }
+
+    pub fn as_null_uncheckd(&self) {
+        match self {
+            Resp3::Null => {}
+            _ => panic!("not a null"),
+        }
+    }
+
+    pub fn as_boolean_uncheckd(&self) -> bool {
+        match self {
+            Resp3::Boolean { inner, .. } => *inner,
+            _ => panic!("not a boolean"),
+        }
+    }
+
+    pub fn as_double_uncheckd(&self) -> f64 {
+        match self {
+            Resp3::Double { inner, .. } => *inner,
+            _ => panic!("not a double"),
+        }
+    }
+
+    pub fn as_big_number_uncheckd(&self) -> &BigInt {
+        match self {
+            Resp3::BigNumber { inner, .. } => inner,
+            _ => panic!("not a big number"),
+        }
+    }
+
+    pub fn as_bolb_error_uncheckd(&self) -> &B {
+        match self {
+            Resp3::BlobError { inner, .. } => inner,
+            _ => panic!("not a blob error"),
+        }
+    }
+
+    pub fn as_verbatim_string_uncheckd(&self) -> (&[u8; 3], &B) {
+        match self {
+            Resp3::VerbatimString { format, data, .. } => (format, data),
+            _ => panic!("not a verbatim string"),
+        }
+    }
+
+    pub fn as_map_uncheckd(&self) -> &AHashMap<Resp3<B, S>, Resp3<B, S>> {
+        match self {
+            Resp3::Map { inner, .. } => inner,
+            _ => panic!("not a map"),
+        }
+    }
+
+    pub fn as_set_uncheckd(&self) -> &AHashSet<Resp3<B, S>> {
+        match self {
+            Resp3::Set { inner, .. } => inner,
+            _ => panic!("not a set"),
+        }
+    }
+
+    pub fn as_push_uncheckd(&self) -> &Vec<Resp3<B, S>> {
+        match self {
+            Resp3::Push { inner, .. } => inner,
+            _ => panic!("not a push"),
         }
     }
 
@@ -1791,7 +1889,7 @@ impl<S: AsRef<str> + PartialEq> mlua::IntoLua<'_> for Resp3<Bytes, S> {
             // BlobString -> Lua String
             Resp3::BlobString { inner, .. } => std::str::from_utf8(&inner)
                 .map_err(|_| mlua::Error::FromLuaConversionError {
-                    from: "Bulk",
+                    from: "Blob",
                     to: "String",
                     message: Some("invalid utf-8 string".to_string()),
                 })?
@@ -1883,7 +1981,7 @@ impl<S: AsRef<str> + PartialEq> mlua::IntoLua<'_> for Resp3<Bytes, S> {
             //     for (i, c) in chunks.iter().enumerate() {
             //         let c = std::str::from_utf8(c)
             //             .map_err(|_| mlua::Error::FromLuaConversionError {
-            //                 from: "Bulk",
+            //                 from: "Blob",
             //                 to: "String",
             //                 message: Some("invalid utf-8 string".to_string()),
             //             })?
@@ -1907,7 +2005,7 @@ impl<S: AsRef<str> + PartialEq> mlua::IntoLua<'_> for Resp3<Bytes, S> {
 impl FromLua<'_> for Resp3 {
     fn from_lua(value: LuaValue<'_>, _lua: &'_ Lua) -> LuaResult<Self> {
         match value {
-            // Lua String -> Bulk
+            // Lua String -> Blob
             LuaValue::String(s) => Ok(Resp3::BlobString {
                 inner: Bytes::copy_from_slice(s.as_bytes()),
                 attributes: None,
@@ -2127,10 +2225,10 @@ mod frame_tests {
             ),
             (
                 Resp3::BlobString {
-                    inner: Bytes::from("bulk data"),
+                    inner: Bytes::from("blob data"),
                     attributes: None,
                 },
-                b"$9\r\nbulk data\r\n".to_vec(),
+                b"$9\r\nblob data\r\n".to_vec(),
             ),
             (
                 Resp3::Array {
@@ -2176,10 +2274,10 @@ mod frame_tests {
             ),
             (
                 Resp3::BlobError {
-                    inner: Bytes::from("bulk error"),
+                    inner: Bytes::from("blob error"),
                     attributes: None,
                 },
-                b"!10\r\nbulk error\r\n".to_vec(),
+                b"!10\r\nblob error\r\n".to_vec(),
             ),
             (
                 Resp3::VerbatimString {

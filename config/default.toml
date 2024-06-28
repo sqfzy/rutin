@@ -7,13 +7,15 @@ max_connections = 256           # 最大连接数
 max_batch = 1024                # 最大批量操作数
 
 [security]
-# 默认ACL。设置后，所有连接初始化时都会使用该ACL。default_ac不支持设置密码
+# 默认ACL，必须设置。设置后，所有连接初始化时都会使用该ACL。default_ac不设置密码
 default_ac = { enable = true, allow_commands = [
   "ALL",
 ], deny_commands = [
 ], allow_category = [
 ], deny_category = [
 ] }
+
+# 不设置acl则代表禁用acl，如果希望使用acl但不设置任何用户，可以设置一个空的acl
 [security.acl]
 test = { enable = true, password = "test", allow_commands = [
   "GET",
@@ -28,6 +30,8 @@ test = { enable = true, password = "test", allow_commands = [
   "foo",
 ], deny_write_key_patterns = [
   "bar",
+], deny_channel_patterns = [
+  "chan",
 ] }
 
 

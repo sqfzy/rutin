@@ -8,7 +8,7 @@ use crate::{
     connection::AsyncStream,
     frame::Resp3,
     server::{Handler, ServerError},
-    CmdFlag,
+    util, CmdFlag,
 };
 use bytes::Bytes;
 use commands::*;
@@ -92,11 +92,13 @@ pub async fn _dispatch(
     macro_rules! dispatch_command {
         ( $cmd:expr, $handler:expr, $( $cmd_type:ident ),*; $( $cmd_group:expr => $( $cmd_type2:ident ),* );* ) => {
             {
-                let mut cmd_name_buf = [0; 32];
-                let len = $cmd.get_uppercase(0, &mut cmd_name_buf).ok_or(Err::Syntax)?;
-                $cmd.advance(1);
+                let mut buf = [0; 32];
+                let cmd_name = $cmd.next().ok_or(Err::Syntax)?;
 
-                let cmd_name = if let Ok(s) = std::str::from_utf8(&cmd_name_buf[..len]) {
+                debug_assert!(cmd_name.len() <= buf.len());
+                let len1 = util::uppercase(&cmd_name, &mut buf).unwrap();
+
+                let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1]) {
                     s
                 } else {
                     return Err(Err::UnknownCmd.into());
@@ -108,10 +110,12 @@ pub async fn _dispatch(
                     )*
                     $(
                         $cmd_group => {
-                            let len2 = $cmd.get_uppercase(0, &mut cmd_name_buf[len..]).ok_or(Err::Syntax)?;
-                            $cmd.advance(1);
+                            let sub_cmd_name = $cmd.next().ok_or(Err::Syntax)?;
 
-                            let cmd_name = if let Ok(s) = std::str::from_utf8(&cmd_name_buf[..(len + len2)]) {
+                            debug_assert!(sub_cmd_name.len() <= buf.len() - len1);
+                            let len2 = util::uppercase(&sub_cmd_name, &mut buf[len1..]).unwrap();
+
+                            let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1 + len2]) {
                                 s
                             } else {
                                 return Err(Err::UnknownCmd.into());
@@ -164,20 +168,21 @@ pub async fn _dispatch(
     )
 }
 
-pub fn cmd_name_to_flag(cmd_name: &mut [u8]) -> Result<CmdFlag, &'static str> {
+pub fn cmd_name_to_flag(cmd_name: &[u8]) -> anyhow::Result<CmdFlag> {
     macro_rules! cmd_name_to_flag {
         ( $cmd_name:expr,  $( $cmd_type:ident ),*) => {
             match $cmd_name {
                 $(
                     $cmd_type::NAME => Ok($cmd_type::FLAG),
                 )*
-                _ => Err("unknown command"),
+                _ => anyhow::bail!("unknown command"),
             }
         };
     }
 
-    cmd_name.make_ascii_uppercase();
-    let cmd_name = std::str::from_utf8(cmd_name).map_err(|_| "unknown command")?;
+    let mut buf = [0; 32];
+    let cmd_name = util::get_uppercase(cmd_name, &mut buf)?;
+    let cmd_name = std::str::from_utf8(cmd_name)?;
 
     cmd_name_to_flag!(
         cmd_name,
@@ -244,6 +249,87 @@ pub fn cmd_name_to_flag(cmd_name: &mut [u8]) -> Result<CmdFlag, &'static str> {
     )
 }
 
+pub fn flag_to_cmd_names(flag: CmdFlag) -> Result<Vec<&'static str>, &'static str> {
+    let mut names = Vec::new();
+
+    macro_rules! flag_to_cmd_names {
+        ( $flag:expr,  $( $cmd_type:ident ),* ) => {
+            match $flag {
+                $(
+                    $cmd_type::FLAG => names.push($cmd_type::NAME),
+                )*
+                _ => return Err("unknown command"),
+            }
+        };
+    }
+
+    flag_to_cmd_names!(
+        flag,
+        // commands::other
+        BgSave,
+        Ping,
+        Echo,
+        Auth,
+        // commands::key
+        Del,
+        Dump,
+        Exists,
+        Expire,
+        ExpireAt,
+        ExpireTime,
+        Keys,
+        NBKeys,
+        Persist,
+        Pttl,
+        Ttl,
+        Type,
+        // commands::str
+        Append,
+        Decr,
+        DecrBy,
+        Get,
+        GetRange,
+        GetSet,
+        Incr,
+        IncrBy,
+        MGet,
+        MSet,
+        MSetNx,
+        Set,
+        SetEx,
+        SetNx,
+        StrLen,
+        // commands::list
+        LLen,
+        LPush,
+        LPop,
+        BLPop,
+        LPos,
+        NBLPop,
+        BLMove,
+        // commands::hash
+        HDel,
+        HExists,
+        HGet,
+        HSet,
+        // commands::pub_sub
+        Publish,
+        Subscribe,
+        Unsubscribe,
+        // commands::script
+        Eval,
+        EvalName,
+        //
+        ClientTracking,
+        //
+        ScriptExists,
+        ScriptFlush,
+        ScriptRegister
+    );
+
+    Ok(names)
+}
+
 #[derive(Debug)]
 pub struct CmdUnparsed {
     inner: Vec<Resp3>,
@@ -262,12 +348,12 @@ impl CmdUnparsed {
         self.start > self.end
     }
 
-    pub fn get_uppercase(&self, index: usize, buf: &mut [u8]) -> Option<usize> {
+    pub fn get_uppercase<'a>(&self, index: usize, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         match self.inner.get(self.start + index) {
             Some(Resp3::BlobString { inner: b, .. }) => {
-                buf[..b.len()].copy_from_slice(b);
-                buf.make_ascii_uppercase();
-                Some(b.len())
+                debug_assert!(b.len() <= buf.len());
+
+                Some(util::get_uppercase(b, buf).unwrap())
             }
             _ => None,
         }
@@ -285,6 +371,15 @@ impl CmdUnparsed {
 
     pub fn advance(&mut self, n: usize) {
         self.start += n;
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Bytes> {
+        self.inner[self.start..=self.end]
+            .iter()
+            .filter_map(|r| match r {
+                Resp3::BlobString { inner, .. } => Some(inner),
+                _ => None,
+            })
     }
 }
 

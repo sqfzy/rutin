@@ -103,7 +103,7 @@ pub fn atof(text: &[u8]) -> Result<f64, String> {
         .map_err(|e: ParseFloatError| e.to_string())
 }
 
-pub fn upper_case(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {
+pub fn uppercase(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {
     let len = src.len();
     if len > buf.len() {
         return Err(anyhow!("buffer is too small"));
@@ -113,6 +113,18 @@ pub fn upper_case(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {
     buf[..len].make_ascii_uppercase();
 
     Ok(len)
+}
+
+pub fn get_uppercase<'a, 'b>(src: &'a [u8], buf: &'b mut [u8]) -> anyhow::Result<&'b [u8]> {
+    let len = src.len();
+    if len > buf.len() {
+        return Err(anyhow!("buffer is too small"));
+    }
+
+    buf[..len].copy_from_slice(src);
+    buf[..len].make_ascii_uppercase();
+
+    Ok(&buf[..len])
 }
 
 pub fn to_valid_range(start: Int, end: Int, len: usize) -> Option<(usize, usize)> {

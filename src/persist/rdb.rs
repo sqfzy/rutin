@@ -61,14 +61,14 @@ const RDB_ENC_INT32: u8 = 2;
 const RDB_ENC_LZF: u8 = 3;
 
 #[derive(Clone)]
-pub struct RDB {
+pub struct Rdb {
     db: Arc<Db>,
     path: String,
     enable_checksum: bool,
     shutdown: ShutdownManager<()>,
 }
 
-impl RDB {
+impl Rdb {
     pub fn new(shared: &Shared, path: String, enable_checksum: bool) -> Self {
         Self {
             db: shared.db().clone(),
@@ -79,7 +79,7 @@ impl RDB {
     }
 }
 
-impl RDB {
+impl Rdb {
     pub async fn save(&mut self) -> anyhow::Result<()> {
         let mut file = tokio::fs::File::create(&self.path).await?;
 
@@ -934,11 +934,11 @@ mod rdb_test {
         db.insert_object("zs3".into(), zs3.clone()).await;
         db.insert_object("zs4".into(), zs4.clone()).await;
 
-        let mut rdb = RDB::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
+        let mut rdb = Rdb::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.save().await.unwrap();
 
         let shared = Shared::default();
-        let mut rdb = RDB::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
+        let mut rdb = Rdb::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.load().await.unwrap();
 
         assert_eq!(

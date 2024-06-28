@@ -2,89 +2,126 @@ use crate::{
     cmd::{cmd_name_to_flag, commands::*, CmdExecutor, CmdType},
     CmdFlag,
 };
-use bytes::{Bytes, BytesMut};
-use dashmap::mapref::one::{Ref, RefMut};
+use bytes::Bytes;
 use dashmap::DashMap;
+use dashmap::{
+    iter::Iter,
+    mapref::one::{Ref, RefMut},
+};
 use regex::bytes::RegexSet;
 use serde::Deserialize;
 
-const ACL_CAT_ADMIN_FLAG: CmdFlag = BgSave::FLAG;
+pub const DEFAULT_USER: Bytes = Bytes::from_static(b"default_ac");
 
-const ACL_CAT_READ_FLAG: CmdFlag = Get::FLAG
-    | GetRange::FLAG
-    | MGet::FLAG
-    | LLen::FLAG
-    | LPos::FLAG
-    | HGet::FLAG
-    | HDel::FLAG
-    | Exists::FLAG
-    | Keys::FLAG
-    | NBKeys::FLAG
-    | Pttl::FLAG
-    | Ttl::FLAG
-    | Type::FLAG;
+pub struct AclCategory {
+    pub name: &'static str,
+    pub flag: CmdFlag,
+}
 
-const ACL_CAT_WRITE_FLAG: CmdFlag = Set::FLAG
-    | SetEx::FLAG
-    | SetNx::FLAG
-    | Append::FLAG
-    | Incr::FLAG
-    | IncrBy::FLAG
-    | Decr::FLAG
-    | DecrBy::FLAG
-    | LPush::FLAG
-    | LPop::FLAG
-    | BLPop::FLAG
-    | HSet::FLAG
-    | HExists::FLAG
-    | Expire::FLAG
-    | ExpireAt::FLAG
-    | ExpireTime::FLAG
-    | Persist::FLAG
-    | Publish::FLAG;
+pub const ACL_CATEGORIES: [AclCategory; 10] = [
+    AclCategory {
+        name: "ADMIN",
+        flag: BgSave::FLAG,
+    },
+    AclCategory {
+        name: "READ",
+        flag: Get::FLAG
+            | GetRange::FLAG
+            | MGet::FLAG
+            | LLen::FLAG
+            | LPos::FLAG
+            | HGet::FLAG
+            | HDel::FLAG
+            | Exists::FLAG
+            | Keys::FLAG
+            | NBKeys::FLAG
+            | Pttl::FLAG
+            | Ttl::FLAG
+            | Type::FLAG,
+    },
+    AclCategory {
+        name: "WRITE",
+        flag: Set::FLAG
+            | SetEx::FLAG
+            | SetNx::FLAG
+            | Append::FLAG
+            | Incr::FLAG
+            | IncrBy::FLAG
+            | Decr::FLAG
+            | DecrBy::FLAG
+            | LPush::FLAG
+            | LPop::FLAG
+            | BLPop::FLAG
+            | HSet::FLAG
+            | HExists::FLAG
+            | Expire::FLAG
+            | ExpireAt::FLAG
+            | ExpireTime::FLAG
+            | Persist::FLAG
+            | Publish::FLAG,
+    },
+    AclCategory {
+        name: "CONNECTION",
+        flag: BgSave::FLAG | Ping::FLAG | Echo::FLAG | Auth::FLAG | ClientTracking::FLAG,
+    },
+    AclCategory {
+        name: "KEYSPACE",
+        flag: Del::FLAG
+            | Dump::FLAG
+            | Exists::FLAG
+            | Expire::FLAG
+            | ExpireAt::FLAG
+            | ExpireTime::FLAG
+            | Keys::FLAG
+            | NBKeys::FLAG
+            | Persist::FLAG
+            | Pttl::FLAG
+            | Ttl::FLAG
+            | Type::FLAG,
+    },
+    AclCategory {
+        name: "STRING",
+        flag: Append::FLAG
+            | Decr::FLAG
+            | DecrBy::FLAG
+            | Get::FLAG
+            | GetRange::FLAG
+            | GetSet::FLAG
+            | Incr::FLAG
+            | IncrBy::FLAG
+            | MGet::FLAG
+            | MSet::FLAG
+            | MSetNx::FLAG
+            | Set::FLAG
+            | SetEx::FLAG
+            | SetNx::FLAG
+            | StrLen::FLAG,
+    },
+    AclCategory {
+        name: "LIST",
+        flag: LLen::FLAG
+            | LPush::FLAG
+            | LPop::FLAG
+            | BLPop::FLAG
+            | LPos::FLAG
+            | NBLPop::FLAG
+            | BLMove::FLAG,
+    },
+    AclCategory {
+        name: "HASH",
+        flag: HDel::FLAG | HExists::FLAG | HGet::FLAG | HSet::FLAG,
+    },
+    AclCategory {
+        name: "PUBSUB",
+        flag: Publish::FLAG | Subscribe::FLAG | Unsubscribe::FLAG,
+    },
+    AclCategory {
+        name: "SCRIPTING",
+        flag: Eval::FLAG | EvalName::FLAG | ScriptExists::FLAG,
+    },
+];
 
-const ACL_CAT_CONNECTION_FLAG: CmdFlag =
-    BgSave::FLAG | Ping::FLAG | Echo::FLAG | Auth::FLAG | ClientTracking::FLAG;
-
-const ACL_CAT_KEYSPACE_FLAG: CmdFlag = Del::FLAG
-    | Dump::FLAG
-    | Exists::FLAG
-    | Expire::FLAG
-    | ExpireAt::FLAG
-    | ExpireTime::FLAG
-    | Keys::FLAG
-    | NBKeys::FLAG
-    | Persist::FLAG
-    | Pttl::FLAG
-    | Ttl::FLAG
-    | Type::FLAG;
-
-const ACL_CAT_STRING_FLAG: CmdFlag = Append::FLAG
-    | Decr::FLAG
-    | DecrBy::FLAG
-    | Get::FLAG
-    | GetRange::FLAG
-    | GetSet::FLAG
-    | Incr::FLAG
-    | IncrBy::FLAG
-    | MGet::FLAG
-    | MSet::FLAG
-    | MSetNx::FLAG
-    | Set::FLAG
-    | SetEx::FLAG
-    | SetNx::FLAG
-    | StrLen::FLAG;
-
-const ACL_CAT_LIST_FLAG: CmdFlag =
-    LLen::FLAG | LPush::FLAG | LPop::FLAG | BLPop::FLAG | LPos::FLAG | NBLPop::FLAG | BLMove::FLAG;
-
-const ACL_CAT_HASH_FLAG: CmdFlag = HDel::FLAG | HExists::FLAG | HGet::FLAG | HSet::FLAG;
-
-const ACL_CAT_PUBSUB_FLAG: CmdFlag = Publish::FLAG | Subscribe::FLAG | Unsubscribe::FLAG;
-
-const ACL_CAT_SCRIPTING_FLAG: CmdFlag = Eval::FLAG | EvalName::FLAG | ScriptExists::FLAG;
-
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 #[serde(rename = "security")]
 pub struct SecurityConf {
     pub requirepass: Option<String>, // 访问密码
@@ -94,8 +131,20 @@ pub struct SecurityConf {
     // TODO:
     #[serde(skip)]
     pub rename_commands: Vec<Option<String>>,
-    pub default_ac: Option<AccessControl>,
-    pub acl: Option<Acl>,
+    pub default_ac: AccessControl,
+    pub acl: Option<Acl>, // None代表禁用ACL
+}
+
+impl Default for SecurityConf {
+    fn default() -> Self {
+        Self {
+            requirepass: None,
+            forbaiden_commands: vec![],
+            rename_commands: vec![],
+            default_ac: AccessControl::new_loose(),
+            acl: Some(Acl::new()),
+        }
+    }
 }
 
 #[repr(transparent)]
@@ -131,8 +180,8 @@ impl Acl {
         self.0.insert(key, value);
     }
 
-    pub fn remove(&self, key: &Bytes) {
-        self.0.remove(key);
+    pub fn remove(&self, key: &Bytes) -> Option<(Bytes, AccessControl)> {
+        self.0.remove(key)
     }
 
     pub fn disable(&self, key: &Bytes) {
@@ -154,41 +203,27 @@ impl Acl {
             false
         }
     }
+
+    pub fn iter(&self) -> Iter<'_, Bytes, AccessControl> {
+        self.0.iter()
+    }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AccessControl {
     pub enable: bool,
-    password: Bytes, // 空表示不需要密码
+    pub password: Bytes, // 空表示不需要密码
     // 用于记录客户端的命令权限，置0的位表示禁止的命令
-    cmd_flag: CmdFlag,
+    pub cmd_flag: CmdFlag,
     // 读取key的限制模式
-    deny_read_key_patterns: Option<RegexSet>,
+    pub deny_read_key_patterns: Option<RegexSet>,
     // 写入key的限制模式
-    deny_write_key_patterns: Option<RegexSet>,
+    pub deny_write_key_patterns: Option<RegexSet>,
     // pubsub的限制模式
-    deny_channel_patterns: Option<RegexSet>,
+    pub deny_channel_patterns: Option<RegexSet>,
 }
 
 impl AccessControl {
-    pub const fn new(
-        enable: bool,
-        password: Bytes,
-        cmd_flag: CmdFlag,
-        deny_read_key_patterns: Option<RegexSet>,
-        deny_write_key_patterns: Option<RegexSet>,
-        deny_channel_patterns: Option<RegexSet>,
-    ) -> Self {
-        Self {
-            enable,
-            password,
-            cmd_flag,
-            deny_read_key_patterns,
-            deny_write_key_patterns,
-            deny_channel_patterns,
-        }
-    }
-
     pub const fn new_strict() -> Self {
         Self {
             enable: true,
@@ -211,6 +246,133 @@ impl AccessControl {
         }
     }
 
+    pub fn merge(&mut self, mut other: AccessControlIntermedium) -> anyhow::Result<()> {
+        if let Some(enable) = other.enable {
+            self.enable = enable;
+        }
+        if let Some(password) = other.password.take() {
+            if password.eq_ignore_ascii_case(b"RESET") {
+                self.password.clear();
+            } else {
+                self.password = password;
+            }
+        }
+
+        let cat_name_to_cat_flag = |cat_name: &Bytes| -> anyhow::Result<CmdFlag> {
+            let mut buf = [0; 32];
+            let cat_name = crate::util::get_uppercase(cat_name, &mut buf)?;
+
+            ACL_CATEGORIES
+                .iter()
+                .find(|cat| cat.name.as_bytes() == cat_name)
+                .map(|cat| cat.flag)
+                .ok_or_else(|| anyhow::anyhow!("unknown category"))
+        };
+
+        if let Some(allow_categories) = other.allow_categories {
+            for category_name in &allow_categories {
+                let flag = cat_name_to_cat_flag(category_name)?;
+
+                self.cmd_flag |= flag; // 允许某类命令执行
+            }
+        }
+
+        if let Some(allow_cmds) = other.allow_commands {
+            for cmd_name in &allow_cmds {
+                if cmd_name.eq_ignore_ascii_case(b"ALL") {
+                    self.cmd_flag = ALL_CMD_FLAG; // 允许所有命令执行，后面的命令无效
+                    break;
+                }
+                let flag = cmd_name_to_flag(cmd_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+                self.cmd_flag |= flag; // 允许命令执行
+            }
+        }
+
+        // 禁止的优先级高于允许的
+
+        if let Some(deny_categories) = other.deny_categories {
+            for category_name in &deny_categories {
+                let flag = cat_name_to_cat_flag(category_name)?;
+
+                self.cmd_flag &= !flag; // 禁止某类命令执行
+            }
+        }
+
+        if let Some(deny_cmds) = other.deny_commands {
+            for cmd_name in &deny_cmds {
+                if cmd_name.eq_ignore_ascii_case(b"ALL") {
+                    self.cmd_flag = NO_CMD_FLAG; // 禁止所有命令执行，后面的命令无效
+                    break;
+                }
+
+                let flag = cmd_name_to_flag(cmd_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+                self.cmd_flag &= !flag; // 禁止命令执行
+            }
+        }
+
+        // 合并deny_read_key_patterns
+        if let (Some(patterns), Some(other_patterns)) = (
+            &self.deny_read_key_patterns,
+            other.deny_read_key_patterns.as_mut(),
+        ) {
+            other_patterns.extend_from_slice(patterns.patterns());
+
+            if other_patterns
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case("RESET"))
+            {
+                // 重置
+                self.deny_read_key_patterns = None;
+            } else {
+                self.deny_read_key_patterns = Some(RegexSet::new(other_patterns)?);
+            }
+        } else if let Some(patterns) = other.deny_read_key_patterns {
+            self.deny_read_key_patterns = Some(RegexSet::new(patterns)?);
+        }
+
+        // 合并deny_write_key_patterns
+        if let (Some(patterns), Some(other_patterns)) = (
+            &self.deny_write_key_patterns,
+            other.deny_write_key_patterns.as_mut(),
+        ) {
+            other_patterns.extend_from_slice(patterns.patterns());
+
+            if other_patterns
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case("RESET"))
+            {
+                // 重置
+                self.deny_write_key_patterns = None;
+            } else {
+                self.deny_write_key_patterns = Some(RegexSet::new(other_patterns)?);
+            }
+        } else if let Some(patterns) = other.deny_write_key_patterns {
+            self.deny_write_key_patterns = Some(RegexSet::new(patterns)?);
+        }
+
+        // 合并deny_channel_patterns
+        if let (Some(patterns), Some(other_patterns)) = (
+            &self.deny_channel_patterns,
+            other.deny_channel_patterns.as_mut(),
+        ) {
+            other_patterns.extend_from_slice(patterns.patterns());
+
+            if other_patterns
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case("RESET"))
+            {
+                // 重置
+                self.deny_channel_patterns = None;
+            } else {
+                self.deny_channel_patterns = Some(RegexSet::new(other_patterns)?);
+            }
+        } else if let Some(patterns) = other.deny_channel_patterns {
+            self.deny_channel_patterns = Some(RegexSet::new(patterns)?);
+        }
+
+        Ok(())
+    }
+
     pub const fn cmd_flag(&self) -> CmdFlag {
         self.cmd_flag
     }
@@ -218,16 +380,26 @@ impl AccessControl {
     // 密码是否正确
     #[inline]
     pub fn is_pwd_correct(&self, pwd: &Bytes) -> bool {
+        if !self.enable {
+            return false;
+        }
         self.password.is_empty() || self.password == *pwd
     }
 
     // 是否是禁用的命令
     pub const fn is_forbidden_cmd(&self, check: CmdFlag) -> bool {
+        if !self.enable {
+            return true;
+        }
         self.cmd_flag & check == 0
     }
 
     #[inline]
     pub fn is_forbidden_key(&self, key: &dyn AsRef<[u8]>, cmd_type: CmdType) -> bool {
+        if !self.enable {
+            return true;
+        }
+
         match cmd_type {
             CmdType::Read => {
                 if let Some(patterns) = &self.deny_read_key_patterns {
@@ -249,6 +421,10 @@ impl AccessControl {
 
     #[inline]
     pub fn is_forbidden_keys(&self, keys: &[impl AsRef<[u8]>], cmd_type: CmdType) -> bool {
+        if !self.enable {
+            return true;
+        }
+
         match cmd_type {
             CmdType::Read => {
                 if let Some(patterns) = &self.deny_read_key_patterns {
@@ -268,6 +444,10 @@ impl AccessControl {
 
     #[inline]
     pub fn is_forbidden_channel(&self, channel: &dyn AsRef<[u8]>) -> bool {
+        if !self.enable {
+            return true;
+        }
+
         if let Some(patterns) = &self.deny_channel_patterns {
             patterns.is_match(channel.as_ref())
         } else {
@@ -277,6 +457,10 @@ impl AccessControl {
 
     #[inline]
     pub fn is_forbidden_channels(&self, channels: &[impl AsRef<[u8]>]) -> bool {
+        if !self.enable {
+            return true;
+        }
+
         if let Some(patterns) = &self.deny_channel_patterns {
             return channels
                 .iter()
@@ -292,124 +476,39 @@ impl<'de> Deserialize<'de> for AccessControl {
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Debug, Deserialize)]
-        #[serde(default)]
-        struct AccessControlIntermedium {
-            enable: bool,
-            password: Bytes,
-            allow_commands: Option<Vec<BytesMut>>,
-            deny_commands: Option<Vec<BytesMut>>,
-            allow_categories: Option<Vec<BytesMut>>,
-            deny_categories: Option<Vec<BytesMut>>,
-            deny_read_key_patterns: Option<Vec<String>>,
-            deny_write_key_patterns: Option<Vec<String>>,
-            deny_channel_patterns: Option<Vec<String>>,
-        }
-
-        impl Default for AccessControlIntermedium {
-            fn default() -> Self {
-                Self {
-                    enable: true,
-                    password: Default::default(),
-                    allow_commands: None,
-                    deny_commands: None,
-                    allow_categories: None,
-                    deny_categories: None,
-                    deny_read_key_patterns: None,
-                    deny_write_key_patterns: None,
-                    deny_channel_patterns: None,
-                }
-            }
-        }
-
         let ac = AccessControlIntermedium::deserialize(deserializer)?;
 
-        let cat_name_to_cat_flag = |cat_name: &mut BytesMut| -> Result<CmdFlag, D::Error> {
-            cat_name.make_ascii_uppercase();
+        ac.try_into().map_err(serde::de::Error::custom)
+    }
+}
 
-            match cat_name.as_ref() {
-                b"CONNECTION" => Ok(ACL_CAT_CONNECTION_FLAG),
-                b"ADMIN" => Ok(ACL_CAT_ADMIN_FLAG),
-                b"READ" => Ok(ACL_CAT_READ_FLAG),
-                b"WRITE" => Ok(ACL_CAT_WRITE_FLAG),
-                b"KEYSPACE" => Ok(ACL_CAT_KEYSPACE_FLAG),
-                b"STRING" => Ok(ACL_CAT_STRING_FLAG),
-                b"LIST" => Ok(ACL_CAT_LIST_FLAG),
-                b"HASH" => Ok(ACL_CAT_HASH_FLAG),
-                b"PUBSUB" => Ok(ACL_CAT_PUBSUB_FLAG),
-                b"SCRIPTING" => Ok(ACL_CAT_SCRIPTING_FLAG),
-                _ => Err(serde::de::Error::custom("unknown category")),
-            }
-        };
+impl Default for AccessControl {
+    fn default() -> Self {
+        Self::new_strict()
+    }
+}
 
-        let mut cmd_flag = NO_CMD_FLAG;
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct AccessControlIntermedium {
+    pub enable: Option<bool>,
+    pub password: Option<Bytes>,
+    pub allow_commands: Option<Vec<Bytes>>,
+    pub deny_commands: Option<Vec<Bytes>>,
+    pub allow_categories: Option<Vec<Bytes>>,
+    pub deny_categories: Option<Vec<Bytes>>,
+    pub deny_read_key_patterns: Option<Vec<String>>,
+    pub deny_write_key_patterns: Option<Vec<String>>,
+    pub deny_channel_patterns: Option<Vec<String>>,
+}
 
-        if let Some(mut allow_categories) = ac.allow_categories {
-            for category_name in &mut allow_categories {
-                let flag = cat_name_to_cat_flag(category_name).map_err(serde::de::Error::custom)?;
+impl TryFrom<AccessControlIntermedium> for AccessControl {
+    type Error = anyhow::Error;
 
-                cmd_flag |= flag; // 允许某类命令执行
-            }
-        }
+    fn try_from(aci: AccessControlIntermedium) -> Result<Self, Self::Error> {
+        let mut ac = AccessControl::new_strict();
+        ac.merge(aci)?;
 
-        if let Some(mut allow_cmds) = ac.allow_commands {
-            for cmd_name in &mut allow_cmds {
-                if cmd_name.as_ref().eq_ignore_ascii_case(b"ALL") {
-                    cmd_flag = ALL_CMD_FLAG; // 允许所有命令执行，后面的命令无效
-                    break;
-                }
-                let flag = cmd_name_to_flag(cmd_name).map_err(serde::de::Error::custom)?;
-                cmd_flag |= flag; // 允许命令执行
-            }
-        }
-
-        // 禁止的优先级高于允许的
-
-        if let Some(mut deny_categories) = ac.deny_categories {
-            for category_name in &mut deny_categories {
-                let flag = cat_name_to_cat_flag(category_name).map_err(serde::de::Error::custom)?;
-
-                cmd_flag &= !flag; // 禁止某类命令执行
-            }
-        }
-
-        if let Some(mut deny_cmds) = ac.deny_commands {
-            for cmd_name in &mut deny_cmds {
-                if cmd_name.as_ref().eq_ignore_ascii_case(b"ALL") {
-                    cmd_flag = NO_CMD_FLAG; // 禁止所有命令执行，后面的命令无效
-                    break;
-                }
-
-                let flag = cmd_name_to_flag(cmd_name).map_err(serde::de::Error::custom)?;
-                cmd_flag &= !flag; // 禁止命令执行
-            }
-        }
-
-        let deny_read_key_patterns = if let Some(patterns) = ac.deny_read_key_patterns {
-            Some(RegexSet::new(patterns).map_err(serde::de::Error::custom)?)
-        } else {
-            None
-        };
-
-        let deny_write_key_patterns = if let Some(patterns) = ac.deny_write_key_patterns {
-            Some(RegexSet::new(patterns).map_err(serde::de::Error::custom)?)
-        } else {
-            None
-        };
-
-        let deny_channel_patterns = if let Some(patterns) = ac.deny_channel_patterns {
-            Some(RegexSet::new(patterns).map_err(serde::de::Error::custom)?)
-        } else {
-            None
-        };
-
-        Ok(AccessControl {
-            enable: ac.enable,
-            password: ac.password,
-            cmd_flag,
-            deny_read_key_patterns,
-            deny_write_key_patterns,
-            deny_channel_patterns,
-        })
+        Ok(ac)
     }
 }

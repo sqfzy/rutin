@@ -7,11 +7,12 @@ use crate::{
     conf::AccessControl,
     connection::AsyncStream,
     frame::Resp3,
-    persist::rdb::RDB,
+    persist::rdb::Rdb,
     server::Handler,
     util, CmdFlag, Id,
 };
 use bytes::Bytes;
+use tracing::instrument;
 
 /// # Reply:
 ///
@@ -48,6 +49,7 @@ impl CmdExecutor for Ping {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = PING_FLAG;
 
+    #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(
         self,
         _handler: &mut Handler<impl AsyncStream>,
@@ -85,6 +87,7 @@ impl CmdExecutor for Echo {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = ECHO_FLAG;
 
+    #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(
         self,
         _handler: &mut Handler<impl AsyncStream>,
@@ -173,6 +176,7 @@ impl CmdExecutor for Echo {
 // }
 
 // impl Info {
+// #[instrument(level = "debug", skip(handler), ret, err)]
 //     pub async fn execute(&self, _db: &Db) -> ResultCmd
 //         debug!("executing command 'INFO'");
 //
@@ -212,6 +216,7 @@ impl CmdExecutor for BgSave {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = BGSAVE_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -220,9 +225,9 @@ impl CmdExecutor for BgSave {
         let shared = &handler.shared;
 
         let mut rdb = if let Some(rdb) = rdb_conf {
-            RDB::new(shared, rdb.file_path.clone(), rdb.enable_checksum)
+            Rdb::new(shared, rdb.file_path.clone(), rdb.enable_checksum)
         } else {
-            RDB::new(shared, "./dump.rdb".into(), false)
+            Rdb::new(shared, "./dump.rdb".into(), false)
         };
         // let mut rdb = RDB::new(shared, rdb_conf.unwrap_or("").file_path.clone(), rdb_conf.enable_checksum);
         tokio::spawn(async move {
@@ -260,6 +265,7 @@ impl CmdExecutor for Auth {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = AUTH_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -319,6 +325,7 @@ impl CmdExecutor for ClientTracking {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = CLIENT_TRACKING_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -394,7 +401,11 @@ mod cmd_other_tests {
         let acl = Acl::new();
         acl.insert(
             Bytes::from(username),
-            AccessControl::new(true, Bytes::from(password), cmd_flag, None, None, None),
+            AccessControl {
+                password: Bytes::from(password),
+                cmd_flag,
+                ..Default::default()
+            },
         );
 
         let conf = Conf {

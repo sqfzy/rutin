@@ -16,15 +16,15 @@ use tokio::{
 };
 use tokio_util::codec::Decoder;
 
-pub struct AOF {
+pub struct Aof {
     file: File,
     shared: Shared,
     conf: Arc<Conf>,
 }
 
-impl AOF {
+impl Aof {
     pub async fn new(shared: Shared, conf: Arc<Conf>, file_path: impl AsRef<Path>) -> Result<Self> {
-        Ok(AOF {
+        Ok(Aof {
             file: tokio::fs::OpenOptions::new()
                 .read(true)
                 .append(true)
@@ -69,7 +69,7 @@ impl AOF {
     }
 }
 
-impl AOF {
+impl Aof {
     pub async fn save(&mut self) -> anyhow::Result<()> {
         let aof_conf = self.conf.aof.as_ref().unwrap();
 
@@ -88,7 +88,6 @@ impl AOF {
             .1
             .clone();
 
-        // PERF: 使用io_uring
         match aof_conf.append_fsync {
             AppendFSync::Always => loop {
                 tokio::select! {
@@ -121,7 +120,7 @@ impl AOF {
                             break
                         } ,
                         // 每隔一秒，同步文件
-                        // PERF: 同步文件时会造成性能波动，也许应该新开一个线程来处理这个任务
+                        // PERF: 同步文件时会造成性能波动
                         _ = interval.tick() => {
                             self.file.write_all_buf(&mut buffer).await?;
                             self.file.sync_data().await?;

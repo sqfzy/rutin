@@ -1,7 +1,6 @@
 /// 1. 首先配置结构体从默认值开始构造
 /// 2. 如果提供了配置文件，读取配置文件并更新
-/// 3. 如果命令行参数有 --server.addr 之类的配置项，merge 该配置
-/// 4. 如果环境变量有 SERVER_ADDR 之类配置，进行 merge
+/// 3. 如果提供了命令行参数，则merge配置
 mod aof;
 mod memory;
 mod rdb;
@@ -20,15 +19,11 @@ pub use tls::*;
 
 use crate::{
     cli::Cli,
-    persist::{
-        aof::{AppendFSync, AOF},
-        rdb::RDB,
-    },
+    persist::{aof::Aof, rdb::Rdb},
     server::Listener,
     shared::Shared,
 };
 use clap::Parser;
-use crossbeam::atomic::AtomicCell;
 use rand::Rng;
 use serde::Deserialize;
 use std::{fs::File, io::BufReader, sync::Arc, time::Duration};
@@ -41,60 +36,21 @@ pub struct Conf {
     pub server: ServerConf,
     pub security: SecurityConf,
     pub replica: ReplicaConf,
-    pub rdb: Option<RDBConf>,
-    pub aof: Option<AOFConf>,
+    pub rdb: Option<RdbConf>,
+    pub aof: Option<AofConf>,
     pub memory: MemoryConf,
     pub tls: Option<TLSConf>,
 }
 
 impl Default for Conf {
     fn default() -> Self {
-        let run_id: String = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(40)
-            .map(char::from)
-            .collect();
         Self {
-            server: ServerConf {
-                addr: "127.0.0.1".to_string(),
-                port: 6379,
-                run_id,
-                expire_check_interval_secs: 1,
-                log_level: "info".to_string(),
-                max_connections: 1024,
-                max_batch: 1024,
-            },
-            security: SecurityConf {
-                requirepass: None,
-                forbaiden_commands: vec![false; 128],
-                rename_commands: vec![None; 128],
-                default_ac: Some(AccessControl::new_loose()),
-                acl: Default::default(),
-            },
-            replica: ReplicaConf {
-                max_replica: 3,
-                offset: AtomicCell::new(0),
-                // repli_backlog: RepliBackLog::new(1024),
-                replicaof: None,
-                masterauth: None,
-            },
-            rdb: Some(RDBConf {
-                file_path: "dump.rdb".to_string(),
-                save: None,
-                version: 6,
-                enable_checksum: false,
-            }),
-            aof: Some(AOFConf {
-                use_rdb_preamble: false,
-                file_path: "appendonly.aof".to_string(),
-                append_fsync: AppendFSync::EverySec,
-                auto_aof_rewrite_min_size: 64,
-            }),
-            memory: MemoryConf {
-                // max_memory: 0,
-                // max_memory_policy: "noeviction".to_string(),
-                // max_memory_samples: 5,
-            },
+            server: ServerConf::default(),
+            security: SecurityConf::default(),
+            replica: ReplicaConf::default(),
+            rdb: Some(RdbConf::default()),
+            aof: Some(AofConf::default()),
+            memory: MemoryConf::default(),
             tls: None,
         }
     }
@@ -144,7 +100,7 @@ impl Conf {
         /* 是否开启RDB持久化 */
         /*********************/
         if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
-            let mut rdb = RDB::new(shared, rdb.file_path.clone(), rdb.enable_checksum);
+            let mut rdb = Rdb::new(shared, rdb.file_path.clone(), rdb.enable_checksum);
 
             let start = std::time::Instant::now();
             info!("Loading RDB file...");
@@ -224,7 +180,7 @@ async fn enable_aof(
     conf: Arc<Conf>,
     file_path: impl AsRef<std::path::Path>,
 ) -> anyhow::Result<()> {
-    let mut aof = AOF::new(shared.clone(), conf.clone(), file_path).await?;
+    let mut aof = Aof::new(shared.clone(), conf.clone(), file_path).await?;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
     let handle = Handle::current();
@@ -262,6 +218,7 @@ mod conf_tests {
     #[tokio::test]
     async fn aof_test() {
         test_init();
+        use crate::persist::aof::AppendFSync;
 
         const INIT_CONTENT: &[u8; 315] = b"*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000042\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000003\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000025\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000010\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000004\r\n$3\r\nVXK\r\n";
 
@@ -283,7 +240,7 @@ mod conf_tests {
         drop(file);
 
         let conf = Conf {
-            aof: Some(AOFConf {
+            aof: Some(AofConf {
                 use_rdb_preamble: false,
                 file_path: test_file_path.to_string(),
                 append_fsync: AppendFSync::Always,

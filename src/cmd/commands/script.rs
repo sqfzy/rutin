@@ -9,6 +9,7 @@ use crate::{
 };
 use bytes::Bytes;
 use snafu::ResultExt;
+use tracing::instrument;
 
 #[derive(Debug)]
 pub struct Eval {
@@ -22,6 +23,7 @@ impl CmdExecutor for Eval {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = EVAL_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -65,6 +67,7 @@ impl CmdExecutor for EvalName {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = EVALNAME_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -105,6 +108,7 @@ impl CmdExecutor for ScriptExists {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = SCRIPT_EXISTS_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -140,6 +144,7 @@ impl CmdExecutor for ScriptFlush {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = SCRIPT_FLUSH_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -169,6 +174,7 @@ impl CmdExecutor for ScriptRegister {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = SCRIPT_REGISTER_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

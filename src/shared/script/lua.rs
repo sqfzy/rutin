@@ -1,6 +1,6 @@
 use crate::{
     cmd::{CmdError, ServerErrSnafu},
-    conf::AccessControl,
+    conf::{AccessControl, DEFAULT_USER},
     connection::{AsyncStream, FakeStream},
     frame::Resp3,
     server::{Handler, HandlerContext, ServerError, ID},
@@ -81,7 +81,11 @@ impl LuaScript {
             let handler = Handler::new_fake_with(
                 shared,
                 None,
-                Some(HandlerContext::new(old_count, AccessControl::new_strict())),
+                Some(HandlerContext::new(
+                    old_count,
+                    DEFAULT_USER,
+                    AccessControl::new_strict(),
+                )),
             )
             .0;
             let handler = Arc::new(TryLock::new(handler));
@@ -315,6 +319,7 @@ impl LuaScript {
     ) -> Result<Resp3, ServerError> {
         let shared = handler.shared.clone();
         let client_ac = handler.context.ac.clone();
+        let user = handler.context.user.clone();
 
         let script = shared.script().clone();
 
@@ -329,6 +334,8 @@ impl LuaScript {
                     let mut fake_handler = fake_handler.try_lock().unwrap();
                     // 脚本执行的权限与客户端的权限一致
                     fake_handler.context.ac = client_ac;
+                    // 脚本的用户与客户端的用户一致
+                    fake_handler.context.user = user;
 
                     let mut intention_locks = Vec::with_capacity(keys.len());
                     // 给需要操作的键加上意向锁

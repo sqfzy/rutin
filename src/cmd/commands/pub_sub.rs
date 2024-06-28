@@ -12,6 +12,7 @@ use crate::{
 };
 use bytes::Bytes;
 use snafu::location;
+use tracing::instrument;
 
 /// # Reply:
 ///
@@ -26,9 +27,10 @@ pub struct Publish {
 
 impl CmdExecutor for Publish {
     const NAME: &'static str = "PUBLISH";
-    const TYPE: CmdType = CmdType::Other;
+    const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = PUBLISH_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -89,9 +91,10 @@ pub struct Subscribe {
 
 impl CmdExecutor for Subscribe {
     const NAME: &'static str = "SUBSCRIBE";
-    const TYPE: CmdType = CmdType::Other;
+    const TYPE: CmdType = CmdType::Read;
     const FLAG: CmdFlag = SUBSCRIBE_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -167,6 +170,7 @@ impl CmdExecutor for Unsubscribe {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = UNSUBSCRIBE_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

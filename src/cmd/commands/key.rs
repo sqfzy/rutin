@@ -19,6 +19,7 @@ use bytes::{Bytes, BytesMut};
 use rayon::prelude::*;
 use std::time::Duration;
 use tokio::time::Instant;
+use tracing::instrument;
 
 #[derive(Debug)]
 enum Opt {
@@ -56,6 +57,7 @@ impl CmdExecutor for Del {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = DEL_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -99,6 +101,7 @@ impl CmdExecutor for Dump {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = DUMP_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -151,6 +154,7 @@ impl CmdExecutor for Exists {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = EXISTS_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -195,6 +199,7 @@ impl CmdExecutor for Expire {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = EXPIRE_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -293,6 +298,7 @@ impl CmdExecutor for ExpireAt {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = EXPIREAT_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -394,6 +400,7 @@ impl CmdExecutor for ExpireTime {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = EXPIRETIME_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -447,6 +454,7 @@ impl CmdExecutor for Keys {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = KEYS_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -511,6 +519,7 @@ impl CmdExecutor for NBKeys {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = NBKEYS_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -592,6 +601,7 @@ impl CmdExecutor for Persist {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = PERSIST_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -643,6 +653,7 @@ impl CmdExecutor for Pttl {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = PTTL_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -697,6 +708,7 @@ impl CmdExecutor for Ttl {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = TTL_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -749,6 +761,7 @@ impl CmdExecutor for Type {
     const TYPE: CmdType = CmdType::Other;
     const FLAG: CmdFlag = TYPE_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

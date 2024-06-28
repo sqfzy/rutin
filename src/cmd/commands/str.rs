@@ -15,6 +15,7 @@ use crate::{
 use bytes::Bytes;
 use std::time::Duration;
 use tokio::time::Instant;
+use tracing::instrument;
 
 // 如果 key 已经存在并且是一个字符串， APPEND 命令将指定的 value 追加到该 key 原来值（value）的末尾。
 /// # Reply:
@@ -31,6 +32,7 @@ impl CmdExecutor for Append {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = APPEND_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -83,6 +85,7 @@ impl CmdExecutor for Decr {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = DECR_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -130,6 +133,7 @@ impl CmdExecutor for DecrBy {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = DECRBY_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -181,6 +185,7 @@ impl CmdExecutor for Get {
     const FLAG: CmdFlag = GET_FLAG;
 
     #[inline]
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -230,6 +235,7 @@ impl CmdExecutor for GetRange {
     const TYPE: CmdType = CmdType::Read;
     const FLAG: CmdFlag = GETRANGE_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -288,6 +294,7 @@ impl CmdExecutor for GetSet {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = GETSET_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -338,6 +345,7 @@ impl CmdExecutor for Incr {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = INCR_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -386,6 +394,7 @@ impl CmdExecutor for IncrBy {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = INCRBY_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -436,6 +445,7 @@ impl CmdExecutor for MGet {
     const TYPE: CmdType = CmdType::Read;
     const FLAG: CmdFlag = MGET_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -487,6 +497,7 @@ impl CmdExecutor for MSet {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = MSET_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -536,6 +547,7 @@ impl CmdExecutor for MSetNx {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = MSETNX_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -605,6 +617,7 @@ impl CmdExecutor for Set {
     const FLAG: CmdFlag = SET_FLAG;
 
     #[inline]
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -671,10 +684,10 @@ impl CmdExecutor for Set {
 
         let value = args.next().unwrap();
 
-        let mut next = [0; 7];
-        let mut next_len = args.get_uppercase(0, &mut next);
+        let mut buf = [0; 7];
+        let mut next = args.get_uppercase(0, &mut buf);
         args.advance(1);
-        let opt = match next_len {
+        let opt = match next {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -685,16 +698,15 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(len) => {
-                let opt = &next[..len];
+            Some(opt) => {
                 match opt {
                     b"NX" => {
-                        next_len = args.get_uppercase(0, &mut next);
+                        next = args.get_uppercase(0, &mut buf);
                         args.advance(1);
                         Some(SetOpt::NX)
                     }
                     b"XX" => {
-                        next_len = args.get_uppercase(0, &mut next);
+                        next = args.get_uppercase(0, &mut buf);
                         args.advance(1);
                         Some(SetOpt::XX)
                     }
@@ -704,7 +716,7 @@ impl CmdExecutor for Set {
             }
         };
 
-        let get = match next_len {
+        let get = match next {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -715,11 +727,10 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(len) => {
-                let get = &next[..len];
+            Some(get) => {
                 match get {
                     b"GET" => {
-                        next_len = args.get_uppercase(0, &mut next);
+                        next = args.get_uppercase(0, &mut buf);
                         args.advance(1);
                         true
                     }
@@ -729,7 +740,7 @@ impl CmdExecutor for Set {
             }
         };
 
-        let expire = match next_len {
+        let expire = match next {
             None => {
                 // 已经没有参数了
                 return Ok(Set {
@@ -740,8 +751,7 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(len) => {
-                let ex = &next[..len];
+            Some(ex) => {
                 match ex {
                     b"KEEPTTL" => Some(epoch()),
                     b"EX" => {
@@ -798,6 +808,7 @@ impl CmdExecutor for SetEx {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = SETEX_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -847,6 +858,7 @@ impl CmdExecutor for SetNx {
     const TYPE: CmdType = CmdType::Write;
     const FLAG: CmdFlag = SETNX_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -895,6 +907,7 @@ impl CmdExecutor for StrLen {
     const TYPE: CmdType = CmdType::Read;
     const FLAG: CmdFlag = STRLEN_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -969,7 +982,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             b"value_never_expire".as_ref()
         );
@@ -998,7 +1011,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             b"value_nx".as_ref()
         );
@@ -1044,7 +1057,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             "value_xx".as_bytes()
         );
@@ -1064,7 +1077,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             "value_never_expire".as_bytes()
         );
@@ -1109,7 +1122,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             "value_expire".as_bytes()
         );
@@ -1153,7 +1166,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             "value_expire".as_bytes()
         );
@@ -1209,7 +1222,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             "value_expire".as_bytes()
         );
@@ -1266,7 +1279,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_bulk()
+                .try_blob()
                 .unwrap(),
             "value_expire".as_bytes()
         );
