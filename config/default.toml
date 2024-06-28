@@ -63,7 +63,7 @@ auto_aof_rewrite_min_size = 64 # 单位为mb
 
 [memory]
 
-# maxmemory <bytes>
+max_memory = 4194304
 
 # MAXMEMORY POLICY: how Redis will select what to remove when maxmemory
 # is reached. You can select one from the following behaviors:

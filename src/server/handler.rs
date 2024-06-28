@@ -23,13 +23,8 @@ impl<S: AsyncStream> Handler<S> {
     pub fn new(shared: Shared, stream: S) -> Self {
         let bg_task_channel = BgTaskChannel::default();
         let client_id = Self::create_client_id(&shared, &bg_task_channel);
-        let ac = if shared.conf().security.acl.is_some() {
-            // 如果开启了ACL，且没有设置默认的ACL，则设为严格模式
-            AccessControl::new_strict()
-        } else {
-            // 如果禁用了ACL，则使用默认ac
-            shared.conf().security.default_ac.clone()
-        };
+        // 使用默认ac
+        let ac = shared.conf().security.default_ac.clone();
 
         Self {
             conn: Connection::new(stream, shared.conf().server.max_batch),
