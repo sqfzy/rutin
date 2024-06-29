@@ -360,57 +360,58 @@ impl Object {
                 }
 
                 let events = &mut e.get_mut().events;
-                let mut i = 0;
-                while let Some(e) = events.inner.get_mut(i) {
-                    match e {
-                        // 找到IntentionLock事件
-                        Event::IntentionLock {
-                            target_id,
-                            intention_lock,
-                            count,
-                        } => {
-                            // 如果正在执行的不是带有目标ID的task，则释放读写锁后等待意向锁释放
-                            if ID.get() != *target_id {
-                                let intention_lock = intention_lock.clone();
+                for (i, e) in events.inner.iter_mut().enumerate() {
+                    if let Event::IntentionLock {
+                        target_id,
+                        intention_lock,
+                        count,
+                    } = e
+                    {
+                        // 如果正在执行的不是带有目标ID的task，则释放读写锁后等待意向锁释放
+                        if ID.get() != *target_id {
+                            let intention_lock = intention_lock.clone();
 
-                                // 等待者数目加1
-                                *count += 1;
-                                let seq = *count;
+                            // 等待者数目加1
+                            *count += 1;
+                            let seq = *count;
 
-                                // 释放写锁
-                                let key = entry.into_key();
+                            // 释放写锁
+                            let key = entry.into_key();
 
-                                // 多个任务有序等待获取写锁的许可
-                                let _ = intention_lock.lock().await;
+                            // 多个任务有序等待获取写锁的许可
+                            let _ = intention_lock.lock().await;
 
-                                // 重新获取写锁
-                                let mut new_entry = db.entries.entry(key.clone());
+                            // 重新获取写锁
+                            let mut new_entry = db.entries.entry(key.clone());
 
-                                // 如果当前任务是最后一个获取写锁的任务，则由该任务负责移除IntentionLock事件
-                                if let Entry::Occupied(e) = &mut new_entry {
-                                    let obj = e.get_mut();
+                            // 如果当前任务是最后一个获取写锁的任务，则由该任务负责移除IntentionLock事件
+                            if let Entry::Occupied(e) = &mut new_entry {
+                                let obj = e.get_mut();
 
-                                    if let Event::IntentionLock { count, .. } =
-                                        obj.events.inner.get_mut(i).unwrap()
-                                    {
-                                        if seq == *count {
-                                            obj.remove_event(i, INTENTION_LOCK_FLAG);
-                                            obj.remove_flag(INTENTION_LOCK_FLAG);
-                                        }
-                                    } else {
-                                        unreachable!()
+                                if let Event::IntentionLock { count, .. } = obj
+                                    .events
+                                    .inner
+                                    .get_mut(i)
+                                    .expect("must exist since no one removed it")
+                                {
+                                    if seq == *count {
+                                        obj.remove_event(i, INTENTION_LOCK_FLAG);
+                                        obj.remove_flag(INTENTION_LOCK_FLAG);
                                     }
+                                } else {
+                                    unreachable!(
+                                        "get the same result that must be IntentionLock event"
+                                    )
                                 }
-
-                                // 获取写锁并带上notify，当写锁释放时通知下一个等待的任务。在使用写锁时，
-                                // 可能会有新的任务想要获取写锁，因此不能简单地通知唤醒所有等待的任务（这
-                                // 还会导致写锁争用，从而引起阻塞），而是应该一个接一个的唤醒
-                                return ObjectEntryMut::new(new_entry, db, Some(intention_lock));
                             }
 
-                            return ObjectEntryMut::new(entry, db, None);
+                            // 获取写锁并带上notify，当写锁释放时通知下一个等待的任务。在使用写锁时，
+                            // 可能会有新的任务想要获取写锁，因此不能简单地通知唤醒所有等待的任务（这
+                            // 还会导致写锁争用，从而引起阻塞），而是应该一个接一个的唤醒
+                            return ObjectEntryMut::new(new_entry, db, Some(intention_lock));
                         }
-                        _ => i += 1,
+
+                        return ObjectEntryMut::new(entry, db, None);
                     }
                 }
 
@@ -427,28 +428,48 @@ impl Object {
             return;
         }
 
-        let mut i = 0;
-        while let Some(e) = self.events.inner.get(i) {
-            match e {
-                Event::MayUpdate(sender) => {
-                    let _ = sender.send(key.clone());
-
-                    self.remove_event(i, MAY_UPDATE_FLAG);
-                    self.remove_flag(MAY_UPDATE_FLAG);
-                }
-                _ => i += 1,
+        // 触发并移除所有的MayUpdate事件
+        self.events.inner.retain(|e| {
+            if let Event::MayUpdate(sender) = e {
+                let _ = sender.send(key.clone());
+                false
+            } else {
+                true
             }
-        }
+        });
+
+        self.remove_flag(MAY_UPDATE_FLAG);
     }
 
     #[inline]
-    pub(super) fn trigger_track_event(&mut self, _key: &Key) {
-        // if !self.events.contains(TRACK_FLAG) {
-        //     return;
-        // }
+    pub(super) fn trigger_track_event(&mut self, key: &Key) {
+        if !self.events.contains(TRACK_FLAG) {
+            return;
+        }
 
-        // TODO:
-        // todo!()
+        let mut should_remov_flag = true;
+
+        self.events.inner.retain(|e| {
+            if let Event::Track(sender) = e {
+                // PERF: 池化
+                let res = sender.send(Resp3::new_push(vec![
+                    Resp3::new_blob_string("invalidate".into()),
+                    Resp3::new_array(vec![Resp3::new_blob_string(key.clone())]),
+                ]));
+
+                // 只要有一个发送失败，则不移除该事件的flag
+                should_remov_flag &= res.is_ok();
+
+                // 如果发送失败，则表明客户端已经断开连接，移除该事件
+                res.is_ok()
+            } else {
+                true
+            }
+        });
+
+        if should_remov_flag {
+            self.remove_flag(TRACK_FLAG);
+        }
     }
 }
 
@@ -824,6 +845,27 @@ mod object_tests {
 
         let key = rx.recv().unwrap();
         assert_eq!(&key, "key");
+    }
+
+    #[test]
+    fn track_test() {
+        let mut obj = Object::new_str("".into(), None);
+
+        let (tx, rx) = flume::unbounded();
+
+        obj.add_track_event(tx);
+
+        obj.trigger_track_event(&"key".into());
+
+        let resp = rx.recv().unwrap();
+
+        assert_eq!(
+            resp,
+            Resp3::new_push(vec![
+                Resp3::new_blob_string("invalidate".into()),
+                Resp3::new_array(vec![Resp3::new_blob_string("key".into())]),
+            ])
+        );
     }
 
     #[tokio::test]

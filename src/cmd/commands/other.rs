@@ -341,7 +341,7 @@ impl CmdExecutor for ClientTracking {
                 .shared
                 .db()
                 .get_client_bg_sender(redirect)
-                .ok_or("ERR The client ID you want redirect to does not exist")?;
+                .ok_or("ERR the client ID you want redirect to does not exist")?;
             handler.context.client_track = Some(redirect_bg_sender);
         } else {
             handler.context.client_track = Some(handler.bg_task_channel.new_sender());

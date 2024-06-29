@@ -607,6 +607,104 @@ where
         }
     }
 
+    pub fn as_simple_string_uncheckd_mut(&mut self) -> &mut S {
+        match self {
+            Resp3::SimpleString { inner, .. } => inner,
+            _ => panic!("not a simple string"),
+        }
+    }
+
+    pub fn as_simple_error_uncheckd_mut(&mut self) -> &mut S {
+        match self {
+            Resp3::SimpleError { inner, .. } => inner,
+            _ => panic!("not a simple error"),
+        }
+    }
+
+    pub fn as_integer_uncheckd_mut(&mut self) -> Int {
+        match self {
+            Resp3::Integer { inner, .. } => *inner,
+            _ => panic!("not an integer"),
+        }
+    }
+
+    pub fn as_blob_string_uncheckd_mut(&mut self) -> &mut B {
+        match self {
+            Resp3::BlobString { inner, .. } => inner,
+            _ => panic!("not a blob string"),
+        }
+    }
+
+    pub fn as_array_uncheckd_mut(&mut self) -> &mut Vec<Resp3<B, S>> {
+        match self {
+            Resp3::Array { inner, .. } => inner,
+            _ => panic!("not an array"),
+        }
+    }
+
+    pub fn as_null_uncheckd_mut(&mut self) {
+        match self {
+            Resp3::Null => {}
+            _ => panic!("not a null"),
+        }
+    }
+
+    pub fn as_boolean_uncheckd_mut(&mut self) -> bool {
+        match self {
+            Resp3::Boolean { inner, .. } => *inner,
+            _ => panic!("not a boolean"),
+        }
+    }
+
+    pub fn as_double_uncheckd_mut(&mut self) -> f64 {
+        match self {
+            Resp3::Double { inner, .. } => *inner,
+            _ => panic!("not a double"),
+        }
+    }
+
+    pub fn as_big_number_uncheckd_mut(&mut self) -> &mut BigInt {
+        match self {
+            Resp3::BigNumber { inner, .. } => inner,
+            _ => panic!("not a big number"),
+        }
+    }
+
+    pub fn as_bolb_error_uncheckd_mut(&mut self) -> &mut B {
+        match self {
+            Resp3::BlobError { inner, .. } => inner,
+            _ => panic!("not a blob error"),
+        }
+    }
+
+    pub fn as_verbatim_string_uncheckd_mut(&mut self) -> (&mut [u8; 3], &mut B) {
+        match self {
+            Resp3::VerbatimString { format, data, .. } => (format, data),
+            _ => panic!("not a verbatim string"),
+        }
+    }
+
+    pub fn as_map_uncheckd_mut(&mut self) -> &mut AHashMap<Resp3<B, S>, Resp3<B, S>> {
+        match self {
+            Resp3::Map { inner, .. } => inner,
+            _ => panic!("not a map"),
+        }
+    }
+
+    pub fn as_set_uncheckd_mut(&mut self) -> &mut AHashSet<Resp3<B, S>> {
+        match self {
+            Resp3::Set { inner, .. } => inner,
+            _ => panic!("not a set"),
+        }
+    }
+
+    pub fn as_push_uncheckd_mut(&mut self) -> &mut Vec<Resp3<B, S>> {
+        match self {
+            Resp3::Push { inner, .. } => inner,
+            _ => panic!("not a push"),
+        }
+    }
+
     pub fn add_attributes(&mut self, attrs: Attributes<B, S>) {
         match self {
             Resp3::SimpleString { attributes, .. }
