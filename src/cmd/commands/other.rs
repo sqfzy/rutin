@@ -276,7 +276,7 @@ impl CmdExecutor for Auth {
                     Err("ERR invalid password".into())
                 } else {
                     // 设置客户端的权限
-                    handler.context.ac = ac.clone();
+                    handler.context.ac = std::sync::Arc::new(ac.clone());
                     Ok(Some(Resp3::new_simple_string("OK".into())))
                 }
             } else {

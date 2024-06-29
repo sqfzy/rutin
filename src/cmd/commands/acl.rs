@@ -64,6 +64,10 @@ impl CmdExecutor for AclCat {
 /// # Reply:
 ///
 /// Integer reply: the number of users that were deleted. This number will not always match the number of arguments since certain users may not exist.
+///
+/// # Tips:
+///
+/// default_ac是默认的ac，不可删除
 #[derive(Debug)]
 pub struct AclDelUser {
     pub users: Vec<Bytes>,
@@ -109,7 +113,7 @@ impl CmdExecutor for AclDelUser {
 ///
 /// # Usage:
 ///
-/// RESET代表清空，不支持修改default_ac
+/// RESET代表清空
 ///
 /// ```
 /// ACL SETUSER <name> [enable | disable]  [PWD <password>] [ALLOWCMD <cmd>,...]
@@ -132,7 +136,16 @@ impl CmdExecutor for AclSetUser {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> Result<Option<Resp3>, CmdError> {
-        if let Some(acl) = &handler.shared.conf().security.acl {
+        let security = &handler.shared.conf().security;
+        if self.name == DEFAULT_USER {
+            // 如果是default_ac则clone后合并，再放回
+            let default_ac = security.default_ac.load();
+            let mut default_ac = AccessControl::clone(&default_ac);
+
+            default_ac.merge(self.aci).map_err(CmdError::from)?;
+
+            security.default_ac.store(std::sync::Arc::new(default_ac));
+        } else if let Some(acl) = &handler.shared.conf().security.acl {
             if let Some(mut ac) = acl.get_mut(&self.name) {
                 // 如果存在则合并
                 ac.merge(self.aci).map_err(CmdError::from)?;
@@ -158,10 +171,6 @@ impl CmdExecutor for AclSetUser {
         }
 
         let name = args.next().unwrap();
-        // 不支持修改default_ac
-        if name.as_ref() == b"default_ac" {
-            return Err("ERR default_ac is read-only".into());
-        }
 
         let mut aci = AccessControlIntermedium::default();
 
@@ -339,6 +348,37 @@ async fn cmd_acl_tests() {
     let acl_set_user = AclSetUser::parse(
         &mut CmdUnparsed::from(
             [
+                "default_ac",
+                "enable",
+                "PWD",
+                "password",
+                "ALLOWCMD",
+                "get",
+                "DENYCMD",
+                "set",
+                "ALLOWCAT",
+                "string",
+                "DENYCAT",
+                "hash",
+                "DENYRKEY",
+                r"foo\d+",
+                "DENYWKEY",
+                r"bar\d+",
+                "DENYCHANNEL",
+                "channel*",
+            ]
+            .as_ref(),
+        ),
+        &AccessControl::new_loose(),
+    )
+    .unwrap();
+
+    let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
+    assert_eq!(resp.as_simple_string_uncheckd(), "OK");
+
+    let acl_set_user = AclSetUser::parse(
+        &mut CmdUnparsed::from(
+            [
                 "user",
                 "enable",
                 "PWD",
@@ -366,6 +406,46 @@ async fn cmd_acl_tests() {
 
     let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
     assert_eq!(resp.as_simple_string_uncheckd(), "OK");
+
+    {
+        let default_ac = handler.shared.conf().security.default_ac.load();
+        let user_ac = handler
+            .shared
+            .conf()
+            .security
+            .acl
+            .as_ref()
+            .unwrap()
+            .get(&"user".into())
+            .unwrap();
+
+        assert_eq!(default_ac.enable, user_ac.enable);
+        assert_eq!(default_ac.password, user_ac.password);
+        assert_eq!(
+            default_ac
+                .deny_read_key_patterns
+                .as_ref()
+                .unwrap()
+                .patterns(),
+            user_ac.deny_read_key_patterns.as_ref().unwrap().patterns()
+        );
+        assert_eq!(
+            default_ac
+                .deny_write_key_patterns
+                .as_ref()
+                .unwrap()
+                .patterns(),
+            user_ac.deny_write_key_patterns.as_ref().unwrap().patterns()
+        );
+        assert_eq!(
+            default_ac
+                .deny_channel_patterns
+                .as_ref()
+                .unwrap()
+                .patterns(),
+            user_ac.deny_channel_patterns.as_ref().unwrap().patterns()
+        );
+    }
 
     {
         let user = handler

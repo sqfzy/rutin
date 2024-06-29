@@ -84,7 +84,7 @@ impl LuaScript {
                 Some(HandlerContext::new(
                     old_count,
                     DEFAULT_USER,
-                    AccessControl::new_strict(),
+                    Arc::new(AccessControl::new_strict()),
                 )),
             )
             .0;

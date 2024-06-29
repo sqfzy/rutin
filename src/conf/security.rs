@@ -2,6 +2,7 @@ use crate::{
     cmd::{cmd_name_to_flag, commands::*, CmdExecutor, CmdType},
     CmdFlag,
 };
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use dashmap::DashMap;
 use dashmap::{
@@ -131,7 +132,7 @@ pub struct SecurityConf {
     // TODO:
     #[serde(skip)]
     pub rename_commands: Vec<Option<String>>,
-    pub default_ac: AccessControl,
+    pub default_ac: ArcSwap<AccessControl>,
     pub acl: Option<Acl>, // None代表禁用ACL
 }
 
@@ -141,7 +142,7 @@ impl Default for SecurityConf {
             requirepass: None,
             forbaiden_commands: vec![],
             rename_commands: vec![],
-            default_ac: AccessControl::new_loose(),
+            default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
             acl: Some(Acl::new()),
         }
     }

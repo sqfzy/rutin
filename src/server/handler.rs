@@ -1,5 +1,4 @@
 use super::{BgTaskChannel, BgTaskSender, ServerError, CLIENT_ID_COUNT, ID};
-
 use crate::{
     cmd::dispatch,
     conf::{AccessControl, DEFAULT_USER},
@@ -9,6 +8,7 @@ use crate::{
     Id, Key,
 };
 use bytes::BytesMut;
+use std::sync::Arc;
 use tracing::{debug, instrument};
 
 pub struct Handler<S: AsyncStream> {
@@ -24,7 +24,7 @@ impl<S: AsyncStream> Handler<S> {
         let bg_task_channel = BgTaskChannel::default();
         let client_id = Self::create_client_id(&shared, &bg_task_channel);
         // 使用默认ac
-        let ac = shared.conf().security.default_ac.clone();
+        let ac = shared.conf().security.default_ac.load_full();
 
         Self {
             conn: Connection::new(stream, shared.conf().server.max_batch),
@@ -98,11 +98,11 @@ pub struct HandlerContext {
     // 用于缓存需要传播的写命令
     pub wcmd_buf: BytesMut,
     pub user: bytes::Bytes,
-    pub ac: AccessControl,
+    pub ac: Arc<AccessControl>,
 }
 
 impl HandlerContext {
-    pub fn new(client_id: Id, user: bytes::Bytes, ac: AccessControl) -> Self {
+    pub fn new(client_id: Id, user: bytes::Bytes, ac: Arc<AccessControl>) -> Self {
         Self {
             client_id,
             subscribed_channels: None,
@@ -144,11 +144,12 @@ impl Handler<FakeStream> {
             let client_id = Self::create_client_id(&shared, &bg_task_channel);
 
             // 继承Access Control
-            HandlerContext::new(client_id, cx.user, cx.ac.clone())
+            HandlerContext::new(client_id, cx.user, cx.ac)
         } else {
             let client_id = Self::create_client_id(&shared, &bg_task_channel);
 
-            HandlerContext::new(client_id, DEFAULT_USER, AccessControl::new_loose())
+            let ac = shared.conf().security.default_ac.load_full();
+            HandlerContext::new(client_id, DEFAULT_USER, ac)
         };
 
         let max_batch = shared.conf().server.max_batch;
