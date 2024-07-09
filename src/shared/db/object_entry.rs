@@ -1,19 +1,23 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::{cmd::CmdResult, Key};
+use crate::{
+    error::{RutinError, RutinResult},
+    Key,
+};
 use bytes::Bytes;
 use dashmap::mapref::entry::{self, Entry};
 use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
 
-pub struct ObjectEntryMut<'a> {
+// ObjectEntry不必检查expire，因为在Db中已经检查过了
+pub struct ObjectEntry<'a> {
     pub(super) entry: Entry<'a, Bytes, Object>,
     db: &'a Db,
     intention_lock: Option<IntentionLock>,
 }
 
-impl<'a> ObjectEntryMut<'a> {
+impl<'a> ObjectEntry<'a> {
     pub fn new(
         entry: Entry<'a, Bytes, Object>,
         db: &'a Db,
@@ -27,20 +31,13 @@ impl<'a> ObjectEntryMut<'a> {
     }
 }
 
-impl ObjectEntryMut<'_> {
+impl ObjectEntry<'_> {
     pub fn is_object_existed(&self) -> bool {
-        match &self.entry {
-            Entry::Occupied(e) => {
-                let inner = e.get().inner();
-
-                if let Some(inner) = inner {
-                    !inner.is_expired()
-                } else {
-                    false
-                }
-            }
-            Entry::Vacant(_) => false,
+        if let Entry::Occupied(e) = &self.entry {
+            return e.get().inner().is_some();
         }
+
+        false
     }
 
     #[inline]
@@ -53,10 +50,7 @@ impl ObjectEntryMut<'_> {
         if let Entry::Occupied(e) = &self.entry {
             // 对象不为空
             if let Some(inner) = e.get().inner() {
-                // 对象未过期
-                if !inner.is_expired() {
-                    return Some(inner);
-                }
+                return Some(inner);
             }
         }
 
@@ -84,11 +78,11 @@ impl ObjectEntryMut<'_> {
                 let db = self.db;
 
                 let new_obj = match obj_type {
-                    ObjValueType::Str => Object::new_str(Str::default(), None),
-                    ObjValueType::List => Object::new_list(List::default(), None),
-                    ObjValueType::Set => Object::new_set(Set::default(), None),
-                    ObjValueType::Hash => Object::new_hash(Hash::default(), None),
-                    ObjValueType::ZSet => Object::new_zset(ZSet::default(), None),
+                    ObjValueType::Str => Object::new_str(Str::default(), *NEVER_EXPIRE),
+                    ObjValueType::List => Object::new_list(List::default(), *NEVER_EXPIRE),
+                    ObjValueType::Set => Object::new_set(Set::default(), *NEVER_EXPIRE),
+                    ObjValueType::Hash => Object::new_hash(Hash::default(), *NEVER_EXPIRE),
+                    ObjValueType::ZSet => Object::new_zset(ZSet::default(), *NEVER_EXPIRE),
                 };
 
                 let new_entry = e.insert_entry(new_obj);
@@ -111,11 +105,16 @@ impl ObjectEntryMut<'_> {
     #[instrument(level = "debug", skip(self))]
     pub fn insert_object(mut self, object: ObjectInner) -> (Self, Option<ObjectInner>) {
         let key = self.entry.key().clone();
-        let new_ex = object.expire();
+        let new_ex = object.expire_unchecked();
 
         let db = self.db;
         match self.entry {
             Entry::Occupied(ref mut e) => {
+                if let Some(inner) = e.get().inner() {
+                    object
+                        .atc
+                        .store(inner.atc.load(Ordering::Relaxed), Ordering::Relaxed);
+                }
                 let mut old_obj = e.insert(object.into());
 
                 old_obj.trigger_may_update_event(&key);
@@ -123,10 +122,10 @@ impl ObjectEntryMut<'_> {
 
                 if let Some(old_obj_inner) = old_obj.inner() {
                     // 旧对象为有效对象
-                    db.update_expire_records(&key, new_ex, old_obj_inner.expire());
+                    db.update_expire_records(&key, new_ex, old_obj_inner.expire_unchecked());
                 } else {
                     // 旧对象中为空对象，则old_expire为None
-                    db.update_expire_records(&key, new_ex, None);
+                    db.update_expire_records(&key, new_ex, *NEVER_EXPIRE);
                 }
                 (self, old_obj.into_inner())
             }
@@ -134,7 +133,7 @@ impl ObjectEntryMut<'_> {
                 let new_entry = e.insert_entry(object.into());
 
                 // 不存在旧对象，则old_expire为None
-                db.update_expire_records(&key, new_ex, None);
+                db.update_expire_records(&key, new_ex, *NEVER_EXPIRE);
 
                 (
                     Self {
@@ -159,8 +158,11 @@ impl ObjectEntryMut<'_> {
                 let (key, mut obj) = e.remove_entry();
 
                 if let Some(obj_inner) = obj.inner() {
-                    self.db
-                        .update_expire_records(&key, None, obj_inner.expire());
+                    self.db.update_expire_records(
+                        &key,
+                        *NEVER_EXPIRE,
+                        obj_inner.expire_unchecked(),
+                    );
                 }
 
                 obj.trigger_track_event(&key);
@@ -176,18 +178,18 @@ impl ObjectEntryMut<'_> {
     /// 更新对象的过期时间。如果对象不存在，则返回错误。
     #[inline]
     #[instrument(level = "debug", skip(self), err)]
-    pub fn update_object_expire(&mut self, new_ex: Option<Instant>) -> CmdResult<Option<Instant>> {
+    pub fn update_object_expire(&mut self, new_ex: Instant) -> RutinResult<Instant> {
         if let Entry::Occupied(e) = &mut self.entry {
             if e.get_mut().inner().is_some() {
                 let obj_inner = e.get_mut().inner_mut().unwrap();
-                let old_ex = obj_inner.set_expire(new_ex)?;
+                let old_ex = obj_inner.set_expire_unchecked(new_ex)?;
 
                 self.db.update_expire_records(e.key(), new_ex, old_ex);
                 return Ok(old_ex);
             }
         }
 
-        Err(DbError::KeyNotFound.into())
+        Err(RutinError::Null)
     }
 
     /// # Desc:
@@ -197,20 +199,15 @@ impl ObjectEntryMut<'_> {
     ///
     /// # Error:
     ///
-    /// 如果对象不存在，对象为空或者对象已过期则返回CmdError::from(DbError::KeyNotFound)
+    /// 如果对象不存在，对象为空或者对象已过期则返回RutinError::Null
     #[inline]
     #[instrument(level = "debug", skip(self, f), err)]
     pub fn update_object_value(
         &mut self,
-        f: impl FnOnce(&mut ObjectInner) -> CmdResult<()>,
-    ) -> CmdResult<()> {
+        f: impl FnOnce(&mut ObjectInner) -> RutinResult<()>,
+    ) -> RutinResult<()> {
         if let Entry::Occupied(e) = &mut self.entry {
             if let Some(obj_inner) = e.get_mut().inner_mut() {
-                if obj_inner.is_expired() {
-                    return Err(DbError::KeyNotFound.into());
-                }
-
-                let obj_inner = e.get_mut().inner_mut().unwrap();
                 f(obj_inner)?;
 
                 let key = e.key().clone();
@@ -223,7 +220,7 @@ impl ObjectEntryMut<'_> {
             }
         }
 
-        Err(DbError::KeyNotFound.into())
+        Err(RutinError::Null)
     }
 
     /// # Desc:
@@ -240,8 +237,8 @@ impl ObjectEntryMut<'_> {
     pub fn update_or_create_object(
         mut self,
         obj_type: ObjValueType,
-        f: impl FnOnce(&mut ObjectInner) -> CmdResult<()>,
-    ) -> CmdResult<Self> {
+        f: impl FnOnce(&mut ObjectInner) -> RutinResult<()>,
+    ) -> RutinResult<Self> {
         match self.entry {
             Entry::Occupied(ref mut e) => match e.get_mut().inner_mut() {
                 Some(obj_inner) => {
@@ -258,11 +255,11 @@ impl ObjectEntryMut<'_> {
                 None => {
                     // 创建新对象，新对象执行回调函数后插入到Db，触发旧对象中的事件
                     let mut new_obj = match obj_type {
-                        ObjValueType::Str => Object::new_str(Str::default(), None),
-                        ObjValueType::List => Object::new_list(List::default(), None),
-                        ObjValueType::Set => Object::new_set(Set::default(), None),
-                        ObjValueType::Hash => Object::new_hash(Hash::default(), None),
-                        ObjValueType::ZSet => Object::new_zset(ZSet::default(), None),
+                        ObjValueType::Str => Object::new_str(Str::default(), *NEVER_EXPIRE),
+                        ObjValueType::List => Object::new_list(List::default(), *NEVER_EXPIRE),
+                        ObjValueType::Set => Object::new_set(Set::default(), *NEVER_EXPIRE),
+                        ObjValueType::Hash => Object::new_hash(Hash::default(), *NEVER_EXPIRE),
+                        ObjValueType::ZSet => Object::new_zset(ZSet::default(), *NEVER_EXPIRE),
                     };
                     f(new_obj.inner_mut().unwrap())?;
 
@@ -276,11 +273,11 @@ impl ObjectEntryMut<'_> {
             },
             Entry::Vacant(e) => {
                 let mut new_obj = match obj_type {
-                    ObjValueType::Str => Object::new_str(Str::default(), None),
-                    ObjValueType::List => Object::new_list(List::default(), None),
-                    ObjValueType::Set => Object::new_set(Set::default(), None),
-                    ObjValueType::Hash => Object::new_hash(Hash::default(), None),
-                    ObjValueType::ZSet => Object::new_zset(ZSet::default(), None),
+                    ObjValueType::Str => Object::new_str(Str::default(), *NEVER_EXPIRE),
+                    ObjValueType::List => Object::new_list(List::default(), *NEVER_EXPIRE),
+                    ObjValueType::Set => Object::new_set(Set::default(), *NEVER_EXPIRE),
+                    ObjValueType::Hash => Object::new_hash(Hash::default(), *NEVER_EXPIRE),
+                    ObjValueType::ZSet => Object::new_zset(ZSet::default(), *NEVER_EXPIRE),
                 };
                 f(new_obj.inner_mut().unwrap())?;
 

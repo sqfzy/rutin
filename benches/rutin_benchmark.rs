@@ -63,5 +63,32 @@ fn bench_dispatch(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_dispatch);
+fn bench(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dispatch");
+
+    group.bench_function("smallvec", |b| {
+        b.iter(|| {
+            let mut i = 0;
+            for _ in 0..10000000 {
+                i += 1;
+            }
+            println!("{i}");
+        });
+    });
+
+    group.bench_function("vec", |b| {
+        b.iter(|| {
+            let i = std::sync::atomic::AtomicI32::default();
+            for _ in 0..10000000 {
+                i.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            assert_eq!(i.load(std::sync::atomic::Ordering::Relaxed), 10000000);
+        });
+    });
+
+    group.finish();
+}
+
+// criterion_group!(benches, bench_dispatch, bench);
+criterion_group!(benches, bench);
 criterion_main!(benches);

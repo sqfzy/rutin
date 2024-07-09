@@ -109,7 +109,7 @@ impl Rdb {
 }
 
 mod rdb_save {
-    use crate::util::epoch;
+    use crate::util::UNIX_EPOCH;
 
     use super::*;
 
@@ -136,8 +136,8 @@ mod rdb_save {
                 continue;
             };
 
-            if let Some(ex) = obj_inner.expire() {
-                let ex = ex.duration_since(epoch());
+            if let Some(ex) = obj_inner.expire_expect_never() {
+                let ex = ex.duration_since(*UNIX_EPOCH);
                 if ex == Duration::from_secs(0) {
                     continue;
                 }
@@ -199,7 +199,7 @@ mod rdb_save {
         match value {
             ZSet::SkipList(zset) => {
                 encode_length(buf, zset.len() as u32, None);
-                for elem in zset {
+                for elem in *zset {
                     encode_raw(buf, elem.1);
                     encode_raw(
                         buf,
@@ -215,7 +215,7 @@ mod rdb_save {
         match value {
             Hash::HashMap(hash) => {
                 encode_length(buf, hash.len() as u32, None);
-                for (k, v) in hash {
+                for (k, v) in *hash {
                     encode_raw(buf, k);
                     encode_raw(buf, v);
                 }
@@ -228,7 +228,7 @@ mod rdb_save {
         match value {
             Set::HashSet(set) => {
                 encode_length(buf, set.len() as u32, None);
-                for elem in set {
+                for elem in *set {
                     encode_raw(buf, elem);
                 }
             }
@@ -300,7 +300,10 @@ mod rdb_save {
 }
 
 mod rdb_load {
-    use crate::{shared::db::ObjectInner, util::epoch};
+    use crate::{
+        shared::db::{ObjectInner, NEVER_EXPIRE},
+        util::UNIX_EPOCH,
+    };
 
     use super::*;
 
@@ -326,7 +329,7 @@ mod rdb_load {
         }
         let _rdb_version = rdb.get_u32();
 
-        let mut expire = None;
+        let mut expire = *NEVER_EXPIRE;
         loop {
             match rdb.get_u8() {
                 RDB_OPCODE_EOF => {
@@ -359,14 +362,14 @@ mod rdb_load {
                 }
                 RDB_OPCODE_EXPIRETIME_MS => {
                     let ms = rdb.get_u64_le();
-                    expire = Some(epoch() + Duration::from_millis(ms));
+                    expire = *UNIX_EPOCH + Duration::from_millis(ms);
 
-                    trace!("Expiretime_ms: {:?}", expire.unwrap());
+                    trace!("Expiretime_ms: {:?}", expire);
                 }
                 RDB_OPCODE_EXPIRETIME => {
                     let sec = rdb.get_u32_le();
-                    expire = Some(epoch() + Duration::from_secs(sec as u64));
-                    trace!("Expiretime: {:?}", expire.unwrap());
+                    expire = *UNIX_EPOCH + Duration::from_secs(sec as u64);
+                    trace!("Expiretime: {:?}", expire);
                 }
                 RDB_TYPE_STRING => {
                     let key = decode_key(rdb)?;
@@ -375,8 +378,8 @@ mod rdb_load {
                     trace!("String: key: {:?}, value: {:?}", key, value);
 
                     db.insert_object(key, ObjectInner::new_str(value, expire))
-                        .await;
-                    expire = None;
+                        .await?;
+                    expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_LIST => {
                     let key = decode_key(rdb)?;
@@ -385,8 +388,8 @@ mod rdb_load {
                     trace!("List: key: {:?}, value: {:?}", key, value);
 
                     db.insert_object(key, ObjectInner::new_list(value, expire))
-                        .await;
-                    expire = None;
+                        .await?;
+                    expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_HASH => {
                     let key = decode_key(rdb)?;
@@ -395,8 +398,8 @@ mod rdb_load {
                     trace!("Hash: key: {:?}, value: {:?}", key, value);
 
                     db.insert_object(key, ObjectInner::new_hash(value, expire))
-                        .await;
-                    expire = None;
+                        .await?;
+                    expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_SET => {
                     let key = decode_key(rdb)?;
@@ -405,8 +408,8 @@ mod rdb_load {
                     trace!("Set: key: {:?}, value: {:?}", key, value);
 
                     db.insert_object(key, ObjectInner::new_set(value, expire))
-                        .await;
-                    expire = None;
+                        .await?;
+                    expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_ZSET => {
                     let key = decode_key(rdb)?;
@@ -415,8 +418,8 @@ mod rdb_load {
                     trace!("ZSet: key: {:?}, value: {:?}", key, value);
 
                     db.insert_object(key, ObjectInner::new_zset(value, expire))
-                        .await;
-                    expire = None;
+                        .await?;
+                    expire = *NEVER_EXPIRE;
                 }
                 invalid_ctrl => bail!("invalid RDB control byte: {:?}", invalid_ctrl),
             }
@@ -434,7 +437,7 @@ mod rdb_load {
 
                 zset.insert((score, member).into());
             }
-            Ok(ZSet::SkipList(zset))
+            Ok(ZSet::SkipList(Box::new(zset)))
         } else {
             bail!("invalid zset length")
         }
@@ -448,7 +451,7 @@ mod rdb_load {
                 set.insert(elem);
             }
 
-            Ok(Set::HashSet(set))
+            Ok(Set::HashSet(Box::new(set)))
         } else {
             bail!("invalid set length")
         }
@@ -463,7 +466,7 @@ mod rdb_load {
                 hash.insert(field, value);
             }
 
-            Ok(Hash::HashMap(hash))
+            Ok(Hash::HashMap(Box::new(hash)))
         } else {
             bail!("invalid hash length")
         }
@@ -777,7 +780,7 @@ mod rdb_test {
     use super::rdb_load::*;
     use super::rdb_save::*;
     use super::*;
-    use crate::shared::db::ObjectInner;
+    use crate::shared::db::{ObjectInner, NEVER_EXPIRE};
     use crate::{shared::Shared, util::test_init};
     use bytes::BytesMut;
     use tokio::time::Instant;
@@ -857,82 +860,70 @@ mod rdb_test {
         let shared = Shared::default();
         let db = shared.db();
 
-        let str1 = ObjectInner::new_str("hello", None);
-        let str2 = ObjectInner::new_str("10", None);
-        let str3 = ObjectInner::new_str("200", Some(Instant::now() + Duration::from_secs(10)));
-        let str4 = ObjectInner::new_str("hello", Some(Instant::now() + Duration::from_secs(10)));
+        let str1 = ObjectInner::new_str("hello", *NEVER_EXPIRE);
+        let str2 = ObjectInner::new_str("10", *NEVER_EXPIRE);
+        let str3 = ObjectInner::new_str("200", Instant::now() + Duration::from_secs(10));
+        let str4 = ObjectInner::new_str("hello", Instant::now() + Duration::from_secs(10));
 
-        db.insert_object("str1".into(), str1.clone()).await;
-        db.insert_object("str2".into(), str2.clone()).await;
-        db.insert_object("str3".into(), str3.clone()).await;
-        db.insert_object("str4".into(), str4.clone()).await;
+        db.insert_object("str1".into(), str1.clone()).await.unwrap();
+        db.insert_object("str2".into(), str2.clone()).await.unwrap();
+        db.insert_object("str3".into(), str3.clone()).await.unwrap();
+        db.insert_object("str4".into(), str4.clone()).await.unwrap();
 
-        let l1 = ObjectInner::new_list(List::default(), None);
-        let l2 = ObjectInner::new_list(["v1".into(), "v2".into()], None);
-        let l3 = ObjectInner::new_list(
-            List::default(),
-            Some(Instant::now() + Duration::from_secs(10)),
-        );
+        let l1 = ObjectInner::new_list(List::default(), *NEVER_EXPIRE);
+        let l2 = ObjectInner::new_list(["v1".into(), "v2".into()], *NEVER_EXPIRE);
+        let l3 = ObjectInner::new_list(List::default(), Instant::now() + Duration::from_secs(10));
         let l4 = ObjectInner::new_list(
             vec!["v1".into(), "v2".into()],
-            Some(Instant::now() + Duration::from_secs(10)),
+            Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object("l1".into(), l1.clone()).await;
-        db.insert_object("l2".into(), l2.clone()).await;
-        db.insert_object("l3".into(), l3.clone()).await;
-        db.insert_object("l4".into(), l4.clone()).await;
+        db.insert_object("l1".into(), l1.clone()).await.unwrap();
+        db.insert_object("l2".into(), l2.clone()).await.unwrap();
+        db.insert_object("l3".into(), l3.clone()).await.unwrap();
+        db.insert_object("l4".into(), l4.clone()).await.unwrap();
 
-        let s1 = ObjectInner::new_set(Set::default(), None);
-        let s2 = ObjectInner::new_set(["v1".into(), "v2".into()], None);
-        let s3 = ObjectInner::new_set(
-            Set::default(),
-            Some(Instant::now() + Duration::from_secs(10)),
-        );
+        let s1 = ObjectInner::new_set(Set::default(), *NEVER_EXPIRE);
+        let s2 = ObjectInner::new_set(["v1".into(), "v2".into()], *NEVER_EXPIRE);
+        let s3 = ObjectInner::new_set(Set::default(), Instant::now() + Duration::from_secs(10));
         let s4 = ObjectInner::new_set(
             ["v1".into(), "v2".into()],
-            Some(Instant::now() + Duration::from_secs(10)),
+            Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object("s1".into(), s1.clone()).await;
-        db.insert_object("s2".into(), s2.clone()).await;
-        db.insert_object("s3".into(), s3.clone()).await;
-        db.insert_object("s4".into(), s4.clone()).await;
+        db.insert_object("s1".into(), s1.clone()).await.unwrap();
+        db.insert_object("s2".into(), s2.clone()).await.unwrap();
+        db.insert_object("s3".into(), s3.clone()).await.unwrap();
+        db.insert_object("s4".into(), s4.clone()).await.unwrap();
 
-        let h1 = ObjectInner::new_hash(Hash::default(), None);
+        let h1 = ObjectInner::new_hash(Hash::default(), *NEVER_EXPIRE);
         let h2 = ObjectInner::new_hash(
             [("f1".into(), "v1".into()), ("f2".into(), "v2".into())],
-            None,
+            *NEVER_EXPIRE,
         );
-        let h3 = ObjectInner::new_hash(
-            Hash::default(),
-            Some(Instant::now() + Duration::from_secs(10)),
-        );
+        let h3 = ObjectInner::new_hash(Hash::default(), Instant::now() + Duration::from_secs(10));
         let h4 = ObjectInner::new_hash(
             [("f1".into(), "v1".into()), ("f2".into(), "v2".into())],
-            Some(Instant::now() + Duration::from_secs(10)),
+            Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object("h1".into(), h1.clone()).await;
-        db.insert_object("h2".into(), h2.clone()).await;
-        db.insert_object("h3".into(), h3.clone()).await;
-        db.insert_object("h4".into(), h4.clone()).await;
+        db.insert_object("h1".into(), h1.clone()).await.unwrap();
+        db.insert_object("h2".into(), h2.clone()).await.unwrap();
+        db.insert_object("h3".into(), h3.clone()).await.unwrap();
+        db.insert_object("h4".into(), h4.clone()).await.unwrap();
 
-        let zs1 = ObjectInner::new_zset(ZSet::default(), None);
-        let zs2 = ObjectInner::new_zset([(1_f64, "v1"), (2_f64, "v2")], None);
-        let zs3 = ObjectInner::new_zset(
-            ZSet::default(),
-            Some(Instant::now() + Duration::from_secs(10)),
-        );
+        let zs1 = ObjectInner::new_zset(ZSet::default(), *NEVER_EXPIRE);
+        let zs2 = ObjectInner::new_zset([(1_f64, "v1"), (2_f64, "v2")], *NEVER_EXPIRE);
+        let zs3 = ObjectInner::new_zset(ZSet::default(), Instant::now() + Duration::from_secs(10));
         let zs4 = ObjectInner::new_zset(
             [(1_f64, "v1"), (2_f64, "v2")],
-            Some(Instant::now() + Duration::from_secs(10)),
+            Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object("zs1".into(), zs1.clone()).await;
-        db.insert_object("zs2".into(), zs2.clone()).await;
-        db.insert_object("zs3".into(), zs3.clone()).await;
-        db.insert_object("zs4".into(), zs4.clone()).await;
+        db.insert_object("zs1".into(), zs1.clone()).await.unwrap();
+        db.insert_object("zs2".into(), zs2.clone()).await.unwrap();
+        db.insert_object("zs3".into(), zs3.clone()).await.unwrap();
+        db.insert_object("zs4".into(), zs4.clone()).await.unwrap();
 
         let mut rdb = Rdb::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.save().await.unwrap();
@@ -942,148 +933,40 @@ mod rdb_test {
         rdb.load().await.unwrap();
 
         assert_eq!(
-            db.get_object_entry(&"str1".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
+            db.get(&"str1".into()).await.unwrap().inner_unchecked(),
             &str1
         );
         assert_eq!(
-            db.get_object_entry(&"str2".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
+            db.get(&"str2".into()).await.unwrap().inner_unchecked(),
             &str2
         );
         assert_eq!(
-            db.get_object_entry(&"str3".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
+            db.get(&"str3".into()).await.unwrap().inner_unchecked(),
             &str3
         );
         assert_eq!(
-            db.get_object_entry(&"str4".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
+            db.get(&"str4".into()).await.unwrap().inner_unchecked(),
             &str4
         );
 
-        assert_eq!(
-            db.get_object_entry(&"l1".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &l1
-        );
-        assert_eq!(
-            db.get_object_entry(&"l2".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &l2
-        );
-        assert_eq!(
-            db.get_object_entry(&"l3".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &l3
-        );
-        assert_eq!(
-            db.get_object_entry(&"l4".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &l4
-        );
+        assert_eq!(db.get(&"l1".into()).await.unwrap().inner_unchecked(), &l1);
+        assert_eq!(db.get(&"l2".into()).await.unwrap().inner_unchecked(), &l2);
+        assert_eq!(db.get(&"l3".into()).await.unwrap().inner_unchecked(), &l3);
+        assert_eq!(db.get(&"l4".into()).await.unwrap().inner_unchecked(), &l4);
 
-        assert_eq!(
-            db.get_object_entry(&"s1".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &s1
-        );
-        assert_eq!(
-            db.get_object_entry(&"s2".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &s2
-        );
-        assert_eq!(
-            db.get_object_entry(&"s3".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &s3
-        );
-        assert_eq!(
-            db.get_object_entry(&"s4".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &s4
-        );
+        assert_eq!(db.get(&"s1".into()).await.unwrap().inner_unchecked(), &s1);
+        assert_eq!(db.get(&"s2".into()).await.unwrap().inner_unchecked(), &s2);
+        assert_eq!(db.get(&"s3".into()).await.unwrap().inner_unchecked(), &s3);
+        assert_eq!(db.get(&"s4".into()).await.unwrap().inner_unchecked(), &s4);
 
-        assert_eq!(
-            db.get_object_entry(&"h1".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &h1
-        );
-        assert_eq!(
-            db.get_object_entry(&"h2".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &h2
-        );
-        assert_eq!(
-            db.get_object_entry(&"h3".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &h3
-        );
-        assert_eq!(
-            db.get_object_entry(&"h4".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &h4
-        );
+        assert_eq!(db.get(&"h1".into()).await.unwrap().inner_unchecked(), &h1);
+        assert_eq!(db.get(&"h2".into()).await.unwrap().inner_unchecked(), &h2);
+        assert_eq!(db.get(&"h3".into()).await.unwrap().inner_unchecked(), &h3);
+        assert_eq!(db.get(&"h4".into()).await.unwrap().inner_unchecked(), &h4);
 
-        assert_eq!(
-            db.get_object_entry(&"zs1".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &zs1
-        );
-        assert_eq!(
-            db.get_object_entry(&"zs2".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &zs2
-        );
-        assert_eq!(
-            db.get_object_entry(&"zs3".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &zs3
-        );
-        assert_eq!(
-            db.get_object_entry(&"zs4".into())
-                .await
-                .unwrap()
-                .inner_unchecked(),
-            &zs4
-        );
+        assert_eq!(db.get(&"zs1".into()).await.unwrap().inner_unchecked(), &zs1);
+        assert_eq!(db.get(&"zs2".into()).await.unwrap().inner_unchecked(), &zs2);
+        assert_eq!(db.get(&"zs3".into()).await.unwrap().inner_unchecked(), &zs3);
+        assert_eq!(db.get(&"zs4".into()).await.unwrap().inner_unchecked(), &zs4);
     }
 }

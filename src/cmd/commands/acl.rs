@@ -1,14 +1,16 @@
 use super::*;
 use crate::{
-    cmd::{flag_to_cmd_names, CmdError, CmdExecutor, CmdType, CmdUnparsed, Err},
+    cmd::{flag_to_cmd_names, CmdExecutor, CmdType, CmdUnparsed},
     conf::{AccessControl, AccessControlIntermedium, ACL_CATEGORIES, DEFAULT_USER},
     connection::AsyncStream,
+    error::{RutinError, RutinResult, UnknownCmdCategorySnafu},
     frame::Resp3,
     server::Handler,
     CmdFlag,
 };
 use bytes::Bytes;
 use bytestring::ByteString;
+use snafu::OptionExt;
 use tracing::instrument;
 
 /// # Reply:
@@ -26,15 +28,12 @@ impl CmdExecutor for AclCat {
     const FLAG: CmdFlag = ACLCAT_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
-    async fn execute(
-        self,
-        _handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
-        let res: Vec<Resp3<Bytes, ByteString>> = if let Some(cat) = self.category {
+    async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+        let res: Vec<Resp3<Bytes, ByteString>> = if let Some(cate) = self.category {
             let cat = ACL_CATEGORIES
                 .iter()
-                .find(|&c| c.name.as_bytes() == cat.as_ref())
-                .ok_or_else(|| CmdError::from("ERR unknow category"))?;
+                .find(|&c| c.name.as_bytes() == cate.as_ref())
+                .with_context(|| UnknownCmdCategorySnafu { category: cate })?;
 
             flag_to_cmd_names(cat.flag)?
                 .into_iter()
@@ -50,9 +49,9 @@ impl CmdExecutor for AclCat {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(AclCat {
@@ -79,10 +78,7 @@ impl CmdExecutor for AclDelUser {
     const FLAG: CmdFlag = ACLDELUSER_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut count = 0;
 
         if let Some(acl) = &handler.shared.conf().security.acl {
@@ -96,9 +92,9 @@ impl CmdExecutor for AclDelUser {
         Ok(Some(Resp3::new_integer(count as i64)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(AclDelUser {
@@ -132,33 +128,30 @@ impl CmdExecutor for AclSetUser {
     const FLAG: CmdFlag = ACLSETUSER_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let security = &handler.shared.conf().security;
         if self.name == DEFAULT_USER {
             // 如果是default_ac则clone后合并，再放回
             let default_ac = security.default_ac.load();
             let mut default_ac = AccessControl::clone(&default_ac);
 
-            default_ac.merge(self.aci).map_err(CmdError::from)?;
+            default_ac.merge(self.aci)?;
 
             security.default_ac.store(std::sync::Arc::new(default_ac));
         } else if let Some(acl) = &handler.shared.conf().security.acl {
             if let Some(mut ac) = acl.get_mut(&self.name) {
                 // 如果存在则合并
-                ac.merge(self.aci).map_err(CmdError::from)?;
+                ac.merge(self.aci)?;
             } else {
                 // 不存在则插入
-                acl.insert(self.name, self.aci.try_into().map_err(CmdError::from)?);
+                acl.insert(self.name, self.aci.try_into()?);
             }
         }
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty()
             && args.len() != 2
             && args.len() != 4
@@ -167,7 +160,7 @@ impl CmdExecutor for AclSetUser {
             && args.len() != 10
             && args.len() != 12
         {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let name = args.next().unwrap();
@@ -234,13 +227,10 @@ impl CmdExecutor for AclSetUser {
                     let mut deny_read_key_patterns = Vec::with_capacity(10);
                     for b in args.by_ref() {
                         if b.last().is_some_and(|b| *b == b',') {
-                            deny_read_key_patterns.push(
-                                String::from_utf8(b[..b.len() - 1].to_vec())
-                                    .map_err(|_| Err::Syntax)?,
-                            );
-                        } else {
                             deny_read_key_patterns
-                                .push(String::from_utf8(b.to_vec()).map_err(|_| Err::Syntax)?);
+                                .push(String::from_utf8(b[..b.len() - 1].to_vec())?);
+                        } else {
+                            deny_read_key_patterns.push(String::from_utf8(b.to_vec())?);
                             break;
                         }
                     }
@@ -250,13 +240,10 @@ impl CmdExecutor for AclSetUser {
                     let mut deny_write_key_patterns = Vec::with_capacity(10);
                     for b in args.by_ref() {
                         if b.last().is_some_and(|b| *b == b',') {
-                            deny_write_key_patterns.push(
-                                String::from_utf8(b[..b.len() - 1].to_vec())
-                                    .map_err(|_| Err::Syntax)?,
-                            );
-                        } else {
                             deny_write_key_patterns
-                                .push(String::from_utf8(b.to_vec()).map_err(|_| Err::Syntax)?);
+                                .push(String::from_utf8(b[..b.len() - 1].to_vec())?);
+                        } else {
+                            deny_write_key_patterns.push(String::from_utf8(b.to_vec())?);
                             break;
                         }
                     }
@@ -266,19 +253,16 @@ impl CmdExecutor for AclSetUser {
                     let mut deny_channel_patterns = Vec::with_capacity(10);
                     for b in args.by_ref() {
                         if b.last().is_some_and(|b| *b == b',') {
-                            deny_channel_patterns.push(
-                                String::from_utf8(b[..b.len() - 1].to_vec())
-                                    .map_err(|_| Err::Syntax)?,
-                            );
-                        } else {
                             deny_channel_patterns
-                                .push(String::from_utf8(b.to_vec()).map_err(|_| Err::Syntax)?);
+                                .push(String::from_utf8(b[..b.len() - 1].to_vec())?);
+                        } else {
+                            deny_channel_patterns.push(String::from_utf8(b.to_vec())?);
                             break;
                         }
                     }
                     aci.deny_channel_patterns = Some(deny_channel_patterns);
                 }
-                _ => return Err(Err::Syntax.into()),
+                _ => return Err(RutinError::Syntax),
             }
         }
 
@@ -298,10 +282,7 @@ impl CmdExecutor for AclUsers {
     const FLAG: CmdFlag = ACLUSERS_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut users = vec![Resp3::new_blob_string(DEFAULT_USER)];
         if let Some(acl) = &handler.shared.conf().security.acl {
             users.extend(acl.iter().map(|e| Resp3::new_blob_string(e.key().clone())));
@@ -310,7 +291,7 @@ impl CmdExecutor for AclUsers {
         Ok(Some(Resp3::new_array(users)))
     }
 
-    fn parse(_args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(_args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         Ok(AclUsers)
     }
 }
@@ -327,14 +308,11 @@ impl CmdExecutor for AclWhoAmI {
     const FLAG: CmdFlag = ACLWHOAMI_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         Ok(Some(Resp3::new_blob_string(handler.context.user.clone())))
     }
 
-    fn parse(_args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(_args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         Ok(AclWhoAmI)
     }
 }

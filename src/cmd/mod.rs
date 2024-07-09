@@ -1,13 +1,11 @@
 pub mod commands;
-pub mod error;
-
-pub use error::*;
 
 use crate::{
     conf::AccessControl,
     connection::AsyncStream,
+    error::{RutinError, RutinResult},
     frame::Resp3,
-    server::{Handler, ServerError},
+    server::Handler,
     util, CmdFlag,
 };
 use bytes::Bytes;
@@ -24,10 +22,10 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
     async fn apply(
         mut args: CmdUnparsed,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    ) -> RutinResult<Option<Resp3>> {
         // 检查是否有权限执行该命令
         if handler.context.ac.is_forbidden_cmd(Self::FLAG) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         let cmd = Self::parse(&mut args, &handler.context.ac)?;
@@ -54,12 +52,9 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         Ok(res)
     }
 
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError>;
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>>;
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError>;
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self>;
 }
 
 #[derive(PartialEq)]
@@ -73,7 +68,7 @@ pub enum CmdType {
 pub async fn dispatch(
     cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
-) -> Result<Option<Resp3>, ServerError> {
+) -> RutinResult<Option<Resp3>> {
     match _dispatch(cmd_frame, handler).await {
         Ok(res) => Ok(res),
         Err(e) => {
@@ -88,12 +83,12 @@ pub async fn dispatch(
 pub async fn _dispatch(
     cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
-) -> Result<Option<Resp3>, CmdError> {
+) -> RutinResult<Option<Resp3>> {
     macro_rules! dispatch_command {
         ( $cmd:expr, $handler:expr, $( $cmd_type:ident ),*; $( $cmd_group:expr => $( $cmd_type2:ident ),* );* ) => {
             {
                 let mut buf = [0; 32];
-                let cmd_name = $cmd.next().ok_or(Err::Syntax)?;
+                let cmd_name = $cmd.next().ok_or(RutinError::Syntax)?;
 
                 debug_assert!(cmd_name.len() <= buf.len());
                 let len1 = util::uppercase(&cmd_name, &mut buf).unwrap();
@@ -101,7 +96,7 @@ pub async fn _dispatch(
                 let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1]) {
                     s
                 } else {
-                    return Err(Err::UnknownCmd.into());
+                    return Err(RutinError::UnknownCmd);
                 };
 
                 match cmd_name {
@@ -110,7 +105,7 @@ pub async fn _dispatch(
                     )*
                     $(
                         $cmd_group => {
-                            let sub_cmd_name = $cmd.next().ok_or(Err::Syntax)?;
+                            let sub_cmd_name = $cmd.next().ok_or(RutinError::Syntax)?;
 
                             debug_assert!(sub_cmd_name.len() <= buf.len() - len1);
                             let len2 = util::uppercase(&sub_cmd_name, &mut buf[len1..]).unwrap();
@@ -118,17 +113,17 @@ pub async fn _dispatch(
                             let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1 + len2]) {
                                 s
                             } else {
-                                return Err(Err::UnknownCmd.into());
+                                return Err(RutinError::UnknownCmd);
                             };
                             match cmd_name {
                                 $(
                                     $cmd_type2::NAME => $cmd_type2::apply($cmd, $handler).await,
                                 )*
-                                _ => Err(Err::UnknownCmd.into()),
+                                _ => Err(RutinError::UnknownCmd),
                             }
                         }
                     )*
-                    _ => Err(Err::UnknownCmd.into()),
+                    _ => Err(RutinError::UnknownCmd),
                 }
             }
         };
@@ -168,14 +163,14 @@ pub async fn _dispatch(
     )
 }
 
-pub fn cmd_name_to_flag(cmd_name: &[u8]) -> anyhow::Result<CmdFlag> {
+pub fn cmd_name_to_flag(cmd_name: &[u8]) -> RutinResult<CmdFlag> {
     macro_rules! cmd_name_to_flag {
         ( $cmd_name:expr,  $( $cmd_type:ident ),*) => {
             match $cmd_name {
                 $(
                     $cmd_type::NAME => Ok($cmd_type::FLAG),
                 )*
-                _ => anyhow::bail!("unknown command"),
+                _ => Err(RutinError::UnknownCmd),
             }
         };
     }
@@ -249,7 +244,7 @@ pub fn cmd_name_to_flag(cmd_name: &[u8]) -> anyhow::Result<CmdFlag> {
     )
 }
 
-pub fn flag_to_cmd_names(flag: CmdFlag) -> Result<Vec<&'static str>, &'static str> {
+pub fn flag_to_cmd_names(flag: CmdFlag) -> RutinResult<Vec<&'static str>> {
     let mut names = Vec::new();
 
     macro_rules! flag_to_cmd_names {
@@ -258,7 +253,7 @@ pub fn flag_to_cmd_names(flag: CmdFlag) -> Result<Vec<&'static str>, &'static st
                 $(
                     $cmd_type::FLAG => names.push($cmd_type::NAME),
                 )*
-                _ => return Err("unknown command"),
+                _ => return Err(RutinError::UnknownCmd),
             }
         };
     }
@@ -409,7 +404,7 @@ impl Iterator for CmdUnparsed {
 }
 
 impl TryFrom<Resp3> for CmdUnparsed {
-    type Error = CmdError;
+    type Error = RutinError;
 
     #[inline]
     fn try_from(value: Resp3) -> Result<Self, Self::Error> {
@@ -420,10 +415,7 @@ impl TryFrom<Resp3> for CmdUnparsed {
                 // 不检查元素是否都为RESP3::Bulk，如果不是RESP3::Bulk，parse时会返回错误给客户端
                 inner,
             }),
-            _ => Err(Err::Other {
-                message: "not an array frame".into(),
-            }
-            .into()),
+            _ => Err(RutinError::Syntax),
         }
     }
 }

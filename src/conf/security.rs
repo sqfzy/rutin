@@ -1,5 +1,6 @@
 use crate::{
     cmd::{cmd_name_to_flag, commands::*, CmdExecutor, CmdType},
+    error::{RutinError, RutinResult, UnknownCmdCategorySnafu},
     CmdFlag,
 };
 use arc_swap::ArcSwap;
@@ -11,6 +12,7 @@ use dashmap::{
 };
 use regex::bytes::RegexSet;
 use serde::Deserialize;
+use snafu::OptionExt;
 
 pub const DEFAULT_USER: Bytes = Bytes::from_static(b"default_ac");
 
@@ -247,7 +249,7 @@ impl AccessControl {
         }
     }
 
-    pub fn merge(&mut self, mut other: AccessControlIntermedium) -> anyhow::Result<()> {
+    pub fn merge(&mut self, mut other: AccessControlIntermedium) -> RutinResult<()> {
         if let Some(enable) = other.enable {
             self.enable = enable;
         }
@@ -259,7 +261,7 @@ impl AccessControl {
             }
         }
 
-        let cat_name_to_cat_flag = |cat_name: &Bytes| -> anyhow::Result<CmdFlag> {
+        let cat_name_to_cat_flag = |cat_name: &Bytes| -> RutinResult<CmdFlag> {
             let mut buf = [0; 32];
             let cat_name = crate::util::get_uppercase(cat_name, &mut buf)?;
 
@@ -267,7 +269,9 @@ impl AccessControl {
                 .iter()
                 .find(|cat| cat.name.as_bytes() == cat_name)
                 .map(|cat| cat.flag)
-                .ok_or_else(|| anyhow::anyhow!("unknown category"))
+                .with_context(|| UnknownCmdCategorySnafu {
+                    category: Bytes::copy_from_slice(cat_name),
+                })
         };
 
         if let Some(allow_categories) = other.allow_categories {
@@ -284,7 +288,7 @@ impl AccessControl {
                     self.cmd_flag = ALL_CMD_FLAG; // 允许所有命令执行，后面的命令无效
                     break;
                 }
-                let flag = cmd_name_to_flag(cmd_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+                let flag = cmd_name_to_flag(cmd_name)?;
                 self.cmd_flag |= flag; // 允许命令执行
             }
         }
@@ -306,7 +310,7 @@ impl AccessControl {
                     break;
                 }
 
-                let flag = cmd_name_to_flag(cmd_name).map_err(|e| anyhow::anyhow!("{}", e))?;
+                let flag = cmd_name_to_flag(cmd_name)?;
                 self.cmd_flag &= !flag; // 禁止命令执行
             }
         }
@@ -504,7 +508,7 @@ pub struct AccessControlIntermedium {
 }
 
 impl TryFrom<AccessControlIntermedium> for AccessControl {
-    type Error = anyhow::Error;
+    type Error = RutinError;
 
     fn try_from(aci: AccessControlIntermedium) -> Result<Self, Self::Error> {
         let mut ac = AccessControl::new_strict();

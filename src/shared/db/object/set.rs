@@ -3,7 +3,7 @@ use bytes::Bytes;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Set {
-    HashSet(AHashSet<Bytes>),
+    HashSet(Box<AHashSet<Bytes>>),
     IntSet,
 }
 
@@ -46,12 +46,12 @@ impl Set {
 
 impl Default for Set {
     fn default() -> Self {
-        Self::HashSet(AHashSet::default())
+        Self::HashSet(Box::default())
     }
 }
 
 impl<S: Into<AHashSet<Bytes>>> From<S> for Set {
     fn from(set: S) -> Self {
-        Set::HashSet(set.into())
+        Set::HashSet(Box::new(set.into()))
     }
 }

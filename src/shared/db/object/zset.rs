@@ -3,7 +3,7 @@ use skiplist::OrderedSkipList;
 
 #[derive(Debug, PartialEq)]
 pub enum ZSet {
-    SkipList(OrderedSkipList<ZSetElem>),
+    SkipList(Box<OrderedSkipList<ZSetElem>>),
     ZipSet,
 }
 
@@ -43,7 +43,7 @@ impl Clone for ZSet {
             ZSet::SkipList(sl) => {
                 let mut new_sl = OrderedSkipList::with_capacity(sl.len());
                 new_sl.extend(sl.iter().cloned());
-                ZSet::SkipList(new_sl)
+                ZSet::SkipList(Box::new(new_sl))
             }
             ZSet::ZipSet => unimplemented!(),
         }
@@ -52,13 +52,13 @@ impl Clone for ZSet {
 
 impl Default for ZSet {
     fn default() -> Self {
-        ZSet::SkipList(OrderedSkipList::default())
+        ZSet::SkipList(Box::default())
     }
 }
 
 impl From<OrderedSkipList<ZSetElem>> for ZSet {
     fn from(sl: OrderedSkipList<ZSetElem>) -> Self {
-        ZSet::SkipList(sl)
+        ZSet::SkipList(Box::new(sl))
     }
 }
 
@@ -68,7 +68,7 @@ impl From<Vec<(f64, Bytes)>> for ZSet {
         for (score, member) in vec {
             sl.insert(ZSetElem(score, member));
         }
-        ZSet::SkipList(sl)
+        ZSet::SkipList(Box::new(sl))
     }
 }
 
@@ -78,7 +78,7 @@ impl<B: Into<Bytes>, const N: usize> From<[(f64, B); N]> for ZSet {
         for (score, member) in value {
             sl.insert(ZSetElem(score, member.into()));
         }
-        ZSet::SkipList(sl)
+        ZSet::SkipList(Box::new(sl))
     }
 }
 

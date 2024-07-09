@@ -1,14 +1,14 @@
 use super::*;
 use crate::{
-    cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err, ServerErrSnafu},
+    cmd::{CmdExecutor, CmdType, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
+    error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
     util::atoi,
 };
 use bytes::Bytes;
-use snafu::ResultExt;
 use tracing::instrument;
 
 #[derive(Debug)]
@@ -24,29 +24,24 @@ impl CmdExecutor for Eval {
     const FLAG: CmdFlag = EVAL_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res = handler
             .shared
             .script()
             .lua_script
             .eval(handler, self.script, self.keys, self.args)
-            .await
-            .context(ServerErrSnafu)?;
+            .await?;
 
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let script = args.next().unwrap();
-        let numkeys = atoi::<usize>(&args.next().unwrap())
-            .map_err(|_| CmdError::from("ERR value is not an integer or out of range"))?;
+        let numkeys = atoi::<usize>(&args.next().unwrap())?;
 
         let keys = args.take(numkeys).collect();
         let args = args.collect();
@@ -68,10 +63,7 @@ impl CmdExecutor for EvalName {
     const FLAG: CmdFlag = EVALNAME_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res = handler
             .shared
             .script()
@@ -82,14 +74,13 @@ impl CmdExecutor for EvalName {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let name = args.next().unwrap();
-        let numkeys = atoi::<usize>(&args.next().unwrap())
-            .map_err(|_| CmdError::from("ERR value is not an integer or out of range"))?;
+        let numkeys = atoi::<usize>(&args.next().unwrap())?;
 
         let keys = args.take(numkeys).collect();
         let args = args.collect();
@@ -109,10 +100,7 @@ impl CmdExecutor for ScriptExists {
     const FLAG: CmdFlag = SCRIPT_EXISTS_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res: Vec<_> = self
             .names
             .iter()
@@ -125,9 +113,9 @@ impl CmdExecutor for ScriptExists {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(ScriptExists {
@@ -145,18 +133,15 @@ impl CmdExecutor for ScriptFlush {
     const FLAG: CmdFlag = SCRIPT_FLUSH_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         handler.shared.script().lua_script.flush();
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(ScriptFlush {})
@@ -175,10 +160,7 @@ impl CmdExecutor for ScriptRegister {
     const FLAG: CmdFlag = SCRIPT_REGISTER_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         handler
             .shared
             .script()
@@ -188,9 +170,9 @@ impl CmdExecutor for ScriptRegister {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(ScriptRegister {

@@ -1,11 +1,9 @@
 use super::*;
 use crate::{
-    cmd::{
-        error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed,
-    },
+    cmd::{CmdExecutor, CmdType, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
+    error::{RutinError, RutinResult},
     frame::Resp3,
     persist::rdb::Rdb,
     server::Handler,
@@ -24,12 +22,12 @@ use tracing::instrument;
 //     const CMD_TYPE: CmdType = CmdType::Other;
 //
 //     // TODO: 返回命令字典，以便支持客户端的命令补全
-// async fn _execute(self, shared: &Shared) -> Result<Option<RESP3>, CmdError>{
+// async fn _execute(self, shared: &Shared) -> RutinResult<Option<RESP3>>{
 //
 //         Ok(None)
 //     }
 //
-//     fn parse(cmd_frame: RESP3) -> Result<Self, CmdError> {
+//     fn parse(cmd_frame: RESP3) -> RutinResult<Self> {
 //
 //         Ok(_Command)
 //     }
@@ -50,24 +48,18 @@ impl CmdExecutor for Ping {
     const FLAG: CmdFlag = PING_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
-    async fn execute(
-        self,
-        _handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res = match self.msg {
-            Some(msg) => Resp3::new_simple_string(
-                msg.try_into()
-                    .map_err(|_| CmdError::from("message is not valid utf8"))?,
-            ),
+            Some(msg) => Resp3::new_simple_string(msg.try_into()?),
             None => Resp3::new_simple_string("PONG".into()),
         };
 
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() && args.len() != 1 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(Ping { msg: args.next() })
@@ -88,16 +80,13 @@ impl CmdExecutor for Echo {
     const FLAG: CmdFlag = ECHO_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
-    async fn execute(
-        self,
-        _handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         Ok(Some(Resp3::new_blob_string(self.msg)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(Echo {
@@ -154,7 +143,7 @@ impl CmdExecutor for Echo {
 // impl TryFrom<Bytes> for Section {
 //     type Error = Error;
 //
-//     fn try_from(bulk: Bytes) -> Result<Self, Self::Error> {
+//     fn try_from(bulk: Bytes) -> RutinResult<Self, Self::Error> {
 //         let value = bulk.to_ascii_uppercase();
 //         match value.as_slice() {
 //             b"REPLICATION" => Ok(Section::Replication),
@@ -166,7 +155,7 @@ impl CmdExecutor for Echo {
 // impl TryFrom<Vec<Bytes>> for Section {
 //     type Error = Error;
 //
-//     fn try_from(bulks: Vec<Bytes>) -> Result<Self, Self::Error> {
+//     fn try_from(bulks: Vec<Bytes>) -> RutinResult<Self, Self::Error> {
 //         let mut sections = Vec::with_capacity(cmd_frame.array_len()?);
 //         for section in bulks {
 //             sections.push(section.try_into()?);
@@ -177,7 +166,7 @@ impl CmdExecutor for Echo {
 
 // impl Info {
 // #[instrument(level = "debug", skip(handler), ret, err)]
-//     pub async fn execute(&self, _db: &Db) -> ResultCmd
+//     pub async fn execute(&self, _db: &Db) -> RutinResult
 //         debug!("executing command 'INFO'");
 //
 //         match self.sections {
@@ -217,10 +206,7 @@ impl CmdExecutor for BgSave {
     const FLAG: CmdFlag = BGSAVE_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let rdb_conf = &handler.shared.conf().rdb;
         let shared = &handler.shared;
 
@@ -243,9 +229,9 @@ impl CmdExecutor for BgSave {
         )))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(BgSave)
@@ -266,10 +252,7 @@ impl CmdExecutor for Auth {
     const FLAG: CmdFlag = AUTH_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         if let Some(acl) = handler.shared.conf().security.acl.as_ref() {
             if let Some(ac) = acl.get(&self.username) {
                 if !ac.is_pwd_correct(&self.password) {
@@ -288,9 +271,9 @@ impl CmdExecutor for Auth {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         Ok(Auth {
@@ -326,10 +309,7 @@ impl CmdExecutor for ClientTracking {
     const FLAG: CmdFlag = CLIENT_TRACKING_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
@@ -344,15 +324,15 @@ impl CmdExecutor for ClientTracking {
                 .ok_or("ERR the client ID you want redirect to does not exist")?;
             handler.context.client_track = Some(redirect_bg_sender);
         } else {
-            handler.context.client_track = Some(handler.bg_task_channel.new_sender());
+            handler.context.client_track = Some(handler.context.bg_task_channel.new_sender());
         }
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() > 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let mut switch = [0; 3];

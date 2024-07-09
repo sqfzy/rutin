@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::{
+    error::{RutinError, RutinResult},
     util::{self, atof},
     Int,
 };
@@ -9,7 +10,6 @@ use bytes::{Buf, Bytes, BytesMut};
 use bytestring::ByteString;
 use mlua::{prelude::*, Value};
 use num_bigint::BigInt;
-use snafu::Snafu;
 use std::{hash::Hash, io, iter::Iterator, ops::Range, ptr::slice_from_raw_parts};
 use strum::{EnumDiscriminants, IntoStaticStr};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -19,24 +19,10 @@ use tokio_util::{
 };
 use tracing::instrument;
 
-pub type FrameResult<T> = Result<T, FrameError>;
-
-#[derive(Snafu, Debug)]
-pub enum FrameError {
-    #[snafu(transparent)]
-    Io { source: tokio::io::Error },
-
-    #[snafu(display("incomplete frame"))]
-    Incomplete,
-
-    #[snafu(display("invalid format: {}", msg))]
-    InvalidFormat { msg: String },
-}
-
 const CRLF: &[u8] = b"\r\n";
 
 const SIMPLE_STRING_PREFIX: u8 = b'+';
-const ERROR_PREFIX: u8 = b'-';
+const SIMPLE_ERROR_PREFIX: u8 = b'-';
 const INTEGER_PREFIX: u8 = b':';
 const BLOB_STRING_PREFIX: u8 = b'$';
 const ARRAY_PREFIX: u8 = b'*';
@@ -750,7 +736,7 @@ where
                 if let Some(attr) = attributes.as_ref() {
                     encode_attributes(buf, attr)
                 }
-                buf.put_u8(ERROR_PREFIX);
+                buf.put_u8(SIMPLE_ERROR_PREFIX);
                 buf.put_slice(inner.as_ref().as_bytes());
                 buf.put_slice(CRLF);
             }
@@ -911,7 +897,7 @@ impl Resp3<BytesMut, ByteString> {
     pub async fn decode_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> FrameResult<Option<Resp3>> {
+    ) -> RutinResult<Option<Resp3>> {
         if src.is_empty() && io_read.read_buf(src).await? == 0 {
             return Ok(None);
         }
@@ -922,13 +908,13 @@ impl Resp3<BytesMut, ByteString> {
         async fn _decode_async<R: AsyncRead + Unpin + Send>(
             io_read: &mut R,
             src: &mut BytesMut,
-        ) -> FrameResult<Resp3> {
+        ) -> RutinResult<Resp3> {
             let res = match src.get_u8() {
                 SIMPLE_STRING_PREFIX => Resp3::SimpleString {
                     inner: Resp3::decode_string_async(io_read, src).await?,
                     attributes: None,
                 },
-                ERROR_PREFIX => Resp3::SimpleError {
+                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
                     inner: Resp3::decode_string_async(io_read, src).await?,
                     attributes: None,
                 },
@@ -945,8 +931,8 @@ impl Resp3<BytesMut, ByteString> {
                             let mut line = Resp3::decode_line_async(io_read, src).await?;
 
                             if Resp3::get_u8(&mut line)? != CHUNKED_STRING_LENGTH_PREFIX {
-                                return Err(FrameError::InvalidFormat {
-                                    msg: "invalid chunk length prefix".to_string(),
+                                return Err(RutinError::InvalidFormat {
+                                    msg: "invalid chunk length prefix".into(),
                                 });
                             }
 
@@ -967,8 +953,8 @@ impl Resp3<BytesMut, ByteString> {
 
                         Resp3::ChunkedString(chunks)
                     } else {
-                        let len = util::atoi(&line).map_err(|_| FrameError::InvalidFormat {
-                            msg: "invalid blob string length".to_string(),
+                        let len = util::atoi(&line).map_err(|_| RutinError::InvalidFormat {
+                            msg: "invalid blob string length".into(),
                         })?;
 
                         Resp3::need_bytes_async(io_read, src, len + 2).await?;
@@ -1007,8 +993,8 @@ impl Resp3<BytesMut, ByteString> {
                         b't' => true,
                         b'f' => false,
                         _ => {
-                            return Err(FrameError::InvalidFormat {
-                                msg: "invalid boolean".to_string(),
+                            return Err(RutinError::InvalidFormat {
+                                msg: "invalid boolean".into(),
                             });
                         }
                     };
@@ -1022,8 +1008,9 @@ impl Resp3<BytesMut, ByteString> {
                 DOUBLE_PREFIX => {
                     let line = Resp3::decode_line_async(io_read, src).await?;
 
-                    let double = atof(&line)
-                        .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?;
+                    let double = atof(&line).map_err(|e| RutinError::InvalidFormat {
+                        msg: e.to_string().into(),
+                    })?;
 
                     Resp3::Double {
                         inner: double,
@@ -1034,8 +1021,8 @@ impl Resp3<BytesMut, ByteString> {
                     let line = Resp3::decode_line_async(io_read, src).await?;
 
                     let n = BigInt::parse_bytes(&line, 10).ok_or_else(|| {
-                        FrameError::InvalidFormat {
-                            msg: "invalid big number".to_string(),
+                        RutinError::InvalidFormat {
+                            msg: "invalid big number".into(),
                         }
                     })?;
 
@@ -1123,15 +1110,15 @@ impl Resp3<BytesMut, ByteString> {
 
                     let ello = Resp3::decode_until_async(io_read, &mut line, b' ').await?;
                     if ello != b"ELLO".as_slice() {
-                        return Err(FrameError::InvalidFormat {
-                            msg: "failed to parse hello".to_string(),
+                        return Err(RutinError::InvalidFormat {
+                            msg: "failed to parse hello".into(),
                         });
                     }
 
                     let version =
                         util::atoi(&Resp3::decode_until(&mut line, b' ')?).map_err(|e| {
-                            FrameError::InvalidFormat {
-                                msg: format!("invalid version: {}", e),
+                            RutinError::InvalidFormat {
+                                msg: format!("invalid version: {}", e).into(),
                             }
                         })?;
 
@@ -1143,8 +1130,8 @@ impl Resp3<BytesMut, ByteString> {
                     } else {
                         let auth = Resp3::decode_until_async(io_read, &mut line, b' ').await?;
                         if auth != b"AUTH".as_slice() {
-                            return Err(FrameError::InvalidFormat {
-                                msg: "invalid auth".to_string(),
+                            return Err(RutinError::InvalidFormat {
+                                msg: "invalid auth".into(),
                             });
                         }
 
@@ -1161,8 +1148,8 @@ impl Resp3<BytesMut, ByteString> {
                     }
                 }
                 prefix => {
-                    return Err(FrameError::InvalidFormat {
-                        msg: format!("invalid prefix: {}", prefix),
+                    return Err(RutinError::InvalidFormat {
+                        msg: format!("invalid prefix: {}", prefix).into(),
                     });
                 }
             };
@@ -1179,10 +1166,10 @@ impl Resp3<BytesMut, ByteString> {
         io_read: &mut R,
         src: &mut BytesMut,
         len: usize,
-    ) -> FrameResult<()> {
+    ) -> RutinResult<()> {
         while src.len() < len {
             if io_read.read_buf(src).await? == 0 {
-                return Err(FrameError::Incomplete);
+                return Err(RutinError::Incomplete);
             }
         }
 
@@ -1193,13 +1180,13 @@ impl Resp3<BytesMut, ByteString> {
     async fn decode_line_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> FrameResult<BytesMut> {
+    ) -> RutinResult<BytesMut> {
         loop {
             match Self::decode_line(src) {
                 Ok(line) => return Ok(line),
-                Err(FrameError::Incomplete) => {
+                Err(RutinError::Incomplete) => {
                     if io_read.read_buf(src).await? == 0 {
-                        return Err(FrameError::Incomplete);
+                        return Err(RutinError::Incomplete);
                     }
                 }
                 Err(e) => return Err(e),
@@ -1212,7 +1199,7 @@ impl Resp3<BytesMut, ByteString> {
         io_read: &mut R,
         src: &mut BytesMut,
         byte: u8,
-    ) -> FrameResult<BytesMut> {
+    ) -> RutinResult<BytesMut> {
         loop {
             if let Some(i) = memchr::memchr(byte, src) {
                 let line = src.split_to(i);
@@ -1221,7 +1208,7 @@ impl Resp3<BytesMut, ByteString> {
             }
 
             if io_read.read_buf(src).await? == 0 {
-                return Err(FrameError::Incomplete);
+                return Err(RutinError::Incomplete);
             }
         }
     }
@@ -1231,14 +1218,14 @@ impl Resp3<BytesMut, ByteString> {
         io_read: &mut R,
         src: &mut BytesMut,
         len: usize,
-    ) -> FrameResult<BytesMut> {
+    ) -> RutinResult<BytesMut> {
         loop {
             if src.len() >= len {
                 return Ok(src.split_to(len));
             }
 
             if io_read.read_buf(src).await? == 0 {
-                return Err(FrameError::Incomplete);
+                return Err(RutinError::Incomplete);
             }
         }
     }
@@ -1247,9 +1234,11 @@ impl Resp3<BytesMut, ByteString> {
     async fn decode_decimal_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> FrameResult<Int> {
+    ) -> RutinResult<Int> {
         let line = Resp3::decode_line_async(io_read, src).await?;
-        let decimal = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
+        let decimal = util::atoi(&line).map_err(|e| RutinError::InvalidFormat {
+            msg: e.to_string().into(),
+        })?;
         Ok(decimal)
     }
 
@@ -1257,9 +1246,11 @@ impl Resp3<BytesMut, ByteString> {
     async fn decode_length_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> FrameResult<usize> {
+    ) -> RutinResult<usize> {
         let line = Resp3::decode_line_async(io_read, src).await?;
-        let len = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
+        let len = util::atoi(&line).map_err(|e| RutinError::InvalidFormat {
+            msg: e.to_string().into(),
+        })?;
         Ok(len)
     }
 
@@ -1270,12 +1261,14 @@ impl Resp3<BytesMut, ByteString> {
     >(
         io_read: &mut R,
         src: &mut BytesMut,
-    ) -> FrameResult<S> {
+    ) -> RutinResult<S> {
         let line = Resp3::decode_line_async(io_read, src).await?;
-        let string = S::from(
-            std::str::from_utf8(&line)
-                .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?,
-        );
+        let string =
+            S::from(
+                std::str::from_utf8(&line).map_err(|e| RutinError::InvalidFormat {
+                    msg: e.to_string().into(),
+                })?,
+            );
         Ok(string)
     }
 
@@ -1283,14 +1276,14 @@ impl Resp3<BytesMut, ByteString> {
     async fn get_u8_async<'a, R: AsyncRead + Unpin + Send>(
         io_read: &'a mut R,
         src: &'a mut BytesMut,
-    ) -> FrameResult<u8> {
+    ) -> RutinResult<u8> {
         loop {
             if !src.is_empty() {
                 return Ok(src.get_u8());
             }
 
             if io_read.read_buf(src).await? == 0 {
-                return Err(FrameError::Incomplete);
+                return Err(RutinError::Incomplete);
             }
         }
     }
@@ -1300,29 +1293,29 @@ impl Resp3<BytesMut, ByteString> {
         io_read: &'a mut R,
         src: &'a mut BytesMut,
         range: Range<usize>,
-    ) -> FrameResult<&'a [u8]> {
+    ) -> RutinResult<&'a [u8]> {
         loop {
             if src.len() >= range.end {
                 return Ok(&src[range]);
             }
 
             if io_read.read_buf(src).await? == 0 {
-                return Err(FrameError::Incomplete);
+                return Err(RutinError::Incomplete);
             }
         }
     }
 
     #[inline]
-    fn need_bytes(src: &BytesMut, len: usize) -> FrameResult<()> {
+    fn need_bytes(src: &BytesMut, len: usize) -> RutinResult<()> {
         if src.len() < len {
-            return Err(FrameError::Incomplete);
+            return Err(RutinError::Incomplete);
         }
 
         Ok(())
     }
 
     #[inline]
-    fn decode_line(src: &mut BytesMut) -> FrameResult<BytesMut> {
+    fn decode_line(src: &mut BytesMut) -> RutinResult<BytesMut> {
         if let Some(i) = memchr::memchr(b'\n', src) {
             if i > 0 && src[i - 1] == b'\r' {
                 let line = src.split_to(i - 1);
@@ -1332,68 +1325,74 @@ impl Resp3<BytesMut, ByteString> {
             }
         }
 
-        Err(FrameError::Incomplete)
+        Err(RutinError::Incomplete)
     }
 
     #[inline]
-    fn decode_until(src: &mut BytesMut, byte: u8) -> FrameResult<BytesMut> {
+    fn decode_until(src: &mut BytesMut, byte: u8) -> RutinResult<BytesMut> {
         if let Some(i) = memchr::memchr(byte, src) {
             let line = src.split_to(i);
             src.advance(1);
             return Ok(line);
         }
 
-        Err(FrameError::Incomplete)
+        Err(RutinError::Incomplete)
     }
 
     #[inline]
-    fn decode_exact(src: &mut BytesMut, len: usize) -> FrameResult<BytesMut> {
+    fn decode_exact(src: &mut BytesMut, len: usize) -> RutinResult<BytesMut> {
         if src.len() >= len {
             Ok(src.split_to(len))
         } else {
-            Err(FrameError::Incomplete)
+            Err(RutinError::Incomplete)
         }
     }
 
     #[inline]
-    fn decode_decimal(src: &mut BytesMut) -> FrameResult<Int> {
+    fn decode_decimal(src: &mut BytesMut) -> RutinResult<Int> {
         let line = Resp3::decode_line(src)?;
-        let decimal = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
+        let decimal = util::atoi(&line).map_err(|e| RutinError::InvalidFormat {
+            msg: e.to_string().into(),
+        })?;
         Ok(decimal)
     }
 
     #[inline]
-    fn decode_length(src: &mut BytesMut) -> FrameResult<usize> {
+    fn decode_length(src: &mut BytesMut) -> RutinResult<usize> {
         let line = Resp3::decode_line(src)?;
-        let len = util::atoi(&line).map_err(|e| FrameError::InvalidFormat { msg: e })?;
+        let len = util::atoi(&line).map_err(|e| RutinError::InvalidFormat {
+            msg: e.to_string().into(),
+        })?;
         Ok(len)
     }
 
     #[inline]
-    fn decode_string<S: AsRef<str> + for<'a> From<&'a str>>(src: &mut BytesMut) -> FrameResult<S> {
+    fn decode_string<S: AsRef<str> + for<'a> From<&'a str>>(src: &mut BytesMut) -> RutinResult<S> {
         let line = Resp3::decode_line(src)?;
-        let string = S::from(
-            std::str::from_utf8(&line)
-                .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?,
-        );
+        let string =
+            S::from(
+                std::str::from_utf8(&line).map_err(|e| RutinError::InvalidFormat {
+                    msg: e.to_string().into(),
+                })?,
+            );
         Ok(string)
     }
 
     #[inline]
-    fn get_u8(src: &mut BytesMut) -> FrameResult<u8> {
+    fn get_u8(src: &mut BytesMut) -> RutinResult<u8> {
         if !src.is_empty() {
             Ok(src.get_u8())
         } else {
-            Err(FrameError::Incomplete)
+            Err(RutinError::Incomplete)
         }
     }
 
     #[inline]
-    fn get(src: &BytesMut, range: Range<usize>) -> FrameResult<&[u8]> {
+    fn get(src: &BytesMut, range: Range<usize>) -> RutinResult<&[u8]> {
         if src.len() >= range.end {
             Ok(&src[range])
         } else {
-            Err(FrameError::Incomplete)
+            Err(RutinError::Incomplete)
         }
     }
 }
@@ -1406,7 +1405,7 @@ where
     B: AsRef<[u8]> + PartialEq,
     S: AsRef<str> + PartialEq,
 {
-    type Error = FrameError;
+    type Error = RutinError;
 
     fn encode(&mut self, item: Resp3<B, S>, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode_buf(dst);
@@ -1429,7 +1428,7 @@ impl Default for RESP3Decoder {
 }
 
 impl Decoder for RESP3Decoder {
-    type Error = FrameError;
+    type Error = RutinError;
     type Item = Resp3;
 
     // 如果src中的数据不完整，会引发io::ErrorKind::UnexpectedEof错误
@@ -1449,7 +1448,7 @@ impl Decoder for RESP3Decoder {
             let src = &mut decoder.buf;
 
             if src.is_empty() {
-                return Err(FrameError::Incomplete);
+                return Err(RutinError::Incomplete);
             }
 
             let res = match src.get_u8() {
@@ -1457,7 +1456,7 @@ impl Decoder for RESP3Decoder {
                     inner: Resp3::decode_string(src)?,
                     attributes: None,
                 },
-                ERROR_PREFIX => Resp3::SimpleError {
+                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
                     inner: Resp3::decode_string(src)?,
                     attributes: None,
                 },
@@ -1474,8 +1473,8 @@ impl Decoder for RESP3Decoder {
                             let mut line = Resp3::decode_line(src)?;
 
                             if Resp3::get_u8(&mut line)? != CHUNKED_STRING_LENGTH_PREFIX {
-                                return Err(FrameError::InvalidFormat {
-                                    msg: "invalid chunk length prefix".to_string(),
+                                return Err(RutinError::InvalidFormat {
+                                    msg: "invalid chunk length prefix".into(),
                                 });
                             }
 
@@ -1536,8 +1535,8 @@ impl Decoder for RESP3Decoder {
                         b't' => true,
                         b'f' => false,
                         _ => {
-                            return Err(FrameError::InvalidFormat {
-                                msg: "invalid boolean".to_string(),
+                            return Err(RutinError::InvalidFormat {
+                                msg: "invalid boolean".into(),
                             });
                         }
                     };
@@ -1551,8 +1550,9 @@ impl Decoder for RESP3Decoder {
                 DOUBLE_PREFIX => {
                     let line = Resp3::decode_line(src)?;
 
-                    let double = atof(&line)
-                        .map_err(|e| FrameError::InvalidFormat { msg: e.to_string() })?;
+                    let double = atof(&line).map_err(|e| RutinError::InvalidFormat {
+                        msg: e.to_string().into(),
+                    })?;
 
                     Resp3::Double {
                         inner: double,
@@ -1563,8 +1563,8 @@ impl Decoder for RESP3Decoder {
                     let line = Resp3::decode_line(src)?;
 
                     let n = BigInt::parse_bytes(&line, 10).ok_or_else(|| {
-                        FrameError::InvalidFormat {
-                            msg: "invalid big number".to_string(),
+                        RutinError::InvalidFormat {
+                            msg: "invalid big number".into(),
                         }
                     })?;
 
@@ -1653,15 +1653,15 @@ impl Decoder for RESP3Decoder {
 
                     let ello = Resp3::decode_until(&mut line, b' ')?;
                     if ello != b"ELLO".as_slice() {
-                        return Err(FrameError::InvalidFormat {
-                            msg: "expect 'HELLO'".to_string(),
+                        return Err(RutinError::InvalidFormat {
+                            msg: "expect 'HELLO'".into(),
                         });
                     }
 
                     let version =
                         util::atoi(&Resp3::decode_until(&mut line, b' ')?).map_err(|e| {
-                            FrameError::InvalidFormat {
-                                msg: format!("invalid version: {}", e),
+                            RutinError::InvalidFormat {
+                                msg: format!("invalid version: {}", e).into(),
                             }
                         })?;
 
@@ -1673,8 +1673,8 @@ impl Decoder for RESP3Decoder {
                     } else {
                         let auth = Resp3::decode_until(&mut line, b' ')?;
                         if auth != b"AUTH".as_slice() {
-                            return Err(FrameError::InvalidFormat {
-                                msg: "invalid auth".to_string(),
+                            return Err(RutinError::InvalidFormat {
+                                msg: "invalid auth".into(),
                             });
                         }
 
@@ -1689,8 +1689,8 @@ impl Decoder for RESP3Decoder {
                     }
                 }
                 prefix => {
-                    return Err(FrameError::InvalidFormat {
-                        msg: format!("invalid prefix: {}", prefix),
+                    return Err(RutinError::InvalidFormat {
+                        msg: format!("invalid prefix: {}", prefix).into(),
                     });
                 }
             };
@@ -1700,7 +1700,7 @@ impl Decoder for RESP3Decoder {
 
         let res = _decode(self);
         match res {
-            Err(FrameError::Incomplete) => {
+            Err(RutinError::Incomplete) => {
                 // 恢复消耗的数据
                 let consume = unsafe {
                     slice_from_raw_parts(origin, self.buf.as_ptr() as usize - origin as usize)
@@ -1723,7 +1723,7 @@ where
     S: AsRef<str> + PartialEq,
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let attrs_hash = |attrs: &Attributes<B, S>| {
+        let attrs_hash = |attrs: &Attributes<B, S>, state: &mut H| {
             attrs.iter().for_each(|(k, v)| {
                 k.hash(state);
                 v.hash(state);
@@ -1731,69 +1731,110 @@ where
         };
         match self {
             Resp3::SimpleString { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
+                SIMPLE_STRING_PREFIX.hash(state);
                 inner.as_ref().hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::SimpleError { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
+                SIMPLE_ERROR_PREFIX.hash(state);
                 inner.as_ref().hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::Integer { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
-                inner.hash(state)
+                INTEGER_PREFIX.hash(state);
+                inner.hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::BlobString { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
-                inner.as_ref().hash(state)
+                BLOB_STRING_PREFIX.hash(state);
+                inner.as_ref().hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::Array { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
-                inner.hash(state)
+                ARRAY_PREFIX.hash(state);
+                inner.hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
-            Resp3::Null => state.write_u8(0),
+            Resp3::Null => NULL_PREFIX.hash(state),
             Resp3::Boolean { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
-                inner.hash(state)
+                BOOLEAN_PREFIX.hash(state);
+                inner.hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::Double { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
+                DOUBLE_PREFIX.hash(state);
                 inner.to_bits().hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::BigNumber { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
-                inner.hash(state)
+                BIG_NUMBER_PREFIX.hash(state);
+                inner.hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::BlobError { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
-                inner.as_ref().hash(state)
+                BLOB_ERROR_PREFIX.hash(state);
+                inner.as_ref().hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::VerbatimString {
                 format,
                 data,
                 attributes,
             } => {
-                attributes.as_ref().map(attrs_hash);
+                VERBATIM_STRING_PREFIX.hash(state);
                 format.hash(state);
                 data.as_ref().hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::Map { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
+                MAP_PREFIX.hash(state);
                 inner.iter().for_each(|(k, v)| {
                     k.hash(state);
                     v.hash(state);
-                })
+                });
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::Set { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
-                inner.iter().for_each(|f| f.hash(state))
+                SET_PREFIX.hash(state);
+                inner.iter().for_each(|f| f.hash(state));
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
             Resp3::Push { inner, attributes } => {
-                attributes.as_ref().map(attrs_hash);
+                PUSH_PREFIX.hash(state);
                 inner.hash(state);
+                if let Some(attr) = attributes.as_ref() {
+                    attrs_hash(attr, state)
+                }
             }
-            Resp3::ChunkedString(chunks) => chunks.iter().for_each(|c| c.as_ref().hash(state)),
+            Resp3::ChunkedString(chunks) => {
+                CHUNKED_STRING_PREFIX.hash(state);
+                chunks.iter().for_each(|c| c.as_ref().hash(state));
+            }
             Resp3::Hello { version, auth } => {
-                state.write_u8(1);
                 version.hash(state);
                 if let Some((username, password)) = auth.as_ref() {
                     username.as_ref().hash(state);

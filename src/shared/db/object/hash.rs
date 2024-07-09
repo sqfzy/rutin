@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hash {
-    HashMap(AHashMap<Key, Bytes>),
+    HashMap(Box<AHashMap<Key, Bytes>>),
     ZipList,
 }
 
@@ -54,12 +54,12 @@ impl Hash {
 
 impl Default for Hash {
     fn default() -> Self {
-        Self::HashMap(AHashMap::default())
+        Self::HashMap(Box::default())
     }
 }
 
 impl<M: Into<AHashMap<Key, Bytes>>> From<M> for Hash {
     fn from(map: M) -> Self {
-        Hash::HashMap(map.into())
+        Hash::HashMap(Box::new(map.into()))
     }
 }

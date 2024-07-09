@@ -1,18 +1,29 @@
-use crate::{shared::db::DbError, util::to_valid_range, Int};
+use crate::{
+    error::{RutinError, RutinResult},
+    util::to_valid_range,
+    Int,
+};
 use atoi::atoi;
 use bytes::{Bytes, BytesMut};
+use strum::{EnumDiscriminants, IntoStaticStr};
 
+#[derive(EnumDiscriminants, IntoStaticStr)]
+#[strum_discriminants(vis(pub))]
+#[strum_discriminants(name(StrType))]
+#[strum_discriminants(derive(IntoStaticStr))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Str {
+    #[strum(serialize = "string::raw")]
     Raw(Bytes),
+    #[strum(serialize = "string::int")]
     Int(IntType),
 }
 
 impl Str {
     pub fn type_str(&self) -> &'static str {
         match self {
-            Self::Raw(_) => "string",
-            Self::Int(_) => "int",
+            Self::Raw(_) => StrType::Raw.into(),
+            Self::Int(_) => StrType::Int.into(),
         }
     }
 
@@ -76,43 +87,47 @@ impl Str {
         }
     }
 
-    pub fn on_raw(&self) -> Result<Bytes, DbError> {
+    pub fn on_raw(&self) -> RutinResult<Bytes> {
         match self {
             Self::Raw(b) => Ok(b.clone()),
-            _ => Err(DbError::TypeErr {
-                expected: "str::raw",
+            _ => Err(RutinError::TypeErr {
+                expected: StrType::Int.into(),
                 found: self.type_str(),
-            }),
+            }
+            .into()),
         }
     }
 
-    pub fn on_int(&self) -> Result<Int, DbError> {
+    pub fn on_int(&self) -> RutinResult<Int> {
         match self {
             Self::Int(i) => Ok(i.get()),
-            _ => Err(DbError::TypeErr {
-                expected: "str::int",
+            _ => Err(RutinError::TypeErr {
+                expected: StrType::Int.into(),
                 found: self.type_str(),
-            }),
+            }
+            .into()),
         }
     }
 
-    pub fn incr_by(&mut self, delta: Int) -> Result<Int, DbError> {
+    pub fn incr_by(&mut self, delta: Int) -> RutinResult<Int> {
         match self {
             Self::Int(i) => i.incr_by(delta),
-            _ => Err(DbError::TypeErr {
-                expected: "str::int",
+            _ => Err(RutinError::TypeErr {
+                expected: StrType::Int.into(),
                 found: self.type_str(),
-            }),
+            }
+            .into()),
         }
     }
 
-    pub fn decr_by(&mut self, delta: Int) -> Result<Int, DbError> {
+    pub fn decr_by(&mut self, delta: Int) -> RutinResult<Int> {
         match self {
             Self::Int(i) => i.decr_by(delta),
-            _ => Err(DbError::TypeErr {
-                expected: "str::int",
+            _ => Err(RutinError::TypeErr {
+                expected: StrType::Int.into(),
                 found: self.type_str(),
-            }),
+            }
+            .into()),
         }
     }
 
@@ -274,7 +289,7 @@ impl IntType {
         }
     }
 
-    fn incr_by(&mut self, delta: Int) -> Result<Int, DbError> {
+    fn incr_by(&mut self, delta: Int) -> RutinResult<Int> {
         // 算出结果
         let res = match self {
             Self::Int8(i) => (*i as Int).checked_add(delta),
@@ -297,11 +312,11 @@ impl IntType {
 
             Ok(res)
         } else {
-            Err(DbError::Overflow)
+            Err(RutinError::Overflow.into())
         }
     }
 
-    fn decr_by(&mut self, delta: Int) -> Result<Int, DbError> {
+    fn decr_by(&mut self, delta: Int) -> RutinResult<Int> {
         // 算出结果
         let res = match self {
             Self::Int8(i) => (*i as Int).checked_sub(delta),
@@ -324,7 +339,7 @@ impl IntType {
 
             Ok(res)
         } else {
-            Err(DbError::Overflow)
+            Err(RutinError::Overflow.into())
         }
     }
 }

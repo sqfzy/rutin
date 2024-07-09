@@ -1,12 +1,11 @@
 mod bg_task_channel;
-mod error;
 mod handler;
 mod listener;
 
 pub use bg_task_channel::*;
-pub use error::*;
 pub use handler::*;
 pub use listener::*;
+use sysinfo::System;
 
 use crate::{
     conf::Conf,
@@ -15,17 +14,22 @@ use crate::{
 };
 use async_shutdown::ShutdownManager;
 use crossbeam::atomic::AtomicCell;
-use std::sync::Arc;
+use std::{cell::RefCell, sync::Arc};
 use tokio::{net::TcpListener, sync::Semaphore, task_local};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error};
 
 pub const RESERVE_MAX_ID: u128 = 20;
+pub static RESERVE_ID: AtomicCell<u128> = AtomicCell::new(0);
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
 // 需要检查是否已经存在相同的ID。保留前20个ID，专用于事务处理
-pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(RESERVE_MAX_ID);
+pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(RESERVE_MAX_ID + 1);
 
 task_local! { pub static ID: Id; }
+
+thread_local! {
+    pub static SYSTEM: RefCell<System>  = RefCell::new(System::new_all());
+}
 
 #[inline]
 pub async fn run(listener: TcpListener, conf: Conf) {
@@ -53,10 +57,11 @@ pub async fn run(listener: TcpListener, conf: Conf) {
     };
 
     let limit_connections = Arc::new(Semaphore::new(conf.server.max_connections));
+    let conf = Arc::new(conf);
     let mut server = Listener {
         shared: Shared::new(
-            Arc::new(Db::default()),
-            Arc::new(conf),
+            Arc::new(Db::new(conf.clone())),
+            conf,
             shutdown_manager.clone(),
         ),
         listener,

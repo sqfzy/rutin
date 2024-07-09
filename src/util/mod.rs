@@ -1,12 +1,40 @@
 mod test;
 
+use bytes::Bytes;
+use snafu::OptionExt;
 pub use test::*;
 
-use crate::Int;
-use anyhow::anyhow;
+use crate::{
+    error::{A2IParseSnafu, RutinError, RutinResult},
+    Int,
+};
 use atoi::FromRadix10SignedChecked;
-use std::{num::ParseFloatError, time::SystemTime};
+use std::{ops::Deref, sync::OnceLock, time::SystemTime};
 use tokio::time::Instant;
+
+pub static UNIX_EPOCH: UnixEpoch = UnixEpoch::new();
+
+pub struct UnixEpoch(OnceLock<Instant>);
+
+impl UnixEpoch {
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+}
+
+impl Deref for UnixEpoch {
+    type Target = Instant;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.get_or_init(|| {
+            Instant::now()
+                - SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+        })
+    }
+}
 
 // 模拟服务端，接收客户端的命令并打印
 #[cfg(feature = "fake_server")]
@@ -79,34 +107,26 @@ pub async fn fake_client() {
     }
 }
 
-#[inline]
-pub fn epoch() -> Instant {
-    Instant::now()
-        - SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-}
-
-pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> Result<I, String> {
-    atoi::atoi(text).ok_or_else(|| {
-        format!(
-            "failed to convert {} to integer",
-            std::str::from_utf8(text).unwrap_or_default()
-        )
+pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> RutinResult<I> {
+    atoi::atoi(text).with_context(|| A2IParseSnafu {
+        invalid: Bytes::copy_from_slice(text),
     })
 }
 
-pub fn atof(text: &[u8]) -> Result<f64, String> {
-    std::str::from_utf8(text)
-        .map_err(|e| e.to_string())?
+pub fn atof(text: &[u8]) -> RutinResult<f64> {
+    std::str::from_utf8(text)?
         .parse()
-        .map_err(|e: ParseFloatError| e.to_string())
+        .map_err(|_| RutinError::A2IParse {
+            invalid: Bytes::copy_from_slice(text),
+        })
 }
 
-pub fn uppercase(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {
+pub fn uppercase(src: &[u8], buf: &mut [u8]) -> RutinResult<usize> {
     let len = src.len();
     if len > buf.len() {
-        return Err(anyhow!("buffer is too small"));
+        return Err(RutinError::ServerErr {
+            msg: "buffer is too small".into(),
+        });
     }
 
     buf[..len].copy_from_slice(src);
@@ -115,10 +135,12 @@ pub fn uppercase(src: &[u8], buf: &mut [u8]) -> anyhow::Result<usize> {
     Ok(len)
 }
 
-pub fn get_uppercase<'a, 'b>(src: &'a [u8], buf: &'b mut [u8]) -> anyhow::Result<&'b [u8]> {
+pub fn get_uppercase<'a>(src: &[u8], buf: &'a mut [u8]) -> RutinResult<&'a [u8]> {
     let len = src.len();
     if len > buf.len() {
-        return Err(anyhow!("buffer is too small"));
+        return Err(RutinError::ServerErr {
+            msg: "buffer is too small".into(),
+        });
     }
 
     buf[..len].copy_from_slice(src);

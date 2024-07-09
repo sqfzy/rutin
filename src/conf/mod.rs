@@ -1,6 +1,3 @@
-/// 1. 首先配置结构体从默认值开始构造
-/// 2. 如果提供了配置文件，读取配置文件并更新
-/// 3. 如果提供了命令行参数，则merge配置
 mod aof;
 mod memory;
 mod rdb;
@@ -38,6 +35,7 @@ pub struct Conf {
     pub replica: ReplicaConf,
     pub rdb: Option<RdbConf>,
     pub aof: Option<AofConf>,
+    #[serde(default)]
     pub memory: MemoryConf,
     pub tls: Option<TLSConf>,
 }
@@ -87,7 +85,6 @@ impl Conf {
             .collect();
 
         config.server.run_id = run_id;
-        // 由于AtomicCell<u64>默认值为0，所以不需要设置。repli_backlog同理
 
         Ok(config)
     }
@@ -128,6 +125,7 @@ impl Conf {
             move || {
                 std::thread::sleep(period);
                 loop {
+                    // TODO: 采用自适应算法，根据过期键的数量动态调整检查周期
                     let shared = shared.clone();
 
                     let now = Instant::now();
@@ -143,7 +141,7 @@ impl Conf {
                         tracing::trace!("key {:?} is expired", key);
                         // 删除过期键，该过程会自动删除对应的expire_record
                         // WARN: 执行remove_object时，不应该持有entry_expire_records元素的引用，否则会导致死锁
-                        handle.block_on(shared.db().remove_object(&key));
+                        handle.block_on(shared.db().remove_object(key));
                     }
                 }
             }
@@ -259,7 +257,7 @@ mod conf_tests {
         let db = shared.db();
         // 断言AOF文件中的内容已经加载到内存中
         assert_eq!(
-            db.get_object_entry(&"key:000000000015".into())
+            db.get(&"key:000000000015".into())
                 .await
                 .unwrap()
                 .on_str()
@@ -269,7 +267,7 @@ mod conf_tests {
             b"VXK"
         );
         assert_eq!(
-            db.get_object_entry(&"key:000000000003".into())
+            db.get(&"key:000000000003".into())
                 .await
                 .unwrap()
                 .on_str()
@@ -279,7 +277,7 @@ mod conf_tests {
             b"VXK"
         );
         assert_eq!(
-            db.get_object_entry(&"key:000000000025".into())
+            db.get(&"key:000000000025".into())
                 .await
                 .unwrap()
                 .on_str()

@@ -6,30 +6,64 @@ mod zset;
 
 pub use hash::*;
 pub use list::*;
+use rand::Rng;
 pub use set::*;
-use smallvec::SmallVec;
 pub use str::*;
 pub use zset::*;
 
 use crate::{
+    error::{RutinError, RutinResult},
     frame::Resp3,
     server::ID,
     shared::db::{
-        object_entry::{IntentionLock, ObjectEntryMut},
-        Db, DbError,
+        object_entry::{IntentionLock, ObjectEntry},
+        Db,
     },
     Id, Key,
 };
 use bytes::Bytes;
 use dashmap::mapref::entry::Entry;
 use flume::Sender;
-use std::sync::Arc;
-use strum::{EnumDiscriminants, EnumProperty};
+use std::{
+    ops::Deref,
+    sync::{
+        atomic::{AtomicU32, Ordering::Relaxed},
+        Arc, OnceLock,
+    },
+    time::Duration,
+};
+use strum::{EnumDiscriminants, EnumProperty, IntoStaticStr};
 use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
 
+pub static NEVER_EXPIRE: NeverExpire = NeverExpire::new();
+
+pub struct NeverExpire(OnceLock<Instant>);
+
+impl NeverExpire {
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self(OnceLock::new())
+    }
+}
+
+impl Deref for NeverExpire {
+    type Target = Instant;
+
+    fn deref(&self) -> &Self::Target {
+        // Copy from `tokio`, actually expect Instant::MAX.
+        // This may change in the future.
+        //
+        // Roughly 30 years from now.
+        // API does not provide a way to obtain max `Instant`
+        // or convert specific date in the future to instant.
+        // 1000 years overflows on macOS, 100 years overflows on FreeBSD.
+        self.0
+            .get_or_init(|| Instant::now() + Duration::from_secs(86400 * 365 * 30))
+    }
+}
+
 // 对象可以为空对象(不存储对象值)，只存储事件
-// TODO: LRU
 #[derive(Debug, Default)]
 pub struct Object {
     inner: Option<ObjectInner>,
@@ -78,23 +112,57 @@ impl Object {
         self.inner.unwrap()
     }
 
-    pub fn new_str(s: Str, expire: Option<Instant>) -> Self {
+    #[inline]
+    pub fn expire_unchecked(&self) -> Instant {
+        if let Some(inner) = &self.inner {
+            inner.expire_unchecked()
+        } else {
+            *NEVER_EXPIRE
+        }
+    }
+
+    #[inline]
+    pub fn try_expire(&self) -> Result<Instant, &'static str> {
+        if let Some(inner) = &self.inner {
+            inner.try_expire()
+        } else {
+            Ok(*NEVER_EXPIRE)
+        }
+    }
+
+    #[inline]
+    pub fn expire_expect_never(&self) -> Option<Instant> {
+        if let Some(inner) = &self.inner {
+            inner.expire_expect_never()
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn atc(&self) -> Atc {
+        self.inner
+            .as_ref()
+            .map_or(Atc::default(), |inner| inner.atc())
+    }
+
+    pub fn new_str(s: Str, expire: Instant) -> Self {
         Object::new(ObjectInner::new_str(s, expire))
     }
 
-    pub fn new_list(l: List, expire: Option<Instant>) -> Self {
+    pub fn new_list(l: List, expire: Instant) -> Self {
         Object::new(ObjectInner::new_list(l, expire))
     }
 
-    pub fn new_set(s: Set, expire: Option<Instant>) -> Self {
+    pub fn new_set(s: Set, expire: Instant) -> Self {
         Object::new(ObjectInner::new_set(s, expire))
     }
 
-    pub fn new_hash(h: Hash, expire: Option<Instant>) -> Self {
+    pub fn new_hash(h: Hash, expire: Instant) -> Self {
         Object::new(ObjectInner::new_hash(h, expire))
     }
 
-    pub fn new_zset(z: ZSet, expire: Option<Instant>) -> Self {
+    pub fn new_zset(z: ZSet, expire: Instant) -> Self {
         Object::new(ObjectInner::new_zset(z, expire))
     }
 
@@ -105,7 +173,7 @@ impl Object {
         }
     }
 
-    pub fn on_str(&self) -> Option<Result<&Str, DbError>> {
+    pub fn on_str(&self) -> Option<RutinResult<&Str>> {
         let inner = if let Some(inner) = &self.inner {
             inner
         } else {
@@ -115,14 +183,15 @@ impl Object {
         if let ObjValue::Str(s) = &inner.value {
             Some(Ok(s))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "string",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::Str.into(),
                 found: inner.type_str(),
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_list(&self) -> Option<Result<&List, DbError>> {
+    pub fn on_list(&self) -> Option<RutinResult<&List>> {
         let inner = if let Some(inner) = &self.inner {
             inner
         } else {
@@ -132,14 +201,15 @@ impl Object {
         if let ObjValue::List(l) = &inner.value {
             Some(Ok(l))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "list",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::List.into(),
                 found: inner.type_str(),
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_set(&self) -> Option<Result<&Set, DbError>> {
+    pub fn on_set(&self) -> Option<RutinResult<&Set>> {
         let inner = if let Some(inner) = &self.inner {
             inner
         } else {
@@ -149,14 +219,15 @@ impl Object {
         if let ObjValue::Set(s) = &inner.value {
             Some(Ok(s))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "set",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::Set.into(),
                 found: inner.type_str(),
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_hash(&self) -> Option<Result<&Hash, DbError>> {
+    pub fn on_hash(&self) -> Option<RutinResult<&Hash>> {
         let inner = if let Some(inner) = &self.inner {
             inner
         } else {
@@ -166,14 +237,15 @@ impl Object {
         if let ObjValue::Hash(h) = &inner.value {
             Some(Ok(h))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "hash",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::Hash.into(),
                 found: inner.type_str(),
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_zset(&self) -> Option<Result<&ZSet, DbError>> {
+    pub fn on_zset(&self) -> Option<RutinResult<&ZSet>> {
         let inner = if let Some(inner) = &self.inner {
             inner
         } else {
@@ -183,14 +255,15 @@ impl Object {
         if let ObjValue::ZSet(z) = &inner.value {
             Some(Ok(z))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "zset",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::ZSet.into(),
                 found: inner.type_str(),
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_str_mut(&mut self) -> Option<Result<&mut Str, DbError>> {
+    pub fn on_str_mut(&mut self) -> Option<RutinResult<&mut Str>> {
         let inner = if let Some(inner) = &mut self.inner {
             inner
         } else {
@@ -201,14 +274,15 @@ impl Object {
         if let ObjValue::Str(s) = &mut inner.value {
             Some(Ok(s))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "string",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::Str.into(),
                 found: typ,
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_list_mut(&mut self) -> Option<Result<&mut List, DbError>> {
+    pub fn on_list_mut(&mut self) -> Option<RutinResult<&mut List>> {
         let inner = if let Some(inner) = &mut self.inner {
             inner
         } else {
@@ -219,14 +293,15 @@ impl Object {
         if let ObjValue::List(l) = &mut inner.value {
             Some(Ok(l))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "list",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::List.into(),
                 found: typ,
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_set_mut(&mut self) -> Option<Result<&mut Set, DbError>> {
+    pub fn on_set_mut(&mut self) -> Option<RutinResult<&mut Set>> {
         let inner = if let Some(inner) = &mut self.inner {
             inner
         } else {
@@ -237,14 +312,15 @@ impl Object {
         if let ObjValue::Set(s) = &mut inner.value {
             Some(Ok(s))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "set",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::Set.into(),
                 found: typ,
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_hash_mut(&mut self) -> Option<Result<&mut Hash, DbError>> {
+    pub fn on_hash_mut(&mut self) -> Option<RutinResult<&mut Hash>> {
         let inner = if let Some(inner) = &mut self.inner {
             inner
         } else {
@@ -255,14 +331,15 @@ impl Object {
         if let ObjValue::Hash(h) = &mut inner.value {
             Some(Ok(h))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "hash",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::Hash.into(),
                 found: typ,
-            }))
+            }
+            .into()))
         }
     }
 
-    pub fn on_zset_mut(&mut self) -> Option<Result<&mut ZSet, DbError>> {
+    pub fn on_zset_mut(&mut self) -> Option<RutinResult<&mut ZSet>> {
         let inner = if let Some(inner) = &mut self.inner {
             inner
         } else {
@@ -273,10 +350,11 @@ impl Object {
         if let ObjValue::ZSet(z) = &mut inner.value {
             Some(Ok(z))
         } else {
-            Some(Err(DbError::TypeErr {
-                expected: "zset",
+            Some(Err(RutinError::TypeErr {
+                expected: ObjValueType::ZSet.into(),
                 found: typ,
-            }))
+            }
+            .into()))
         }
     }
 
@@ -349,14 +427,14 @@ impl Object {
     }
 
     #[instrument(level = "debug", skip(db))]
-    pub(super) async fn trigger_lock_event(db: &Db, key: Key) -> ObjectEntryMut {
+    pub(super) async fn trigger_lock_event(db: &Db, key: Key) -> ObjectEntry {
         let mut entry = db.entries.entry(key);
 
         match &mut entry {
             Entry::Occupied(e) => {
                 // 如果没有意向锁事件，则直接返回
                 if !e.get().events.contains(INTENTION_LOCK_FLAG) {
-                    return ObjectEntryMut::new(entry, db, None);
+                    return ObjectEntry::new(entry, db, None);
                 }
 
                 let events = &mut e.get_mut().events;
@@ -408,16 +486,16 @@ impl Object {
                             // 获取写锁并带上notify，当写锁释放时通知下一个等待的任务。在使用写锁时，
                             // 可能会有新的任务想要获取写锁，因此不能简单地通知唤醒所有等待的任务（这
                             // 还会导致写锁争用，从而引起阻塞），而是应该一个接一个的唤醒
-                            return ObjectEntryMut::new(new_entry, db, Some(intention_lock));
+                            return ObjectEntry::new(new_entry, db, Some(intention_lock));
                         }
 
-                        return ObjectEntryMut::new(entry, db, None);
+                        return ObjectEntry::new(entry, db, None);
                     }
                 }
 
                 unreachable!()
             }
-            Entry::Vacant(_) => ObjectEntryMut::new(entry, db, None),
+            Entry::Vacant(_) => ObjectEntry::new(entry, db, None),
         }
     }
 
@@ -488,15 +566,15 @@ pub const MAY_UPDATE_FLAG: u8 = 1 << 2;
 
 #[derive(Debug, Default)]
 struct Events {
-    inner: SmallVec<[Event; 8]>,
+    inner: Vec<Event>,
     // 事件类型标志位，用于快速判断是否包含某种事件
     flags: u8,
 }
 
 impl Events {
-    pub const fn new(inner: SmallVec<[Event; 8]>) -> Self {
-        Self { inner, flags: 0 }
-    }
+    // pub const fn new(inner: Vec<Event>) -> Self {
+    //     Self { inner, flags: 0 }
+    // }
 
     #[inline]
     pub fn contains(&self, flag: u8) -> bool {
@@ -509,8 +587,8 @@ impl Events {
 #[strum_discriminants(name(EventType))]
 #[derive(Debug)]
 pub enum Event {
-    /// 意向锁事件，代表该键值对在未来某个时刻会被某个['Handler']上锁，在此期间
-    /// 除了id为target_id的[`Handler`]外其余[`Handler`]只能访问，而不能修改该键
+    /// 意向锁事件，代表该键值对在未来某个时刻会被某个[`Handler`]上锁，在此期间
+    /// 除了id为target_id的[`Handler`]外其余[`Handler`]只能**访问**，而不能修改该键
     /// 值对。
     ///
     /// 每个[`Handler`]在执行时都有一个唯一的[`Id`]，target_id代表设置该意向锁的
@@ -523,10 +601,10 @@ pub enum Event {
     ///
     /// 在执行一个事务时，需要对多个键值对进行操作，为了保证事务的一致性，在事务
     /// 的执行期间，这些键值对只能被该事务的[`Handler`]访问，此时就可以使用意向
-    /// 锁。使用意向锁之后，其余['Handler']在获取写锁后马上释放，并await直到被允
-    /// 许再次获取写锁。当事务执行完毕后，会通知最先等待的['Handler']，允许其获取
-    /// 写锁。该[`Handler`]使用完写锁后，会通知下一个等待的['Handler']，以此类推。
-    /// 直到最后一个等待的['Handler']获取写锁后，负责移除该事件。在此过程中，某个
+    /// 锁。使用意向锁之后，其余[`Handler`]在获取写锁后马上释放，并await直到被允
+    /// 许再次获取写锁。当事务执行完毕后，会通知最先等待的[`Handler`]，允许其获取
+    /// 写锁。该[`Handler`]使用完写锁后，会通知下一个等待的[`Handler`]，以此类推。
+    /// 直到最后一个等待的[`Handler`]获取写锁后，负责移除该事件。在此过程中，某个
     /// [`Handler`]可以重新设置意向锁，此时修改target_id为新的[`Handler`]的id。
     ///
     IntentionLock {
@@ -557,62 +635,94 @@ impl Event {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ObjectInner {
     value: ObjValue,
-    // TODO: 优化内存占用
-    expire: Option<Instant>, // None代表永不过期
+    expire: Instant,
+    /// access time and count，高位[`LRU_BITS`]表示access time，其余表示access count
+    /// 在读取时也需要更新atc，由于不可变引用无法更新，因此需要使用原子操作
+    pub(super) atc: AtomicU32,
 }
 
 impl ObjectInner {
+    ///  access time更新为lru_clock，access count加1
     #[inline]
-    pub fn new_str(s: impl Into<Str>, expire: Option<Instant>) -> Self {
+    pub fn update_atc(&self, lru_clock: u32) {
+        let atc = self.atc.load(Relaxed);
+
+        let count = atc & Atc::LFU_MASK;
+
+        let new_count = if count == Atc::LFU_FREQUENCY_MAX {
+            count
+        } else {
+            // 每次有1 / (count / 2)的概率更新count
+            let prob = rand::thread_rng().gen_range(0..=count / 2);
+            if prob == 0 {
+                count + 1
+            } else {
+                count
+            }
+        };
+
+        let new_atc = (lru_clock << Atc::LFU_BITS) | new_count;
+
+        // 如果更新失败，则放弃更新
+        let _ = self.atc.compare_exchange(atc, new_atc, Relaxed, Relaxed);
+    }
+
+    #[inline]
+    pub fn atc(&self) -> Atc {
+        Atc(self.atc.load(Relaxed))
+    }
+
+    #[inline]
+    pub fn new_str(s: impl Into<Str>, expire: Instant) -> Self {
         ObjectInner {
             value: ObjValue::Str(s.into()),
             expire,
+            atc: Default::default(),
         }
     }
 
     #[inline]
-    pub fn new_list(l: impl Into<List>, expire: Option<Instant>) -> Self {
+    pub fn new_list(l: impl Into<List>, expire: Instant) -> Self {
         ObjectInner {
             value: ObjValue::List(l.into()),
             expire,
+            atc: Default::default(),
         }
     }
 
     #[inline]
-    pub fn new_set(s: impl Into<Set>, expire: Option<Instant>) -> Self {
+    pub fn new_set(s: impl Into<Set>, expire: Instant) -> Self {
         ObjectInner {
             value: ObjValue::Set(s.into()),
             expire,
+            atc: Default::default(),
         }
     }
 
     #[inline]
-    pub fn new_hash(h: impl Into<Hash>, expire: Option<Instant>) -> Self {
+    pub fn new_hash(h: impl Into<Hash>, expire: Instant) -> Self {
         ObjectInner {
             value: ObjValue::Hash(h.into()),
             expire,
+            atc: Default::default(),
         }
     }
 
     #[inline]
-    pub fn new_zset(z: impl Into<ZSet>, expire: Option<Instant>) -> Self {
+    pub fn new_zset(z: impl Into<ZSet>, expire: Instant) -> Self {
         ObjectInner {
             value: ObjValue::ZSet(z.into()),
             expire,
+            atc: Default::default(),
         }
     }
 
     #[inline]
     pub fn is_expired(&self) -> bool {
-        if let Some(ex) = self.expire {
-            if ex <= Instant::now() {
-                return true;
-            }
-        }
-        false
+        self.expire <= Instant::now()
     }
 
     pub fn typ(&self) -> ObjValueType {
@@ -627,11 +737,11 @@ impl ObjectInner {
 
     pub fn type_str(&self) -> &'static str {
         match &self.value {
-            ObjValue::Str(_) => "string",
-            ObjValue::List(_) => "list",
-            ObjValue::Set(_) => "set",
-            ObjValue::Hash(_) => "hash",
-            ObjValue::ZSet(_) => "zset",
+            ObjValue::Str(_) => ObjValueType::Str.into(),
+            ObjValue::List(_) => ObjValueType::List.into(),
+            ObjValue::Set(_) => ObjValueType::Set.into(),
+            ObjValue::Hash(_) => ObjValueType::Hash.into(),
+            ObjValue::ZSet(_) => ObjValueType::ZSet.into(),
         }
     }
 
@@ -641,161 +751,261 @@ impl ObjectInner {
     }
 
     #[inline]
-    pub fn expire(&self) -> Option<Instant> {
+    pub fn expire_unchecked(&self) -> Instant {
         self.expire
     }
 
-    pub fn set_expire(&mut self, new_ex: Option<Instant>) -> Result<Option<Instant>, &'static str> {
-        if let Some(ex) = new_ex {
-            if ex <= Instant::now() {
-                return Err("invalid expire time");
-            }
+    #[inline]
+    pub fn try_expire(&self) -> Result<Instant, &'static str> {
+        if self.expire <= Instant::now() {
+            Ok(self.expire)
+        } else {
+            Err("object has expired")
         }
+    }
+
+    #[inline]
+    pub fn expire_expect_never(&self) -> Option<Instant> {
+        if self.expire == *NEVER_EXPIRE {
+            None
+        } else {
+            Some(self.expire)
+        }
+    }
+
+    #[inline]
+    pub fn set_expire_unchecked(&mut self, new_ex: Instant) -> Result<Instant, &'static str> {
+        if new_ex <= Instant::now() {
+            return Err("invalid expire time");
+        }
+
         Ok(std::mem::replace(&mut self.expire, new_ex))
     }
 
-    pub fn on_str(&self) -> Result<&Str, DbError> {
+    pub fn set_expire(&mut self, new_ex: Instant) -> Result<Instant, &'static str> {
+        if new_ex <= Instant::now() {
+            return Err("invalid expire time");
+        }
+
+        Ok(std::mem::replace(&mut self.expire, new_ex))
+    }
+
+    pub fn on_str(&self) -> RutinResult<&Str> {
         if let ObjValue::Str(s) = &self.value {
             Ok(s)
         } else {
-            Err(DbError::TypeErr {
-                expected: "string",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::Str.into(),
                 found: self.type_str(),
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_list(&self) -> Result<&List, DbError> {
+    pub fn on_list(&self) -> RutinResult<&List> {
         if let ObjValue::List(l) = &self.value {
             Ok(l)
         } else {
-            Err(DbError::TypeErr {
-                expected: "list",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::List.into(),
                 found: self.type_str(),
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_set(&self) -> Result<&Set, DbError> {
+    pub fn on_set(&self) -> RutinResult<&Set> {
         if let ObjValue::Set(s) = &self.value {
             Ok(s)
         } else {
-            Err(DbError::TypeErr {
-                expected: "set",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::Set.into(),
                 found: self.type_str(),
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_hash(&self) -> Result<&Hash, DbError> {
+    pub fn on_hash(&self) -> RutinResult<&Hash> {
         if let ObjValue::Hash(h) = &self.value {
             Ok(h)
         } else {
-            Err(DbError::TypeErr {
-                expected: "hash",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::Hash.into(),
                 found: self.type_str(),
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_zset(&self) -> Result<&ZSet, DbError> {
+    pub fn on_zset(&self) -> RutinResult<&ZSet> {
         if let ObjValue::ZSet(z) = &self.value {
             Ok(z)
         } else {
-            Err(DbError::TypeErr {
-                expected: "zset",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::ZSet.into(),
                 found: self.type_str(),
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_str_mut(&mut self) -> Result<&mut Str, DbError> {
+    pub fn on_str_mut(&mut self) -> RutinResult<&mut Str> {
         let typ = self.type_str();
         if let ObjValue::Str(s) = &mut self.value {
             Ok(s)
         } else {
-            Err(DbError::TypeErr {
-                expected: "string",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::Str.into(),
                 found: typ,
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_list_mut(&mut self) -> Result<&mut List, DbError> {
+    pub fn on_list_mut(&mut self) -> RutinResult<&mut List> {
         let typ = self.type_str();
         if let ObjValue::List(l) = &mut self.value {
             Ok(l)
         } else {
-            Err(DbError::TypeErr {
-                expected: "list",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::List.into(),
                 found: typ,
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_set_mut(&mut self) -> Result<&mut Set, DbError> {
+    pub fn on_set_mut(&mut self) -> RutinResult<&mut Set> {
         let typ = self.type_str();
         if let ObjValue::Set(s) = &mut self.value {
             Ok(s)
         } else {
-            Err(DbError::TypeErr {
-                expected: "set",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::Set.into(),
                 found: typ,
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_hash_mut(&mut self) -> Result<&mut Hash, DbError> {
+    pub fn on_hash_mut(&mut self) -> RutinResult<&mut Hash> {
         let typ = self.type_str();
         if let ObjValue::Hash(h) = &mut self.value {
             Ok(h)
         } else {
-            Err(DbError::TypeErr {
-                expected: "hash",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::Hash.into(),
                 found: typ,
-            })
+            }
+            .into())
         }
     }
 
-    pub fn on_zset_mut(&mut self) -> Result<&mut ZSet, DbError> {
+    pub fn on_zset_mut(&mut self) -> RutinResult<&mut ZSet> {
         let typ = self.type_str();
         if let ObjValue::ZSet(z) = &mut self.value {
             Ok(z)
         } else {
-            Err(DbError::TypeErr {
-                expected: "zset",
+            Err(RutinError::TypeErr {
+                expected: ObjValueType::ZSet.into(),
                 found: typ,
-            })
+            }
+            .into())
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Atc(u32);
+
+impl Atc {
+    pub const LRU_BITS: u8 = 20;
+    pub const LFU_BITS: u8 = 12;
+
+    pub const LRU_CLOCK_MAX: u32 = (1 << Self::LRU_BITS) - 1;
+    pub const LFU_FREQUENCY_MAX: u32 = (1 << Self::LRU_BITS) - 1;
+
+    pub const LFU_MASK: u32 = (1 << Self::LFU_BITS) - 1;
+    pub const LRU_MASK: u32 = u32::MAX ^ Self::LFU_MASK;
+
+    pub const DEFAULT_ATC: u32 = Self::LRU_MASK; // 默认access time为最大，access_count为0
+
+    #[inline]
+    pub fn access_time(&self) -> u32 {
+        self.0 >> Self::LFU_BITS
+    }
+
+    #[inline]
+    pub fn access_count(&self) -> u32 {
+        self.0 & Self::LFU_MASK
+    }
+}
+
+impl Default for Atc {
+    fn default() -> Self {
+        Atc(Self::LRU_MASK)
+    }
+}
+
+impl Deref for Atc {
+    type Target = u32;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<u32> for Atc {
+    fn from(atc: u32) -> Self {
+        Atc(atc)
+    }
+}
+
+impl Clone for ObjectInner {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+            expire: self.expire,
+            atc: Default::default(),
         }
     }
 }
 
 impl PartialEq for ObjectInner {
     fn eq(&self, other: &Self) -> bool {
-        let ex_is_eq = if let (Some(ex1), Some(ex2)) = (self.expire, other.expire) {
-            if ex1 > ex2 {
-                ex1.duration_since(ex2).as_secs() < 1
-            } else {
-                ex2.duration_since(ex1).as_secs() < 1
-            }
+        let ex_is_eq = if self.expire > other.expire {
+            self.expire.duration_since(other.expire).as_secs() < 1
         } else {
-            self.expire.is_none() && other.expire.is_none()
+            other.expire.duration_since(self.expire).as_secs() < 1
         };
 
-        self.value == other.value && ex_is_eq
+        ex_is_eq && self.value == other.value
     }
 }
 
-#[derive(EnumDiscriminants)]
+#[derive(EnumDiscriminants, IntoStaticStr)]
 #[strum_discriminants(vis(pub))]
 #[strum_discriminants(name(ObjValueType))]
+#[strum_discriminants(derive(IntoStaticStr))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjValue {
+    #[strum_discriminants(strum(serialize = "string"))]
     Str(Str),
+    #[strum_discriminants(strum(serialize = "list"))]
     List(List),
+    #[strum_discriminants(strum(serialize = "set"))]
     Set(Set),
+    #[strum_discriminants(strum(serialize = "hash"))]
     Hash(Hash),
+    #[strum_discriminants(strum(serialize = "zset"))]
     ZSet(ZSet),
+}
+
+impl std::fmt::Display for ObjValueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.into())
+    }
 }
 
 impl From<Str> for ObjValue {
@@ -835,7 +1045,7 @@ mod object_tests {
 
     #[test]
     fn may_update_test() {
-        let mut obj = Object::new_str("".into(), None);
+        let mut obj = Object::new_str("".into(), *NEVER_EXPIRE);
 
         let (tx, rx) = flume::unbounded();
 
@@ -849,7 +1059,7 @@ mod object_tests {
 
     #[test]
     fn track_test() {
-        let mut obj = Object::new_str("".into(), None);
+        let mut obj = Object::new_str("".into(), *NEVER_EXPIRE);
 
         let (tx, rx) = flume::unbounded();
 
@@ -875,9 +1085,10 @@ mod object_tests {
 
         let notifiy = Arc::new(Notify::const_new());
 
-        db.insert_object("".into(), ObjectInner::new_str("", None))
-            .await;
-        db.add_lock_event("".into(), 0).await;
+        db.insert_object("".into(), ObjectInner::new_str("", *NEVER_EXPIRE))
+            .await
+            .unwrap();
+        db.add_lock_event("".into(), 0).await.unwrap();
 
         // 目标ID不符，会被阻塞
         let handle1 = tokio::spawn({
@@ -909,7 +1120,7 @@ mod object_tests {
             let flag = flag.clone();
             async move {
                 // 重入IntentionLock事件
-                ID.scope(3, db.add_lock_event("".into(), 3)).await;
+                ID.scope(3, db.add_lock_event("".into(), 3)).await.unwrap();
                 // 该语句应该第三执行
                 assert_eq!(flag.fetch_add(1, Ordering::SeqCst), 3);
             }
@@ -940,7 +1151,7 @@ mod object_tests {
         handle3.await.unwrap();
         handle4.await.unwrap();
 
-        let e = db.get_object_entry(&"".into()).await.unwrap();
+        let e = db.get(&"".into()).await.unwrap();
         assert!(e.events.inner.is_empty())
     }
 }

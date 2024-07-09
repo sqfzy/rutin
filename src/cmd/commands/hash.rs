@@ -5,9 +5,10 @@
 
 use super::*;
 use crate::{
-    cmd::{CmdError, CmdExecutor, CmdType, CmdUnparsed, Err},
+    cmd::{CmdExecutor, CmdType, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
+    error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
     shared::db::ObjValueType::Hash,
@@ -29,16 +30,13 @@ impl CmdExecutor for HDel {
     const FLAG: CmdFlag = HDEL_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut count = 0;
 
         handler
             .shared
             .db()
-            .update_object(&self.key, |obj| {
+            .update_object(self.key, |obj| {
                 let hash = obj.on_hash_mut()?;
                 for field in self.fields {
                     if hash.remove(&field).is_some() {
@@ -53,14 +51,14 @@ impl CmdExecutor for HDel {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(HDel {
@@ -84,10 +82,7 @@ impl CmdExecutor for HExists {
     const FLAG: CmdFlag = HEXISTS_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut exists = false;
 
         handler
@@ -104,14 +99,14 @@ impl CmdExecutor for HExists {
         Ok(Some(Resp3::new_integer(if exists { 1 } else { 0 })))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(HExists {
@@ -135,10 +130,7 @@ impl CmdExecutor for HGet {
     const FLAG: CmdFlag = HGET_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut value = None;
 
         handler
@@ -155,14 +147,14 @@ impl CmdExecutor for HGet {
         Ok(value.map(|b| Resp3::new_blob_string(b.clone())))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(HGet {
@@ -185,16 +177,13 @@ impl CmdExecutor for HSet {
     const FLAG: CmdFlag = HSET_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut count = 0;
 
         handler
             .shared
             .db()
-            .update_or_create_object(&self.key, Hash, |obj| {
+            .update_or_create_object(self.key, Hash, |obj| {
                 let hash = obj.on_hash_mut()?;
                 for (field, value) in self.fields {
                     hash.insert(field, value);
@@ -208,14 +197,14 @@ impl CmdExecutor for HSet {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 3 || args.len() % 2 != 1 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         let mut fields = Vec::with_capacity(args.len() / 2);

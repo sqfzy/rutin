@@ -1,17 +1,14 @@
 use super::*;
 use crate::{
-    cmd::{
-        error::{CmdError, Err},
-        CmdExecutor, CmdType, CmdUnparsed,
-    },
+    cmd::{CmdExecutor, CmdType, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
+    error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
     CmdFlag, Int, Key,
 };
 use bytes::Bytes;
-use snafu::location;
 use tracing::instrument;
 
 /// # Reply:
@@ -31,16 +28,13 @@ impl CmdExecutor for Publish {
     const FLAG: CmdFlag = PUBLISH_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         // 获取正在监听的订阅者
         let listeners = handler
             .shared
             .db()
             .get_channel_all_listener(&self.topic)
-            .ok_or(CmdError::from(0))?;
+            .ok_or(RutinError::from(0))?;
 
         let mut count = 0;
         // 理论上一定会发送成功，因为Db中保存的发布者与订阅者是一一对应的
@@ -67,14 +61,14 @@ impl CmdExecutor for Publish {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let topic = args.next().unwrap();
         if ac.is_forbidden_channel(&topic) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(Publish {
@@ -95,17 +89,11 @@ impl CmdExecutor for Subscribe {
     const FLAG: CmdFlag = SUBSCRIBE_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
-        use snafu::Location;
-
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let Handler {
             shared,
             conn,
             context,
-            bg_task_channel,
             ..
         } = handler;
 
@@ -123,7 +111,7 @@ impl CmdExecutor for Subscribe {
                 subscribed_channels.push(topic.clone());
                 shared
                     .db()
-                    .add_channel_listener(topic.clone(), bg_task_channel.new_sender());
+                    .add_channel_listener(topic.clone(), context.bg_task_channel.new_sender());
             }
 
             conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
@@ -131,24 +119,20 @@ impl CmdExecutor for Subscribe {
                 Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
-            .await
-            .map_err(|e| CmdError::ServerErr {
-                source: e.into(),
-                loc: location!(),
-            })?;
+            .await?;
         }
 
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let topics: Vec<_> = args.collect();
         if ac.is_forbidden_channels(&topics) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(Subscribe { topics })
@@ -171,17 +155,11 @@ impl CmdExecutor for Unsubscribe {
     const FLAG: CmdFlag = UNSUBSCRIBE_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
-        use snafu::Location;
-
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let Handler {
             shared,
             conn,
             context,
-            bg_task_channel,
             ..
         } = handler;
 
@@ -194,11 +172,7 @@ impl CmdExecutor for Unsubscribe {
                     Resp3::new_blob_string(topic),
                     Resp3::new_integer(0),
                 ]))
-                .await
-                .map_err(|e| CmdError::ServerErr {
-                    source: e.into(),
-                    loc: location!(),
-                })?;
+                .await?;
             }
             return Ok(None);
         };
@@ -209,7 +183,7 @@ impl CmdExecutor for Unsubscribe {
                 subscribed_channels.swap_remove(i);
                 shared
                     .db()
-                    .remove_channel_listener(&topic, bg_task_channel.get_sender());
+                    .remove_channel_listener(&topic, context.bg_task_channel.get_sender());
             }
 
             conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
@@ -217,24 +191,20 @@ impl CmdExecutor for Unsubscribe {
                 Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int),
             ]))
-            .await
-            .map_err(|e| CmdError::ServerErr {
-                source: e.into(),
-                loc: location!(),
-            })?;
+            .await?;
         }
 
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let topics: Vec<_> = args.collect();
         if ac.is_forbidden_channels(&topics) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(Unsubscribe { topics })
@@ -311,6 +281,7 @@ mod cmd_pub_sub_tests {
         assert_eq!(res, 1);
 
         let msg = handler
+            .context
             .bg_task_channel
             .recv_from_bg_task()
             .await
@@ -343,6 +314,7 @@ mod cmd_pub_sub_tests {
         assert_eq!(res, 1);
 
         let msg = handler
+            .context
             .bg_task_channel
             .recv_from_bg_task()
             .await
@@ -366,7 +338,7 @@ mod cmd_pub_sub_tests {
         )
         .unwrap();
         let res = publish.execute(&mut handler).await.unwrap_err();
-        matches!(res, CmdError::ErrorCode { code } if code == 0);
+        matches!(res, RutinError::ErrCode { code } if code == 0);
 
         // 取消订阅channel1
         let unsubscribe = Unsubscribe::parse(

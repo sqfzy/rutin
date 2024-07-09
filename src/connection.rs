@@ -1,4 +1,4 @@
-use crate::frame::{FrameResult, Resp3};
+use crate::{error::RutinResult, frame::Resp3};
 use bytes::{Buf, BufMut, BytesMut};
 use flume::{
     r#async::{RecvFut, SendFut},
@@ -81,14 +81,14 @@ impl<S: AsyncStream> Connection<S> {
 
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frame(&mut self) -> FrameResult<Option<Resp3>> {
+    pub async fn read_frame(&mut self) -> RutinResult<Option<Resp3>> {
         Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await
     }
 
     // 尝试读取多个frame，直到buffer和stream都为空
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frames(&mut self) -> FrameResult<Option<Vec<Resp3>>> {
+    pub async fn read_frames(&mut self) -> RutinResult<Option<Vec<Resp3>>> {
         let mut frames = Vec::with_capacity(32);
 
         loop {
@@ -147,7 +147,7 @@ impl Connection<FakeStream> {
         ShutdownSignal(self.stream.tx.clone())
     }
 
-    // pub fn write_frame_blocking(&mut self, frame: &RESP3) -> io::Result<()> {
+    // pub fn write_frame_blocking(&mut self, frame: &Resp3) -> io::Result<()> {
     //     frame.encode_buf(&mut self.writer_buf);
     //
     //     if self.batch_count > 0 {
@@ -164,7 +164,7 @@ impl Connection<FakeStream> {
     //     Ok(())
     // }
     //
-    // pub fn read_frame_blocking(&mut self) -> io::Result<Option<RESP3>> {
+    // pub fn read_frame_blocking(&mut self) -> io::Result<Option<Resp3>> {
     //     let mut buf = BytesMut::new();
     //     let data = self
     //         .stream
@@ -178,7 +178,7 @@ impl Connection<FakeStream> {
     //
     //     buf.extend_from_slice(&data);
     //
-    //     Ok(Some(RESP3::Blob(buf.freeze())))
+    //     Ok(Some(Resp3::new_blob_string(buf.freeze())))
     // }
 }
 
@@ -339,210 +339,227 @@ impl PinnedDrop for FakeStream {
     }
 }
 
-// #[cfg(test)]
-// mod fake_cs_tests {
-//     use super::*;
-//     use crate::util::test_init;
-//     use bytes::Bytes;
-//     use std::time::Duration;
-//     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-//
-//     #[tokio::test]
-//     async fn test_read_frames() {
-//         test_init();
-//
-//         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-//         let addr = listener.local_addr().unwrap();
-//
-//         let (tx, rx) = tokio::sync::oneshot::channel();
-//         tokio::spawn(async move {
-//             let (socket, _addr) = listener.accept().await.unwrap();
-//             let mut server_conn = Connection::new(socket, 0);
-//
-//             // 测试简单字符串
-//             let _ = server_conn
-//                 .write_frame::<Bytes, String>(&RESP3::SimpleString("OK".into()))
-//                 .await;
-//             // 测试错误消息
-//             let _ = server_conn
-//                 .write_frame::<Bytes, String>(&RESP3::SimpleError("Error message".into()))
-//                 .await;
-//             // 测试整数
-//             let _ = server_conn
-//                 .write_frame::<Bytes, String>(&RESP3::Integer(1000))
-//                 .await;
-//             // 测试大容量字符串
-//             let _ = server_conn
-//                 .write_frame::<Bytes, String>(&RESP3::Blob("foobar".into()))
-//                 .await;
-//             // 测试空字符串
-//             let _ = server_conn
-//                 .write_frame::<Bytes, String>(&RESP3::Blob("".into()))
-//                 .await;
-//             // 测试空值
-//             let _ = server_conn.write_frame::<Bytes, String>(&RESP3::Null).await;
-//             // 测试数组
-//             let _ = server_conn
-//                 .write_frame::<Bytes, String>(&RESP3::Array(vec![
-//                     RESP3::SimpleString("simple".into()),
-//                     RESP3::SimpleError("error".into()),
-//                     RESP3::Integer(1000),
-//                     RESP3::Blob("bulk".into()),
-//                     RESP3::Null,
-//                     RESP3::Array(vec![RESP3::Blob("foo".into()), RESP3::Blob("bar".into())]),
-//                 ]))
-//                 .await;
-//             // 测试空数组
-//             let _ = server_conn
-//                 .write_frame::<Bytes, String>(&RESP3::Array(vec![]))
-//                 .await;
-//
-//             tx.send(()).unwrap();
-//         });
-//
-//         let stream = TcpStream::connect(addr).await.unwrap();
-//         let mut conn = Connection::new(stream, 0);
-//
-//         rx.await.unwrap();
-//
-//         let mut res = vec![];
-//         while let Some(frames) = conn.read_frames().await.unwrap() {
-//             res.extend(frames);
-//         }
-//
-//         let right_res = vec![
-//             RESP3::SimpleString("OK".into()),
-//             RESP3::SimpleError("Error message".into()),
-//             RESP3::Integer(1000),
-//             RESP3::Blob("foobar".into()),
-//             RESP3::Blob("".into()),
-//             RESP3::Null,
-//             RESP3::Array(vec![
-//                 RESP3::SimpleString("simple".into()),
-//                 RESP3::SimpleError("error".into()),
-//                 RESP3::Integer(1000),
-//                 RESP3::Blob("bulk".into()),
-//                 RESP3::Null,
-//                 RESP3::Array(vec![RESP3::Blob("foo".into()), RESP3::Blob("bar".into())]),
-//             ]),
-//             RESP3::Array(vec![]),
-//         ];
-//
-//         for (a, b) in res.into_iter().zip(right_res) {
-//             assert_eq!(a, b);
-//         }
-//     }
-//
-//     #[tokio::test]
-//     async fn fake_poll_test() {
-//         let data = BytesMut::from(b"a".as_slice());
-//         let data2 = BytesMut::from(b"b".as_slice());
-//
-//         let (server_tx, client_rx) = flume::bounded(1);
-//         let (client_tx, server_rx) = flume::unbounded();
-//         let mut server = FakeStream::new(server_tx, server_rx);
-//
-//         let handle = tokio::spawn(async move {
-//             let mut client = FakeStream::new(client_tx, client_rx);
-//
-//             tokio::time::sleep(Duration::from_millis(100)).await;
-//             client.write_all(&data).await.unwrap(); // 写入数据，解除server.read_u8()的阻塞
-//             println!("client write data done");
-//
-//             tokio::time::sleep(Duration::from_millis(100)).await;
-//             let mut buf = [0; 3];
-//             let _ = client.read_exact(&mut buf).await.unwrap(); // 读取数据，解除server.write_all(&data2)的阻塞
-//             println!("client read data: {:?}", buf);
-//             assert_eq!(buf, b"bbb".as_slice());
-//         });
-//
-//         println!("server reading data...");
-//         let a = server.read_u8().await.unwrap(); // async阻塞
-//         println!("server read data: {:?}", a);
-//         assert_eq!(a, b'a');
-//
-//         println!("server writing data...");
-//         server.write_all(&data2).await.unwrap();
-//         server.write_all(&data2).await.unwrap();
-//         server.write_all(&data2).await.unwrap(); // async阻塞
-//         println!("server write data done");
-//         handle.await.unwrap();
-//     }
-//
-//     #[tokio::test]
-//     async fn fake_stream_test() {
-//         use crate::frame::RESP3;
-//         use crate::server::Handler;
-//
-//         crate::util::test_init();
-//
-//         let (mut handler, mut client) = Handler::new_fake();
-//
-//         tokio::spawn(async move {
-//             // 测试简单字符串
-//             let _ = client
-//                 .write_frame::<Bytes, String>(&RESP3::SimpleString("OK".into()))
-//                 .await;
-//             // 测试错误消息
-//             let _ = client
-//                 .write_frame::<Bytes, String>(&RESP3::SimpleError("Error message".into()))
-//                 .await;
-//             // 测试整数
-//             let _ = client
-//                 .write_frame::<Bytes, String>(&RESP3::Integer(1000))
-//                 .await;
-//             // 测试大容量字符串
-//             let _ = client
-//                 .write_frame::<Bytes, String>(&RESP3::Blob("foobar".into()))
-//                 .await;
-//             // 测试空字符串
-//             let _ = client
-//                 .write_frame::<Bytes, String>(&RESP3::Blob("".into()))
-//                 .await;
-//             // 测试空值
-//             let _ = client.write_frame::<Bytes, String>(&RESP3::Null).await;
-//             // 测试数组
-//             let _ = client
-//                 .write_frame::<Bytes, String>(&RESP3::Array(vec![
-//                     RESP3::SimpleString("simple".into()),
-//                     RESP3::SimpleError("error".into()),
-//                     RESP3::Integer(1000),
-//                     RESP3::Blob("bulk".into()),
-//                     RESP3::Null,
-//                     RESP3::Array(vec![RESP3::Blob("foo".into()), RESP3::Blob("bar".into())]),
-//                 ]))
-//                 .await;
-//             // 测试空数组
-//             let _ = client
-//                 .write_frame::<Bytes, String>(&RESP3::Array(vec![]))
-//                 .await;
-//         });
-//
-//         let mut res = vec![];
-//         while let Some(frames) = handler.conn.read_frames().await.unwrap() {
-//             res.extend(frames);
-//         }
-//
-//         let right_res = vec![
-//             RESP3::SimpleString("OK".into()),
-//             RESP3::SimpleError("Error message".into()),
-//             RESP3::Integer(1000),
-//             RESP3::Blob("foobar".into()),
-//             RESP3::Blob("".into()),
-//             RESP3::Null,
-//             RESP3::Array(vec![
-//                 RESP3::SimpleString("simple".into()),
-//                 RESP3::SimpleError("error".into()),
-//                 RESP3::Integer(1000),
-//                 RESP3::Blob("bulk".into()),
-//                 RESP3::Null,
-//                 RESP3::Array(vec![RESP3::Blob("foo".into()), RESP3::Blob("bar".into())]),
-//             ]),
-//             RESP3::Array(vec![]),
-//         ];
-//
-//         for (a, b) in res.into_iter().zip(right_res) {
-//             assert_eq!(a, b);
-//         }
-//     }
-// }
+#[cfg(test)]
+mod fake_cs_tests {
+    use super::*;
+    use crate::util::test_init;
+    use bytes::Bytes;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn test_read_frames() {
+        test_init();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let (socket, _addr) = listener.accept().await.unwrap();
+            let mut server_conn = Connection::new(socket, 0);
+
+            // 测试简单字符串
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_simple_string("OK".into()))
+                .await;
+            // 测试错误消息
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_simple_error("Error message".into()))
+                .await;
+            // 测试整数
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_integer(1000))
+                .await;
+            // 测试大容量字符串
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_blob_string("foobar".into()))
+                .await;
+            // 测试空字符串
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_blob_string("".into()))
+                .await;
+            // 测试空值
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_null())
+                .await;
+            // 测试数组
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_array(vec![
+                    Resp3::new_simple_string("simple".into()),
+                    Resp3::new_simple_error("error".into()),
+                    Resp3::new_integer(1000),
+                    Resp3::new_blob_string("bulk".into()),
+                    Resp3::new_null(),
+                    Resp3::new_array(vec![
+                        Resp3::new_blob_string("foo".into()),
+                        Resp3::new_blob_string("bar".into()),
+                    ]),
+                ]))
+                .await;
+            // 测试空数组
+            let _ = server_conn
+                .write_frame::<Bytes, String>(&Resp3::new_array(vec![]))
+                .await;
+
+            tx.send(()).unwrap();
+        });
+
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut conn = Connection::new(stream, 0);
+
+        rx.await.unwrap();
+
+        let mut res = vec![];
+        while let Some(frames) = conn.read_frames().await.unwrap() {
+            res.extend(frames);
+        }
+
+        let right_res = vec![
+            Resp3::new_simple_string("OK".into()),
+            Resp3::new_simple_error("Error message".into()),
+            Resp3::new_integer(1000),
+            Resp3::new_blob_string("foobar".into()),
+            Resp3::new_blob_string("".into()),
+            Resp3::new_null(),
+            Resp3::new_array(vec![
+                Resp3::new_simple_string("simple".into()),
+                Resp3::new_simple_error("error".into()),
+                Resp3::new_integer(1000),
+                Resp3::new_blob_string("bulk".into()),
+                Resp3::new_null(),
+                Resp3::new_array(vec![
+                    Resp3::new_blob_string("foo".into()),
+                    Resp3::new_blob_string("bar".into()),
+                ]),
+            ]),
+            Resp3::new_array(vec![]),
+        ];
+
+        for (a, b) in res.into_iter().zip(right_res) {
+            assert_eq!(a, b);
+        }
+    }
+
+    #[tokio::test]
+    async fn fake_poll_test() {
+        use tracing::debug;
+
+        let data = BytesMut::from(b"a".as_slice());
+        let data2 = BytesMut::from(b"b".as_slice());
+
+        let (server_tx, client_rx) = flume::bounded(1);
+        let (client_tx, server_rx) = flume::unbounded();
+        let mut server = FakeStream::new(server_tx, server_rx);
+
+        let handle = tokio::spawn(async move {
+            let mut client = FakeStream::new(client_tx, client_rx);
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            client.write_all(&data).await.unwrap(); // 写入数据，解除server.read_u8()的阻塞
+            debug!("client write data done");
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut buf = [0; 3];
+            let _ = client.read_exact(&mut buf).await.unwrap(); // 读取数据，解除server.write_all(&data2)的阻塞
+            debug!("client read data: {:?}", buf);
+            assert_eq!(buf, b"bbb".as_slice());
+        });
+
+        debug!("server reading data...");
+        let a = server.read_u8().await.unwrap(); // async阻塞
+        debug!("server read data: {:?}", a);
+        assert_eq!(a, b'a');
+
+        debug!("server writing data...");
+        server.write_all(&data2).await.unwrap();
+        server.write_all(&data2).await.unwrap();
+        server.write_all(&data2).await.unwrap(); // async阻塞
+        debug!("server write data done");
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fake_stream_test() {
+        use crate::server::Handler;
+
+        crate::util::test_init();
+
+        let (mut handler, mut client) = Handler::new_fake();
+
+        tokio::spawn(async move {
+            // 测试简单字符串
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_simple_string("OK".into()))
+                .await;
+            // 测试错误消息
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_simple_error("Error message".into()))
+                .await;
+            // 测试整数
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_integer(1000))
+                .await;
+            // 测试大容量字符串
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_blob_string("foobar".into()))
+                .await;
+            // 测试空字符串
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_blob_string("".into()))
+                .await;
+            // 测试空值
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_null())
+                .await;
+            // 测试数组
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_array(vec![
+                    Resp3::new_simple_string("simple".into()),
+                    Resp3::new_simple_error("error".into()),
+                    Resp3::new_integer(1000),
+                    Resp3::new_blob_string("bulk".into()),
+                    Resp3::new_null(),
+                    Resp3::new_array(vec![
+                        Resp3::new_blob_string("foo".into()),
+                        Resp3::new_blob_string("bar".into()),
+                    ]),
+                ]))
+                .await;
+            // 测试空数组
+            let _ = client
+                .write_frame::<Bytes, String>(&Resp3::new_array(vec![]))
+                .await;
+        });
+
+        let mut res = vec![];
+        while let Some(frames) = handler.conn.read_frames().await.unwrap() {
+            res.extend(frames);
+        }
+
+        let right_res = vec![
+            Resp3::new_simple_string("OK".into()),
+            Resp3::new_simple_error("Error message".into()),
+            Resp3::new_integer(1000),
+            Resp3::new_blob_string("foobar".into()),
+            Resp3::new_blob_string("".into()),
+            Resp3::new_null(),
+            Resp3::new_array(vec![
+                Resp3::new_simple_string("simple".into()),
+                Resp3::new_simple_error("error".into()),
+                Resp3::new_integer(1000),
+                Resp3::new_blob_string("bulk".into()),
+                Resp3::new_null(),
+                Resp3::new_array(vec![
+                    Resp3::new_blob_string("foo".into()),
+                    Resp3::new_blob_string("bar".into()),
+                ]),
+            ]),
+            Resp3::new_array(vec![]),
+        ];
+
+        for (a, b) in res.into_iter().zip(right_res) {
+            assert_eq!(a, b);
+        }
+    }
+}

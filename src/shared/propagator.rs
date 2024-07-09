@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use crate::{
     cmd::CmdUnparsed,
     connection::AsyncStream,
+    error::{RutinError, RutinResult},
     frame::Resp3,
-    server::{Handler, ServerError},
+    server::Handler,
 };
 
 #[derive(Debug, Default)]
@@ -26,18 +27,18 @@ impl Propagator {
         }
     }
 
-    pub fn new_receiver(&self) -> Result<AsyncReceiver<BytesMut>, ServerError> {
+    pub fn new_receiver(&self) -> RutinResult<AsyncReceiver<BytesMut>> {
         let prev_len = self.existing_replicas.fetch_add(1, Ordering::Relaxed) as usize;
 
         if prev_len + 1 > self.to_replicas.len() {
             self.existing_replicas.fetch_sub(1, Ordering::Relaxed);
-            return Err(ServerError::from("too many replica connections"));
+            return Err(RutinError::from("ERR too many replica"));
         }
 
         Ok(self.to_replicas[prev_len].1.clone())
     }
 
-    pub fn delete_receiver(&self) -> Result<usize, ServerError> {
+    pub fn delete_receiver(&self) -> RutinResult<usize> {
         let curr_len = self.existing_replicas.fetch_sub(1, Ordering::Relaxed);
 
         Ok(curr_len as usize)

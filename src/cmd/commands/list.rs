@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
-    cmd::{error::Err, CmdError, CmdExecutor, CmdType, CmdUnparsed},
+    cmd::{CmdExecutor, CmdType, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
+    error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
     shared::{db::ObjValueType, Shared},
@@ -34,15 +35,12 @@ impl CmdExecutor for BLMove {
     const FLAG: CmdFlag = BLMOVE_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let db = handler.shared.db();
 
         let mut elem = None;
         let update_res = db
-            .update_object(&self.source, |obj| {
+            .update_object(self.source, |obj| {
                 let list = obj.on_list_mut()?;
                 elem = match self.wherefrom {
                     Where::Left => list.pop_front(),
@@ -54,7 +52,7 @@ impl CmdExecutor for BLMove {
             .await;
 
         // 忽略空键的错误
-        if !matches!(update_res, Err(CmdError::Null)) {
+        if !matches!(update_res, Err(RutinError::Null)) {
             update_res?;
         }
 
@@ -62,7 +60,7 @@ impl CmdExecutor for BLMove {
             // 存在可弹出元素
             let mut res = None;
 
-            db.update_or_create_object(&self.destination, ObjValueType::List, |obj| {
+            db.update_or_create_object(self.destination.clone(), ObjValueType::List, |obj| {
                 let list = obj.on_list_mut()?;
                 match self.whereto {
                     Where::Left => list.push_front(elem.clone()),
@@ -84,7 +82,7 @@ impl CmdExecutor for BLMove {
         let (key_tx, key_rx) = flume::bounded(1);
         // 监听该键的Update事件
         db.add_may_update_event(self.destination, key_tx.clone())
-            .await;
+            .await?;
 
         let deadline = if self.timeout == 0 {
             None
@@ -97,19 +95,19 @@ impl CmdExecutor for BLMove {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 5 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let source = args.next().unwrap();
         if ac.is_forbidden_key(&source, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         let destination = args.next().unwrap();
         if ac.is_forbidden_key(&destination, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(BLMove {
@@ -138,10 +136,7 @@ impl CmdExecutor for BLPop {
     const FLAG: CmdFlag = BLPOP_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let db = handler.shared.db();
 
         match first_round(&self.keys, &handler.shared).await {
@@ -160,7 +155,7 @@ impl CmdExecutor for BLPop {
         // 加入监听事件
         let (key_tx, key_rx) = flume::bounded(1);
         for key in self.keys {
-            db.add_may_update_event(key.clone(), key_tx.clone()).await;
+            db.add_may_update_event(key.clone(), key_tx.clone()).await?;
         }
 
         let deadline = if self.timeout == 0 {
@@ -174,16 +169,16 @@ impl CmdExecutor for BLPop {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let timeout = atoi::<u64>(&args.next_back().unwrap())?;
 
         let keys: Vec<_> = args.collect();
         if ac.is_forbidden_keys(&keys, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(Self { keys, timeout })
@@ -210,10 +205,7 @@ impl CmdExecutor for LPos {
     const FLAG: CmdFlag = LPOS_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         // 找到一个匹配元素，则rank-1(或+1)，当rank为0时，则表明开始收入
         // 一共要收入count个，但最长只能找max_len个元素
         // 如果count == 1，返回Integer
@@ -286,14 +278,14 @@ impl CmdExecutor for LPos {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if !(args.len() == 2 || args.len() == 4 || args.len() == 6 || args.len() == 8) {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         let element = args.next().unwrap();
@@ -343,10 +335,7 @@ impl CmdExecutor for LLen {
     const FLAG: CmdFlag = LLEN_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = None;
         handler
             .shared
@@ -358,19 +347,19 @@ impl CmdExecutor for LLen {
                 Ok(())
             })
             .await
-            .map_err(|_| CmdError::from(0))?;
+            .map_err(|_| RutinError::from(0))?;
 
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(LLen { key })
@@ -394,15 +383,12 @@ impl CmdExecutor for LPop {
     const FLAG: CmdFlag = LPOP_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = None;
         handler
             .shared
             .db()
-            .update_object(&self.key, |obj| {
+            .update_object(self.key, |obj| {
                 let list = obj.on_list_mut()?;
 
                 if self.count == 1 {
@@ -435,14 +421,14 @@ impl CmdExecutor for LPop {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         let count = if let Some(count) = args.next() {
@@ -470,15 +456,12 @@ impl CmdExecutor for LPush {
     const FLAG: CmdFlag = LPUSH_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut len = 0;
         handler
             .shared
             .db()
-            .update_or_create_object(&self.key, ObjValueType::List, |obj| {
+            .update_or_create_object(self.key, ObjValueType::List, |obj| {
                 let list = obj.on_list_mut()?;
 
                 for v in self.values {
@@ -493,14 +476,14 @@ impl CmdExecutor for LPush {
         Ok(Some(Resp3::new_integer(len as Int)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
         let key = args.next().unwrap();
         if ac.is_forbidden_key(&key, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(Self {
@@ -528,10 +511,7 @@ impl CmdExecutor for NBLPop {
     const FLAG: CmdFlag = NBLPOP_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> Result<Option<Resp3>, CmdError> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let Handler { shared, .. } = handler;
 
         match first_round(&self.keys, shared).await {
@@ -550,7 +530,10 @@ impl CmdExecutor for NBLPop {
         // 加入监听事件
         let (key_tx, key_rx) = flume::bounded(1);
         for key in self.keys {
-            shared.db().add_may_update_event(key, key_tx.clone()).await;
+            shared
+                .db()
+                .add_may_update_event(key, key_tx.clone())
+                .await?;
         }
 
         let deadline = if self.timeout == 0 {
@@ -564,9 +547,11 @@ impl CmdExecutor for NBLPop {
             shared
                 .db()
                 .get_client_bg_sender(self.redirect)
-                .ok_or("ERR The client ID you want redirect to does not exist")?
+                .ok_or(RutinError::from(
+                    "ERR The client ID you want redirect to does not exist",
+                ))?
         } else {
-            handler.bg_task_channel.new_sender()
+            handler.context.bg_task_channel.new_sender()
         };
 
         tokio::spawn(async move {
@@ -581,17 +566,17 @@ impl CmdExecutor for NBLPop {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> Result<Self, CmdError> {
+    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 3 {
-            return Err(Err::WrongArgNum.into());
+            return Err(RutinError::WrongArgNum);
         }
 
-        let redirect = atoi::atoi::<Id>(&args.next_back().unwrap()).ok_or(Err::A2IParse)?;
-        let timeout = atoi::atoi::<u64>(&args.next_back().unwrap()).ok_or(Err::A2IParse)?;
+        let redirect = atoi::<Id>(&args.next_back().unwrap())?;
+        let timeout = atoi::<u64>(&args.next_back().unwrap())?;
 
         let keys: Vec<_> = args.collect();
         if ac.is_forbidden_keys(&keys, Self::TYPE) {
-            return Err(Err::NoPermission.into());
+            return Err(RutinError::NoPermission);
         }
 
         Ok(Self {
@@ -608,12 +593,12 @@ pub enum Where {
     Right,
 }
 impl TryFrom<&[u8]> for Where {
-    type Error = &'static str;
+    type Error = RutinError;
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         let len = value.len();
         if len != 3 && len != 4 {
-            return Err("ERR invalid wherefrom is given");
+            return Err("ERR invalid wherefrom is given".into());
         }
 
         let mut buf = [0; 5];
@@ -622,7 +607,7 @@ impl TryFrom<&[u8]> for Where {
         match &buf[..len] {
             b"LEFT" => Ok(Where::Left),
             b"RIGHT" => Ok(Where::Right),
-            _ => Err("ERR invalid wherefrom is given"),
+            _ => Err("ERR invalid wherefrom is given".into()),
         }
     }
 }
@@ -630,13 +615,13 @@ impl TryFrom<&[u8]> for Where {
 async fn first_round<S: AsRef<str> + PartialEq>(
     keys: &[Key],
     shared: &Shared,
-) -> Result<Option<Resp3<Bytes, S>>, CmdError> {
+) -> RutinResult<Option<Resp3<Bytes, S>>> {
     let mut res = None;
     // 先尝试一轮pop
     for key in keys.iter() {
         let update_res = shared
             .db()
-            .update_object(key, |obj| {
+            .update_object(key.clone(), |obj| {
                 let list = obj.on_list_mut()?;
 
                 if let Some(value) = list.pop_front() {
@@ -656,7 +641,7 @@ async fn first_round<S: AsRef<str> + PartialEq>(
         }
 
         // 忽略空键的错误
-        if !matches!(update_res, Err(CmdError::Null)) {
+        if !matches!(update_res, Err(RutinError::Null)) {
             update_res?;
         }
     }
@@ -669,7 +654,7 @@ async fn pop_timeout_at(
     key_tx: Sender<Key>,
     key_rx: Receiver<Key>,
     deadline: Option<Instant>,
-) -> Result<Resp3, CmdError> {
+) -> RutinResult<Resp3> {
     let db = shared.db();
     let mut res = None;
 
@@ -680,7 +665,7 @@ async fn pop_timeout_at(
             match tokio::time::timeout_at(dl, key_rx.recv_async()).await {
                 Ok(Ok(key)) => {
                     let update_res = db
-                        .update_object(&key, |obj| {
+                        .update_object(key.clone(), |obj| {
                             let list = obj.on_list_mut()?;
 
                             if let Some(value) = list.pop_front() {
@@ -700,10 +685,10 @@ async fn pop_timeout_at(
                     }
 
                     // 如果next失败了，则重新加入事件
-                    db.add_may_update_event(key.clone(), key_tx.clone()).await;
+                    db.add_may_update_event(key.clone(), key_tx.clone()).await?;
 
                     // 忽略空键的错误
-                    if !matches!(update_res, Err(CmdError::Null)) {
+                    if !matches!(update_res, Err(RutinError::Null)) {
                         update_res?;
                     }
                 }
@@ -717,7 +702,7 @@ async fn pop_timeout_at(
         if let Ok(key) = key_rx.recv_async().await {
             let update_res = shared
                 .db()
-                .update_object(&key, |obj| {
+                .update_object(key.clone(), |obj| {
                     let list = obj.on_list_mut()?;
 
                     if let Some(value) = list.pop_front() {
@@ -736,10 +721,10 @@ async fn pop_timeout_at(
                 break Ok(res);
             }
 
-            db.add_may_update_event(key.clone(), key_tx.clone()).await;
+            db.add_may_update_event(key.clone(), key_tx.clone()).await?;
 
             // 忽略空键的错误
-            if !matches!(update_res, Err(CmdError::Null)) {
+            if !matches!(update_res, Err(RutinError::Null)) {
                 update_res?;
             }
         }
@@ -762,7 +747,7 @@ mod cmd_list_tests {
         };
         matches!(
             llen.execute(&mut handler).await.unwrap_err(),
-            CmdError::ErrorCode { code } if code == 0
+            RutinError::ErrCode { code } if code == 0
         );
 
         let lpush = LPush::parse(
@@ -1064,7 +1049,7 @@ mod cmd_list_tests {
                 Resp3::new_blob_string("list3".into()),
                 Resp3::new_blob_string("key".into())
             ]),
-            handler.bg_task_channel.recv_from_bg_task().await
+            handler.context.bg_task_channel.recv_from_bg_task().await
         );
 
         /************************/
@@ -1078,7 +1063,7 @@ mod cmd_list_tests {
         nblpop.execute(&mut handler).await.unwrap();
         assert_eq!(
             Resp3::Null,
-            handler.bg_task_channel.recv_from_bg_task().await
+            handler.context.bg_task_channel.recv_from_bg_task().await
         );
 
         /**************/
@@ -1119,7 +1104,7 @@ mod cmd_list_tests {
                 Resp3::new_blob_string("list3".into()),
                 Resp3::new_blob_string("key".into())
             ]),
-            handler.bg_task_channel.recv_from_bg_task().await
+            handler.context.bg_task_channel.recv_from_bg_task().await
         );
     }
 

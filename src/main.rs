@@ -16,12 +16,12 @@ async fn main() {
 
     let conf = conf::Conf::new().unwrap();
 
-    rutin::init(conf.server.log_level.as_str());
+    rutin::init::init(conf.server.log_level.as_str());
 
     let listener =
         tokio::net::TcpListener::bind(format!("{}:{}", conf.server.addr, conf.server.port))
             .await
             .unwrap();
 
-    rutin::run(listener, conf).await;
+    rutin::server::run(listener, conf).await;
 }

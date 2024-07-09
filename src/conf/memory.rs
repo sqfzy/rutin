@@ -1,19 +1,201 @@
+use crate::{
+    error::{RutinError, RutinResult},
+    server::SYSTEM,
+    shared::db::Db,
+};
+use rand::seq::IteratorRandom;
 use serde::Deserialize;
+use sysinfo::ProcessRefreshKind;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename = "memory")]
 pub struct MemoryConf {
-    pub max_memory: u64,
-    // pub max_memory_policy: String,
-    // pub max_memory_samples: u64,
+    pub maxmemory: u64,
+    pub maxmemory_policy: Policy,
+    pub maxmemory_samples: usize,
 }
 
 impl Default for MemoryConf {
     fn default() -> Self {
         Self {
-            max_memory: 1024 * 1024 * 4,
-            // max_memory_policy: "noeviction".to_string(),
-            // max_memory_samples: 5,
+            maxmemory: u64::MAX,
+            maxmemory_policy: Default::default(),
+            maxmemory_samples: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+pub enum Policy {
+    #[serde(rename = "volatile_lru")]
+    VolatileLRU,
+    #[serde(rename = "allkeys_lru")]
+    AllKeysLRU,
+    #[serde(rename = "volatile_lfu")]
+    VolatileLFU,
+    #[serde(rename = "allkeys_lfu")]
+    AllKeysLFU,
+    #[serde(rename = "volatile_random")]
+    VolatileRandom,
+    #[serde(rename = "allkeys_random")]
+    AllKeysRandom,
+    #[serde(rename = "volatile_ttl")]
+    VolatileTTL,
+    #[default]
+    #[serde(rename = "noeviction")]
+    NoEviction,
+}
+
+impl MemoryConf {
+    pub async fn try_evict(&self, db: &Db) -> RutinResult<()> {
+        let mut loop_limit = 1000;
+        // 一直淘汰直到有空余的内存
+        loop {
+            let used_mem = SYSTEM.with_borrow_mut(|system| {
+                let pid = sysinfo::get_current_pid().unwrap();
+                system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
+                system.process(pid).unwrap().memory()
+            });
+            if self.maxmemory > used_mem {
+                // 仍有可用内存
+                return Ok(());
+            }
+
+            // 如果策略是不淘汰，或者采样数设为0，直接返回内存不足错误
+            if matches!(self.maxmemory_policy, Policy::NoEviction) || self.maxmemory_samples == 0 {
+                return Err(RutinError::OutOfMemory);
+            }
+
+            debug_assert!(self.maxmemory_samples > 0);
+
+            match self.maxmemory_policy {
+                Policy::AllKeysLRU | Policy::AllKeysLFU | Policy::AllKeysRandom => {
+                    // 随机抽取一个样本
+                    let (mut sample, mut atc) = {
+                        let mut rng = rand::thread_rng();
+
+                        let entry = db
+                            .entries()
+                            .iter()
+                            .choose(&mut rng)
+                            .ok_or_else(|| RutinError::OutOfMemory)?;
+
+                        (entry.key().clone(), entry.atc())
+                    };
+
+                    // 如果是AllKeysRandom策略，直接删除样本对象
+                    if matches!(self.maxmemory_policy, Policy::AllKeysRandom) {
+                        let _ = db.remove_object(sample).await;
+                        return Ok(());
+                    }
+
+                    // 继续抽取样本，找到最适合删除的对象
+                    for _ in 1..self.maxmemory_samples {
+                        let mut rng = rand::thread_rng();
+
+                        let entry = db
+                            .entries()
+                            .iter()
+                            .choose(&mut rng)
+                            .ok_or_else(|| RutinError::OutOfMemory)?;
+
+                        match self.maxmemory_policy {
+                            Policy::AllKeysLRU => {
+                                let new_atc = entry.atc();
+                                if new_atc.access_time() < atc.access_time() {
+                                    atc = new_atc;
+                                    sample = entry.key().clone();
+                                }
+                            }
+                            Policy::AllKeysLFU => {
+                                let new_atc = entry.atc();
+                                if new_atc.access_count() < atc.access_count() {
+                                    atc = new_atc;
+                                    sample = entry.key().clone();
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+
+                    // 删除样本对象
+                    let _ = db.remove_object(sample).await;
+                }
+                Policy::VolatileLRU
+                | Policy::VolatileLFU
+                | Policy::VolatileRandom
+                | Policy::VolatileTTL => {
+                    // 随机抽取一个样本
+                    let (mut sample, mut atc, mut ex) = loop {
+                        let record = {
+                            let mut rng = rand::thread_rng();
+
+                            db.entry_expire_records()
+                                .iter()
+                                .choose(&mut rng)
+                                .ok_or_else(|| RutinError::OutOfMemory)?
+                        };
+                        if let Ok(entry) = db.get(&record.1).await {
+                            break (record.1.clone(), entry.atc(), record.0);
+                        }
+                    };
+
+                    // 如果是VolatileRandom策略，直接删除样本对象
+                    if matches!(self.maxmemory_policy, Policy::VolatileRandom) {
+                        let _ = db.remove_object(sample).await;
+                        return Ok(());
+                    }
+
+                    // 继续抽取样本，找到最适合删除的对象
+                    for _ in 1..self.maxmemory_samples {
+                        let (new_sample, new_atc, new_ex) = loop {
+                            let record = {
+                                let mut rng = rand::thread_rng();
+
+                                db.entry_expire_records()
+                                    .iter()
+                                    .choose(&mut rng)
+                                    .ok_or_else(|| RutinError::OutOfMemory)?
+                            };
+                            if let Ok(entry) = db.get(&record.1).await {
+                                break (record.1.clone(), entry.atc(), record.0);
+                            }
+                        };
+
+                        match self.maxmemory_policy {
+                            Policy::VolatileLRU => {
+                                if new_atc.access_time() < atc.access_time() {
+                                    atc = new_atc;
+                                    sample = new_sample;
+                                }
+                            }
+                            Policy::VolatileLFU => {
+                                if new_atc.access_count() < atc.access_count() {
+                                    atc = new_atc;
+                                    sample = new_sample;
+                                }
+                            }
+                            Policy::VolatileTTL => {
+                                if new_ex < ex {
+                                    ex = new_ex;
+                                    sample = new_sample;
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+
+                    // 删除样本对象
+                    let _ = db.remove_object(sample).await;
+                }
+                Policy::NoEviction => unreachable!(),
+            }
+
+            // 防止无限循环
+            loop_limit -= 1;
+            if loop_limit == 0 {
+                return Err(RutinError::OutOfMemory);
+            }
         }
     }
 }
