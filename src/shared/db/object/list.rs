@@ -1,9 +1,9 @@
-use bytes::Bytes;
+use super::Str;
 use std::{collections::VecDeque, ops::Index};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum List {
-    LinkedList(VecDeque<Bytes>),
+    LinkedList(VecDeque<Str>),
     ZipList,
 }
 
@@ -25,15 +25,15 @@ impl List {
     }
 
     #[inline]
-    pub fn push_back(&mut self, elem: Bytes) {
+    pub fn push_back(&mut self, elem: impl Into<Str>) {
         match self {
-            List::LinkedList(list) => list.push_back(elem),
+            List::LinkedList(list) => list.push_back(elem.into()),
             List::ZipList => unimplemented!(),
         }
     }
 
     #[inline]
-    pub fn pop_back(&mut self) -> Option<Bytes> {
+    pub fn pop_back(&mut self) -> Option<Str> {
         match self {
             List::LinkedList(list) => list.pop_back(),
             List::ZipList => unimplemented!(),
@@ -41,15 +41,15 @@ impl List {
     }
 
     #[inline]
-    pub fn push_front(&mut self, elem: Bytes) {
+    pub fn push_front(&mut self, elem: impl Into<Str>) {
         match self {
-            List::LinkedList(list) => list.push_front(elem),
+            List::LinkedList(list) => list.push_front(elem.into()),
             List::ZipList => unimplemented!(),
         }
     }
 
     #[inline]
-    pub fn pop_front(&mut self) -> Option<Bytes> {
+    pub fn pop_front(&mut self) -> Option<Str> {
         match self {
             List::LinkedList(list) => list.pop_front(),
             List::ZipList => unimplemented!(),
@@ -57,31 +57,33 @@ impl List {
     }
 
     #[inline]
-    pub fn get(&self, index: usize) -> Option<Bytes> {
+    pub fn get(&self, index: usize) -> Option<&Str> {
         match self {
-            List::LinkedList(list) => list.get(index).cloned(),
+            List::LinkedList(list) => list.get(index),
             List::ZipList => unimplemented!(),
         }
     }
 
     #[inline]
-    pub fn replace(&mut self, index: usize, elem: Bytes) -> Option<Bytes> {
+    pub fn replace(&mut self, index: usize, elem: impl Into<Str>) -> Option<Str> {
         match self {
-            List::LinkedList(list) => list.get_mut(index).map(|old| std::mem::replace(old, elem)),
+            List::LinkedList(list) => list
+                .get_mut(index)
+                .map(|old| std::mem::replace(old, elem.into())),
             List::ZipList => unimplemented!(),
         }
     }
 
     #[inline]
-    pub fn insert(&mut self, index: usize, elem: Bytes) {
+    pub fn insert(&mut self, index: usize, elem: impl Into<Str>) {
         match self {
-            List::LinkedList(list) => list.insert(index, elem),
+            List::LinkedList(list) => list.insert(index, elem.into()),
             List::ZipList => unimplemented!(),
         }
     }
 
     #[inline]
-    pub fn remove(&mut self, index: usize) -> Option<Bytes> {
+    pub fn remove(&mut self, index: usize) -> Option<Str> {
         match self {
             List::LinkedList(list) => list.remove(index),
             List::ZipList => unimplemented!(),
@@ -98,7 +100,7 @@ impl List {
 }
 
 impl<'a> Iterator for &'a List {
-    type Item = &'a Bytes;
+    type Item = &'a Str;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -109,7 +111,7 @@ impl<'a> Iterator for &'a List {
 }
 
 impl Index<usize> for List {
-    type Output = Bytes;
+    type Output = Str;
 
     fn index(&self, index: usize) -> &Self::Output {
         match self {
@@ -125,7 +127,7 @@ impl Default for List {
     }
 }
 
-impl<L: Into<VecDeque<Bytes>>> From<L> for List {
+impl<L: Into<VecDeque<Str>>> From<L> for List {
     fn from(list: L) -> Self {
         List::LinkedList(list.into())
     }

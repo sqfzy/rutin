@@ -22,5 +22,5 @@ pub mod util;
 
 pub type Key = bytes::Bytes;
 pub type Int = i64;
-pub type Id = u128;
+pub type Id = u64;
 pub type CmdFlag = u128;

@@ -1,5 +1,6 @@
-use bytes::Bytes;
 use skiplist::OrderedSkipList;
+
+use crate::shared::db::Str;
 
 #[derive(Debug, PartialEq)]
 pub enum ZSet {
@@ -62,8 +63,8 @@ impl From<OrderedSkipList<ZSetElem>> for ZSet {
     }
 }
 
-impl From<Vec<(f64, Bytes)>> for ZSet {
-    fn from(vec: Vec<(f64, Bytes)>) -> Self {
+impl From<Vec<(f64, Str)>> for ZSet {
+    fn from(vec: Vec<(f64, Str)>) -> Self {
         let mut sl = OrderedSkipList::with_capacity(vec.len());
         for (score, member) in vec {
             sl.insert(ZSetElem(score, member));
@@ -72,7 +73,7 @@ impl From<Vec<(f64, Bytes)>> for ZSet {
     }
 }
 
-impl<B: Into<Bytes>, const N: usize> From<[(f64, B); N]> for ZSet {
+impl<B: Into<Str>, const N: usize> From<[(f64, B); N]> for ZSet {
     fn from(value: [(f64, B); N]) -> Self {
         let mut sl = OrderedSkipList::with_capacity(N);
         for (score, member) in value {
@@ -83,18 +84,18 @@ impl<B: Into<Bytes>, const N: usize> From<[(f64, B); N]> for ZSet {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ZSetElem(pub f64, pub Bytes); // (score, member)
+pub struct ZSetElem(pub f64, pub Str); // (score, member)
 
 impl ZSetElem {
-    pub fn new(score: f64, member: Bytes) -> Self {
-        Self(score, member)
+    pub fn new(score: f64, member: impl Into<Str>) -> Self {
+        Self(score, member.into())
     }
 
     pub fn score(&self) -> f64 {
         self.0
     }
 
-    pub fn member(&self) -> &Bytes {
+    pub fn member(&self) -> &Str {
         &self.1
     }
 }
@@ -105,7 +106,7 @@ impl PartialOrd for ZSetElem {
     }
 }
 
-impl<B: Into<Bytes>> From<(f64, B)> for ZSetElem {
+impl<B: Into<Str>> From<(f64, B)> for ZSetElem {
     fn from((score, member): (f64, B)) -> Self {
         Self(score, member.into())
     }

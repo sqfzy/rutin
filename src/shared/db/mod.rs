@@ -15,7 +15,7 @@ use crate::{
     conf::Conf,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::{BgTaskSender, RESERVE_MAX_ID},
+    server::BgTaskSender,
     Id, Key,
 };
 use ahash::RandomState;
@@ -45,7 +45,7 @@ pub struct Db {
     // 记录已经连接的客户端，并且映射到该连接的`BgTaskSender`，使用该sender可以向该连接
     // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
     // 消息
-    client_records: DashMap<Id, BgTaskSender, RandomState>,
+    client_records: DashMap<Id, BgTaskSender, nohash::BuildNoHashHasher<u64>>,
 
     lru_clock: AtomicU32,
 
@@ -319,7 +319,10 @@ impl Default for Db {
             entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
             pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
-            client_records: DashMap::with_capacity_and_hasher(1024, RandomState::new()),
+            client_records: DashMap::with_capacity_and_hasher(
+                1024,
+                nohash::BuildNoHashHasher::default(),
+            ),
             lru_clock: AtomicU32::new(0),
             conf: Default::default(),
         }
@@ -459,7 +462,7 @@ pub mod db_tests {
             .unwrap();
 
         db.update_object("key1".into(), |obj| {
-            obj.on_str_mut().unwrap().set("value2".into());
+            obj.on_str_mut().unwrap().replce("value2".into());
             Ok(())
         })
         .await
@@ -522,7 +525,7 @@ pub mod db_tests {
             .unwrap();
 
         db.update_or_create_object("key1".into(), ObjValueType::Str, |obj| {
-            obj.on_str_mut().unwrap().set("value2".into());
+            obj.on_str_mut().unwrap().replce("value2".into());
             Ok(())
         })
         .await
@@ -543,7 +546,7 @@ pub mod db_tests {
 
         // 更新或创建，更新不存在的对象，应该创建新对象
         db.update_or_create_object("key_not_exist".into(), ObjValueType::Str, |obj| {
-            obj.on_str_mut().unwrap().set("value".into());
+            obj.on_str_mut().unwrap().replce("value".into());
             Ok(())
         })
         .await
@@ -564,7 +567,7 @@ pub mod db_tests {
             .await
             .unwrap(); // 这会创建一个空对象
         db.update_or_create_object("key_none".into(), ObjValueType::Str, |obj| {
-            obj.on_str_mut().unwrap().set("value".into());
+            obj.on_str_mut().unwrap().replce("value".into());
             Ok(())
         })
         .await

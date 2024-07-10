@@ -1,10 +1,10 @@
+use super::Str;
 use crate::Key;
 use ahash::AHashMap;
-use bytes::Bytes;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hash {
-    HashMap(Box<AHashMap<Key, Bytes>>),
+    HashMap(Box<AHashMap<Key, Str>>),
     ZipList,
 }
 
@@ -23,21 +23,21 @@ impl Hash {
         }
     }
 
-    pub fn insert(&mut self, field: Key, value: Bytes) -> Option<Bytes> {
+    pub fn insert(&mut self, field: Key, value: impl Into<Str>) -> Option<Str> {
         match self {
-            Hash::HashMap(map) => map.insert(field, value),
+            Hash::HashMap(map) => map.insert(field, value.into()),
             Hash::ZipList => unimplemented!(),
         }
     }
 
-    pub fn remove(&mut self, field: &Key) -> Option<Bytes> {
+    pub fn remove(&mut self, field: &Key) -> Option<Str> {
         match self {
             Hash::HashMap(map) => map.remove(field),
             Hash::ZipList => unimplemented!(),
         }
     }
 
-    pub fn get(&self, field: &Key) -> Option<Bytes> {
+    pub fn get(&self, field: &Key) -> Option<Str> {
         match self {
             Hash::HashMap(map) => map.get(field).cloned(),
             Hash::ZipList => unimplemented!(),
@@ -58,7 +58,7 @@ impl Default for Hash {
     }
 }
 
-impl<M: Into<AHashMap<Key, Bytes>>> From<M> for Hash {
+impl<M: Into<AHashMap<Key, Str>>> From<M> for Hash {
     fn from(map: M) -> Self {
         Hash::HashMap(Box::new(map.into()))
     }

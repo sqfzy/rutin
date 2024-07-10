@@ -2,6 +2,7 @@ use crate::{frame::Resp3, Int};
 use bytes::Bytes;
 use snafu::Snafu;
 use std::borrow::Cow;
+use tracing::error;
 
 pub type RutinResult<T> = Result<T, RutinError>;
 
@@ -37,7 +38,10 @@ pub enum RutinError {
     WrongArgNum,
 
     #[snafu(display("OOM command not allowed when used memory > 'maxmemory'"))]
-    OutOfMemory,
+    OutOfMemory {
+        used_mem: u64,
+        maxmemory: u64,
+    },
 
     #[snafu(display("WRONGTYPE expected: {expected} found {found}"))]
     TypeErr {
@@ -94,6 +98,16 @@ impl RutinError {
     #[inline]
     pub fn new_server_error(msg: impl Into<Cow<'static, str>>) -> Self {
         RutinError::ServerErr { msg: msg.into() }
+    }
+
+    #[inline]
+    pub fn new_oom(used_mem: u64, maxmemory: u64) -> Self {
+        let e = RutinError::OutOfMemory {
+            used_mem,
+            maxmemory,
+        };
+        error!("{e}. used memory: {used_mem}, maxmemory: {maxmemory}");
+        e
     }
 }
 

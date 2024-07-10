@@ -286,7 +286,7 @@ impl CmdExecutor for GetSet {
             .db()
             .update_object(self.key, |obj| {
                 let str = obj.on_str_mut()?;
-                old = str.set(self.new_value).to_bytes();
+                old = str.replce(self.new_value).to_bytes();
                 Ok(())
             })
             .await?;

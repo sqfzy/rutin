@@ -1,9 +1,9 @@
+use super::Str;
 use ahash::AHashSet;
-use bytes::Bytes;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Set {
-    HashSet(Box<AHashSet<Bytes>>),
+    HashSet(Box<AHashSet<Str>>),
     IntSet,
 }
 
@@ -22,21 +22,21 @@ impl Set {
         }
     }
 
-    pub fn insert(&mut self, elem: Bytes) -> bool {
+    pub fn insert(&mut self, elem: impl Into<Str>) -> bool {
         match self {
-            Set::HashSet(set) => set.insert(elem),
+            Set::HashSet(set) => set.insert(elem.into()),
             Set::IntSet => unimplemented!(),
         }
     }
 
-    pub fn remove(&mut self, elem: &Bytes) -> bool {
+    pub fn remove<'a>(&mut self, elem: impl Into<&'a Str>) -> bool {
         match self {
-            Set::HashSet(set) => set.remove(elem),
+            Set::HashSet(set) => set.remove(elem.into()),
             Set::IntSet => unimplemented!(),
         }
     }
 
-    pub fn contains(&self, elem: &Bytes) -> bool {
+    pub fn contains(&self, elem: &Str) -> bool {
         match self {
             Set::HashSet(set) => set.contains(elem),
             Set::IntSet => unimplemented!(),
@@ -50,7 +50,7 @@ impl Default for Set {
     }
 }
 
-impl<S: Into<AHashSet<Bytes>>> From<S> for Set {
+impl<S: Into<AHashSet<Str>>> From<S> for Set {
     fn from(set: S) -> Self {
         Set::HashSet(Box::new(set.into()))
     }

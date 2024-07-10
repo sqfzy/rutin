@@ -1,14 +1,16 @@
 use crate::{
+    conf::USED_MEMORY,
     error::{RutinError, RutinResult},
-    server::SYSTEM,
     shared::db::Db,
 };
 use rand::seq::IteratorRandom;
 use serde::Deserialize;
-use sysinfo::ProcessRefreshKind;
+use std::sync::atomic::Ordering;
+use tracing::error;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename = "memory")]
+#[serde(default)]
 pub struct MemoryConf {
     pub maxmemory: u64,
     pub maxmemory_policy: Policy,
@@ -49,13 +51,15 @@ pub enum Policy {
 impl MemoryConf {
     pub async fn try_evict(&self, db: &Db) -> RutinResult<()> {
         let mut loop_limit = 1000;
-        // 一直淘汰直到有空余的内存
+
+        // 一直淘汰直到有空余的内存或者达到循环次数限制
         loop {
-            let used_mem = SYSTEM.with_borrow_mut(|system| {
-                let pid = sysinfo::get_current_pid().unwrap();
-                system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
-                system.process(pid).unwrap().memory()
-            });
+            // let used_mem = SYSTEM.with_borrow_mut(|system| {
+            //     let pid = sysinfo::get_current_pid().unwrap();
+            //     system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
+            //     system.process(pid).unwrap().memory()
+            // });
+            let used_mem = USED_MEMORY.load(Ordering::Relaxed);
             if self.maxmemory > used_mem {
                 // 仍有可用内存
                 return Ok(());
@@ -63,7 +67,11 @@ impl MemoryConf {
 
             // 如果策略是不淘汰，或者采样数设为0，直接返回内存不足错误
             if matches!(self.maxmemory_policy, Policy::NoEviction) || self.maxmemory_samples == 0 {
-                return Err(RutinError::OutOfMemory);
+                error!(
+                    "OOM used memory: {}, maxmemory: {}",
+                    used_mem, self.maxmemory
+                );
+                return Err(RutinError::new_oom(used_mem, self.maxmemory));
             }
 
             debug_assert!(self.maxmemory_samples > 0);
@@ -78,7 +86,7 @@ impl MemoryConf {
                             .entries()
                             .iter()
                             .choose(&mut rng)
-                            .ok_or_else(|| RutinError::OutOfMemory)?;
+                            .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?;
 
                         (entry.key().clone(), entry.atc())
                     };
@@ -97,7 +105,7 @@ impl MemoryConf {
                             .entries()
                             .iter()
                             .choose(&mut rng)
-                            .ok_or_else(|| RutinError::OutOfMemory)?;
+                            .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?;
 
                         match self.maxmemory_policy {
                             Policy::AllKeysLRU => {
@@ -133,7 +141,7 @@ impl MemoryConf {
                             db.entry_expire_records()
                                 .iter()
                                 .choose(&mut rng)
-                                .ok_or_else(|| RutinError::OutOfMemory)?
+                                .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?
                         };
                         if let Ok(entry) = db.get(&record.1).await {
                             break (record.1.clone(), entry.atc(), record.0);
@@ -155,7 +163,7 @@ impl MemoryConf {
                                 db.entry_expire_records()
                                     .iter()
                                     .choose(&mut rng)
-                                    .ok_or_else(|| RutinError::OutOfMemory)?
+                                    .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?
                             };
                             if let Ok(entry) = db.get(&record.1).await {
                                 break (record.1.clone(), entry.atc(), record.0);
@@ -194,7 +202,7 @@ impl MemoryConf {
             // 防止无限循环
             loop_limit -= 1;
             if loop_limit == 0 {
-                return Err(RutinError::OutOfMemory);
+                return Err(RutinError::new_server_error("evict loop limit reached"));
             }
         }
     }

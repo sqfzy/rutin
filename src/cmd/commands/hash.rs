@@ -144,7 +144,7 @@ impl CmdExecutor for HGet {
             })
             .await?;
 
-        Ok(value.map(|b| Resp3::new_blob_string(b.clone())))
+        Ok(value.map(|b| Resp3::new_blob_string(b.to_bytes())))
     }
 
     fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {

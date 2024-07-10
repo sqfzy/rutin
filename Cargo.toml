@@ -82,6 +82,7 @@ thin-vec = "0.2.13"
 sysinfo = "0.30.12"
 async-ringbuf = "0.2.1"
 futures-intrusive = "0.5.0"
+nohash = "0.2.0"
 # lru = "0.12.3"
 # neat-date-time = "0.2.0"
 
@@ -104,8 +105,7 @@ harness = false
 opt-level = 3 # 最大优化
 # lto = "fat"   # 启用链接时优化（Link Time Optimization）
 lto = true
-debug = false # 关闭调试信息
-# debug = true      # 关闭调试信息
+debug = true      # 调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 panic = "abort"
 

@@ -15,19 +15,17 @@ max_replicate = 10 # 最多允许多少个从服务器连接到当前服务器
 # masterauth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
 # read-only = true
 
-[rdb]
-enable = false         # 是否开启RDB持久化
-file_path = "dump.rdb" # RDB文件路径
-
-# RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
-# 每seconds时间内有changes个键发生变化，则触发RDB快照
-interval = { seconds = 1, changes = 0 }
-version = 6                             # RDB版本
-enable_checksum = false                 # 是否开启RDB校验和
-
-[aof]
-enable = false                   # 是否开启AOF持久化
-use_rdb_preamble = true          # 是否在AOF文件开头加入RDB版本信息
-file_path = "appendonly.aof"     # AOF文件路径
-append_fsync = "everysec"        # AOF同步频率。可能为：always | everysec | no
-auto_aof_rewrite_min_size = 1024 # 单位为mb
+# [rdb]
+# file_path = "dump.rdb" # RDB文件路径
+#
+# # RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
+# # 每seconds时间内有changes个键发生变化，则触发RDB快照
+# interval = { seconds = 1, changes = 0 }
+# version = 6                             # RDB版本
+# enable_checksum = false                 # 是否开启RDB校验和
+#
+# [aof]
+# use_rdb_preamble = true          # 是否在AOF文件开头加入RDB版本信息
+# file_path = "appendonly.aof"     # AOF文件路径
+# append_fsync = "everysec"        # AOF同步频率。可能为：always | everysec | no
+# auto_aof_rewrite_min_size = 1024 # 单位为mb

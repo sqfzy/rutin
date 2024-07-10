@@ -12,6 +12,7 @@ pub use rdb::*;
 pub use replica::*;
 pub use security::*;
 pub use server::*;
+use sysinfo::ProcessRefreshKind;
 pub use tls::*;
 
 use crate::{
@@ -23,10 +24,20 @@ use crate::{
 use clap::Parser;
 use rand::Rng;
 use serde::Deserialize;
-use std::{fs::File, io::BufReader, sync::Arc, time::Duration};
+use std::{
+    fs::File,
+    io::BufReader,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::{runtime::Handle, time::Instant};
 use tokio_rustls::rustls;
 use tracing::{error, info};
+
+pub static USED_MEMORY: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Deserialize)]
 pub struct Conf {
@@ -86,6 +97,13 @@ impl Conf {
 
         config.server.run_id = run_id;
 
+        // 5. 初始化系统内存
+        let mut system = sysinfo::System::new();
+        system.refresh_processes();
+        let pid = sysinfo::get_current_pid().unwrap();
+        let process = system.process(pid).unwrap();
+        USED_MEMORY.store(process.memory(), Ordering::Relaxed);
+
         Ok(config)
     }
 
@@ -144,6 +162,20 @@ impl Conf {
                         handle.block_on(shared.db().remove_object(key));
                     }
                 }
+            }
+        });
+
+        // 定时(每秒)更新内存使用情况
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+            let mut system = sysinfo::System::new();
+            let pid = sysinfo::get_current_pid().unwrap();
+            loop {
+                interval.tick().await;
+                system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
+                let used_mem = system.process(pid).unwrap().memory();
+                USED_MEMORY.store(used_mem, Ordering::Relaxed);
             }
         });
 

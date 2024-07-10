@@ -67,7 +67,7 @@ impl CmdExecutor for BLMove {
                     Where::Right => list.push_back(elem.clone()),
                 }
 
-                res = Some(Resp3::new_blob_string(elem));
+                res = Some(Resp3::new_blob_string(elem.to_bytes()));
                 Ok(())
             })
             .await?;
@@ -227,7 +227,7 @@ impl CmdExecutor for LPos {
                 let list = obj.on_list()?;
                 if rank >= 0 {
                     for i in 0..self.max_len.unwrap_or(list.len()) {
-                        if list[i] != self.element {
+                        if list[i].to_bytes() != self.element {
                             continue;
                         }
                         // 只有当rank减为0时，才开始收入元素
@@ -246,7 +246,7 @@ impl CmdExecutor for LPos {
                     let lower_bound = list_len.saturating_sub(self.max_len.unwrap_or(list_len));
                     let upper_bound = list_len - 1;
                     for i in (lower_bound..=upper_bound).rev() {
-                        if list[i] != self.element {
+                        if list[i].to_bytes() != self.element {
                             continue;
                         }
                         // 只有当rank增为0时，才开始收入元素
@@ -393,7 +393,7 @@ impl CmdExecutor for LPop {
 
                 if self.count == 1 {
                     if let Some(value) = list.pop_front() {
-                        res = Some(Resp3::new_blob_string(value));
+                        res = Some(Resp3::new_blob_string(value.to_bytes()));
                     } else {
                         res = Some(Resp3::Null);
                     }
@@ -401,7 +401,7 @@ impl CmdExecutor for LPop {
                     let mut values = Vec::with_capacity(self.count as usize);
                     for _ in 0..self.count {
                         if let Some(value) = list.pop_front() {
-                            values.push(Resp3::new_blob_string(value));
+                            values.push(Resp3::new_blob_string(value.to_bytes()));
                         } else {
                             break;
                         }
@@ -627,7 +627,7 @@ async fn first_round<S: AsRef<str> + PartialEq>(
                 if let Some(value) = list.pop_front() {
                     res = Some(Resp3::new_array(vec![
                         Resp3::new_blob_string(key.clone()),
-                        Resp3::new_blob_string(value),
+                        Resp3::new_blob_string(value.to_bytes()),
                     ]));
                 }
 
@@ -671,7 +671,7 @@ async fn pop_timeout_at(
                             if let Some(value) = list.pop_front() {
                                 res = Some(Resp3::new_array(vec![
                                     Resp3::new_blob_string(key.clone()),
-                                    Resp3::new_blob_string(value),
+                                    Resp3::new_blob_string(value.to_bytes()),
                                 ]));
                             }
 
@@ -708,7 +708,7 @@ async fn pop_timeout_at(
                     if let Some(value) = list.pop_front() {
                         res = Some(Resp3::new_array(vec![
                             Resp3::new_blob_string(key.clone()),
-                            Resp3::new_blob_string(value),
+                            Resp3::new_blob_string(value.to_bytes()),
                         ]));
                     }
 

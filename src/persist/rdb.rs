@@ -199,12 +199,11 @@ mod rdb_save {
         match value {
             ZSet::SkipList(zset) => {
                 encode_length(buf, zset.len() as u32, None);
+
+                let mut buf2 = itoa::Buffer::new();
                 for elem in *zset {
-                    encode_raw(buf, elem.1);
-                    encode_raw(
-                        buf,
-                        Bytes::copy_from_slice(ryu::Buffer::new().format(elem.0).as_bytes()),
-                    );
+                    encode_raw(buf, elem.member().as_bytes(&mut buf2));
+                    encode_raw(buf, ryu::Buffer::new().format(elem.score()).as_bytes());
                 }
             }
             ZSet::ZipSet => unimplemented!(),
@@ -215,9 +214,11 @@ mod rdb_save {
         match value {
             Hash::HashMap(hash) => {
                 encode_length(buf, hash.len() as u32, None);
+
+                let mut buf2 = itoa::Buffer::new();
                 for (k, v) in *hash {
-                    encode_raw(buf, k);
-                    encode_raw(buf, v);
+                    encode_raw(buf, &k);
+                    encode_raw(buf, v.as_bytes(&mut buf2));
                 }
             }
             Hash::ZipList => unimplemented!(),
@@ -228,8 +229,10 @@ mod rdb_save {
         match value {
             Set::HashSet(set) => {
                 encode_length(buf, set.len() as u32, None);
+
+                let mut buf2 = itoa::Buffer::new();
                 for elem in *set {
-                    encode_raw(buf, elem);
+                    encode_raw(buf, elem.as_bytes(&mut buf2));
                 }
             }
             Set::IntSet => unimplemented!(),
@@ -240,8 +243,9 @@ mod rdb_save {
         match value {
             List::LinkedList(list) => {
                 encode_length(buf, list.len() as u32, None);
+                let mut buf2 = itoa::Buffer::new();
                 for elem in list {
-                    encode_raw(buf, elem);
+                    encode_raw(buf, elem.as_bytes(&mut buf2));
                 }
             }
             List::ZipList => unimplemented!(),
@@ -250,14 +254,17 @@ mod rdb_save {
 
     pub fn encode_str_value(buf: &mut BytesMut, value: Str) {
         match value {
-            Str::Int(i) => encode_int(buf, i.into()),
-            Str::Raw(s) => encode_raw(buf, s),
+            Str::Int(i) => match i.try_into() {
+                Ok(i) => encode_int(buf, i),
+                Err(_) => encode_raw(buf, itoa::Buffer::new().format(i).as_bytes()),
+            },
+            Str::Raw(ref s) => encode_raw(buf, s),
         }
     }
 
-    pub fn encode_raw(buf: &mut BytesMut, value: Bytes) {
+    pub fn encode_raw(buf: &mut BytesMut, value: &[u8]) {
         encode_length(buf, value.len() as u32, None);
-        buf.extend(value);
+        buf.put_slice(value);
     }
 
     pub fn encode_int(buf: &mut BytesMut, value: i32) {
@@ -448,7 +455,7 @@ mod rdb_load {
             let mut set = AHashSet::with_capacity(set_size);
             for _ in 0..set_size {
                 let elem = decode_str_value(bytes)?.to_bytes();
-                set.insert(elem);
+                set.insert(elem.into());
             }
 
             Ok(Set::HashSet(Box::new(set)))
@@ -463,7 +470,7 @@ mod rdb_load {
             for _ in 0..hash_size {
                 let field = decode_key(bytes)?;
                 let value = decode_str_value(bytes)?.to_bytes();
-                hash.insert(field, value);
+                hash.insert(field, value.into());
             }
 
             Ok(Hash::HashMap(Box::new(hash)))
@@ -477,7 +484,7 @@ mod rdb_load {
             let mut list = VecDeque::with_capacity(list_size);
             for _ in 0..list_size {
                 let elem = decode_str_value(bytes)?.to_bytes();
-                list.push_back(elem);
+                list.push_back(elem.into());
             }
 
             Ok(List::LinkedList(list))
@@ -489,9 +496,9 @@ mod rdb_load {
     pub fn decode_str_value(bytes: &mut BytesMut) -> anyhow::Result<Str> {
         let str = match decode_length(bytes)? {
             Length::Len(len) => Str::Raw(bytes.split_to(len).freeze()),
-            Length::Int8 => Str::from(bytes.get_i8()),
-            Length::Int16 => Str::from(bytes.get_i16()),
-            Length::Int32 => Str::from(bytes.get_i32()),
+            Length::Int8 => Str::from(bytes.get_i8() as i128),
+            Length::Int16 => Str::from(bytes.get_i16() as i128),
+            Length::Int32 => Str::from(bytes.get_i32() as i128),
             Length::Lzf => {
                 if let (Length::Len(compressed_len), Length::Len(_uncompressed_len)) =
                     (decode_length(bytes)?, decode_length(bytes)?)

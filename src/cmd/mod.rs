@@ -65,22 +65,8 @@ pub enum CmdType {
 }
 
 #[inline]
-pub async fn dispatch(
-    cmd_frame: Resp3,
-    handler: &mut Handler<impl AsyncStream>,
-) -> RutinResult<Option<Resp3>> {
-    match _dispatch(cmd_frame, handler).await {
-        Ok(res) => Ok(res),
-        Err(e) => {
-            let frame = e.try_into()?; // 尝试将错误转换为RESP3
-            Ok(Some(frame))
-        }
-    }
-}
-
-#[inline]
 #[instrument(level = "debug", skip(handler), err, ret)]
-pub async fn _dispatch(
+pub async fn dispatch(
     cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
 ) -> RutinResult<Option<Resp3>> {
@@ -88,7 +74,7 @@ pub async fn _dispatch(
         ( $cmd:expr, $handler:expr, $( $cmd_type:ident ),*; $( $cmd_group:expr => $( $cmd_type2:ident ),* );* ) => {
             {
                 let mut buf = [0; 32];
-                let cmd_name = $cmd.next().ok_or(RutinError::Syntax)?;
+                let cmd_name = $cmd.next().ok_or_else(|| RutinError::Syntax)?;
 
                 debug_assert!(cmd_name.len() <= buf.len());
                 let len1 = util::uppercase(&cmd_name, &mut buf).unwrap();
@@ -131,7 +117,7 @@ pub async fn _dispatch(
 
     let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
 
-    dispatch_command!(
+    let res = dispatch_command!(
         cmd,
         handler,
         // commands::other
@@ -160,7 +146,15 @@ pub async fn _dispatch(
         "CLIENT" => ClientTracking;
 
         "SCRIPT" => ScriptExists, ScriptFlush, ScriptRegister
-    )
+    );
+
+    match res {
+        Ok(res) => Ok(res),
+        Err(e) => {
+            let frame = e.try_into()?; // 尝试将错误转换为RESP3
+            Ok(Some(frame))
+        }
+    }
 }
 
 pub fn cmd_name_to_flag(cmd_name: &[u8]) -> RutinResult<CmdFlag> {

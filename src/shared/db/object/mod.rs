@@ -186,8 +186,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::Str.into(),
                 found: inner.type_str(),
-            }
-            .into()))
+            }))
         }
     }
 
@@ -204,8 +203,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::List.into(),
                 found: inner.type_str(),
-            }
-            .into()))
+            }))
         }
     }
 
@@ -222,8 +220,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::Set.into(),
                 found: inner.type_str(),
-            }
-            .into()))
+            }))
         }
     }
 
@@ -240,8 +237,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::Hash.into(),
                 found: inner.type_str(),
-            }
-            .into()))
+            }))
         }
     }
 
@@ -258,8 +254,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::ZSet.into(),
                 found: inner.type_str(),
-            }
-            .into()))
+            }))
         }
     }
 
@@ -277,8 +272,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::Str.into(),
                 found: typ,
-            }
-            .into()))
+            }))
         }
     }
 
@@ -296,8 +290,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::List.into(),
                 found: typ,
-            }
-            .into()))
+            }))
         }
     }
 
@@ -315,8 +308,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::Set.into(),
                 found: typ,
-            }
-            .into()))
+            }))
         }
     }
 
@@ -334,8 +326,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::Hash.into(),
                 found: typ,
-            }
-            .into()))
+            }))
         }
     }
 
@@ -353,8 +344,7 @@ impl Object {
             Some(Err(RutinError::TypeErr {
                 expected: ObjValueType::ZSet.into(),
                 found: typ,
-            }
-            .into()))
+            }))
         }
     }
 
@@ -797,8 +787,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::Str.into(),
                 found: self.type_str(),
-            }
-            .into())
+            })
         }
     }
 
@@ -809,8 +798,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::List.into(),
                 found: self.type_str(),
-            }
-            .into())
+            })
         }
     }
 
@@ -821,8 +809,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::Set.into(),
                 found: self.type_str(),
-            }
-            .into())
+            })
         }
     }
 
@@ -833,8 +820,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::Hash.into(),
                 found: self.type_str(),
-            }
-            .into())
+            })
         }
     }
 
@@ -845,8 +831,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::ZSet.into(),
                 found: self.type_str(),
-            }
-            .into())
+            })
         }
     }
 
@@ -858,8 +843,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::Str.into(),
                 found: typ,
-            }
-            .into())
+            })
         }
     }
 
@@ -871,8 +855,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::List.into(),
                 found: typ,
-            }
-            .into())
+            })
         }
     }
 
@@ -884,8 +867,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::Set.into(),
                 found: typ,
-            }
-            .into())
+            })
         }
     }
 
@@ -897,8 +879,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::Hash.into(),
                 found: typ,
-            }
-            .into())
+            })
         }
     }
 
@@ -910,8 +891,7 @@ impl ObjectInner {
             Err(RutinError::TypeErr {
                 expected: ObjValueType::ZSet.into(),
                 found: typ,
-            }
-            .into())
+            })
         }
     }
 }

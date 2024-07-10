@@ -19,11 +19,11 @@ use tokio::{net::TcpListener, sync::Semaphore, task_local};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error};
 
-pub const RESERVE_MAX_ID: u128 = 20;
-pub static RESERVE_ID: AtomicCell<u128> = AtomicCell::new(0);
+pub const RESERVE_MAX_ID: Id = 20;
+pub static RESERVE_ID: AtomicCell<Id> = AtomicCell::new(0);
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
 // 需要检查是否已经存在相同的ID。保留前20个ID，专用于事务处理
-pub static CLIENT_ID_COUNT: AtomicCell<u128> = AtomicCell::new(RESERVE_MAX_ID + 1);
+pub static CLIENT_ID_COUNT: AtomicCell<Id> = AtomicCell::new(RESERVE_MAX_ID + 1);
 
 task_local! { pub static ID: Id; }
 
