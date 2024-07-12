@@ -5,21 +5,20 @@ use crate::{
     error::{RutinError, RutinResult},
     Key,
 };
-use bytes::Bytes;
 use dashmap::mapref::entry::{self, Entry};
 use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
 
 // ObjectEntry不必检查expire，因为在Db中已经检查过了
 pub struct ObjectEntry<'a> {
-    pub(super) entry: Entry<'a, Bytes, Object>,
+    pub(super) entry: Entry<'a, Str, Object>,
     db: &'a Db,
     intention_lock: Option<IntentionLock>,
 }
 
 impl<'a> ObjectEntry<'a> {
     pub fn new(
-        entry: Entry<'a, Bytes, Object>,
+        entry: Entry<'a, Str, Object>,
         db: &'a Db,
         intention_lock: Option<IntentionLock>,
     ) -> Self {
@@ -318,7 +317,7 @@ impl ObjectEntry<'_> {
     /// 内存
     #[inline]
     #[instrument(level = "debug", skip(self))]
-    pub fn add_may_update_event(mut self, sender: Sender<Bytes>) -> Self {
+    pub fn add_may_update_event(mut self, sender: Sender<Key>) -> Self {
         match self.entry {
             Entry::Occupied(ref mut e) => {
                 let obj = e.get_mut();

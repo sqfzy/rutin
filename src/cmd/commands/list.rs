@@ -111,8 +111,8 @@ impl CmdExecutor for BLMove {
         }
 
         Ok(BLMove {
-            source,
-            destination,
+            source: source.into(),
+            destination: destination.into(),
             wherefrom: Where::try_from(args.next_back().unwrap().as_ref())?,
             whereto: Where::try_from(args.next_back().unwrap().as_ref())?,
             timeout: atoi::<u64>(args.next_back().unwrap().as_ref())?,
@@ -176,10 +176,14 @@ impl CmdExecutor for BLPop {
 
         let timeout = atoi::<u64>(&args.next_back().unwrap())?;
 
-        let keys: Vec<_> = args.collect();
-        if ac.is_forbidden_keys(&keys, Self::TYPE) {
-            return Err(RutinError::NoPermission);
-        }
+        let keys = args
+            .map(|k| {
+                if ac.is_forbidden_key(&k, Self::TYPE) {
+                    return Err(RutinError::NoPermission);
+                }
+                Ok(k.into())
+            })
+            .collect::<RutinResult<Vec<Key>>>()?;
 
         Ok(Self { keys, timeout })
     }
@@ -314,7 +318,7 @@ impl CmdExecutor for LPos {
         let count = if count == 0 { usize::MAX } else { count };
 
         Ok(Self {
-            key,
+            key: key.into(),
             element,
             rank,
             count,
@@ -362,7 +366,7 @@ impl CmdExecutor for LLen {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(LLen { key })
+        Ok(LLen { key: key.into() })
     }
 }
 
@@ -437,7 +441,10 @@ impl CmdExecutor for LPop {
             1
         };
 
-        Ok(Self { key, count })
+        Ok(Self {
+            key: key.into(),
+            count,
+        })
     }
 }
 
@@ -446,7 +453,7 @@ impl CmdExecutor for LPop {
 /// **Integer reply:** the length of the list after the push operation.
 #[derive(Debug)]
 pub struct LPush {
-    key: Bytes,
+    key: Key,
     values: Vec<Bytes>,
 }
 
@@ -487,7 +494,7 @@ impl CmdExecutor for LPush {
         }
 
         Ok(Self {
-            key,
+            key: key.into(),
             values: args.collect(),
         })
     }
@@ -574,10 +581,14 @@ impl CmdExecutor for NBLPop {
         let redirect = atoi::<Id>(&args.next_back().unwrap())?;
         let timeout = atoi::<u64>(&args.next_back().unwrap())?;
 
-        let keys: Vec<_> = args.collect();
-        if ac.is_forbidden_keys(&keys, Self::TYPE) {
-            return Err(RutinError::NoPermission);
-        }
+        let keys = args
+            .map(|k| {
+                if ac.is_forbidden_key(&k, Self::TYPE) {
+                    return Err(RutinError::NoPermission);
+                }
+                Ok(k.into())
+            })
+            .collect::<RutinResult<Vec<Key>>>()?;
 
         Ok(Self {
             keys,
@@ -626,7 +637,7 @@ async fn first_round<S: AsRef<str> + PartialEq>(
 
                 if let Some(value) = list.pop_front() {
                     res = Some(Resp3::new_array(vec![
-                        Resp3::new_blob_string(key.clone()),
+                        Resp3::new_blob_string(key.to_bytes()),
                         Resp3::new_blob_string(value.to_bytes()),
                     ]));
                 }
@@ -670,7 +681,7 @@ async fn pop_timeout_at(
 
                             if let Some(value) = list.pop_front() {
                                 res = Some(Resp3::new_array(vec![
-                                    Resp3::new_blob_string(key.clone()),
+                                    Resp3::new_blob_string(key.to_bytes()),
                                     Resp3::new_blob_string(value.to_bytes()),
                                 ]));
                             }
@@ -707,7 +718,7 @@ async fn pop_timeout_at(
 
                     if let Some(value) = list.pop_front() {
                         res = Some(Resp3::new_array(vec![
-                            Resp3::new_blob_string(key.clone()),
+                            Resp3::new_blob_string(key.to_bytes()),
                             Resp3::new_blob_string(value.to_bytes()),
                         ]));
                     }

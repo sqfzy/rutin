@@ -21,7 +21,6 @@ use crate::{
     },
     Id, Key,
 };
-use bytes::Bytes;
 use dashmap::mapref::entry::Entry;
 use flume::Sender;
 use std::{
@@ -394,7 +393,7 @@ impl Object {
     }
 
     #[inline]
-    pub(super) fn add_may_update_event(&mut self, sender: Sender<Bytes>) {
+    pub(super) fn add_may_update_event(&mut self, sender: Sender<Key>) {
         let event = Event::MayUpdate(sender);
         self.set_flag(event.flag());
         self.events.inner.push(event);
@@ -422,7 +421,7 @@ impl Object {
 
         match &mut entry {
             Entry::Occupied(e) => {
-                // 如果没有意向锁事件，则直接返回
+                // 如果没有意向锁事件，则直接返回。
                 if !e.get().events.contains(INTENTION_LOCK_FLAG) {
                     return ObjectEntry::new(entry, db, None);
                 }
@@ -435,24 +434,24 @@ impl Object {
                         count,
                     } = e
                     {
-                        // 如果正在执行的不是带有目标ID的task，则释放读写锁后等待意向锁释放
+                        // 如果正在执行的不是带有目标ID的task，则释放读写锁后等待。
                         if ID.get() != *target_id {
                             let intention_lock = intention_lock.clone();
 
                             // 等待者数目加1
                             *count += 1;
+                            // 当前等待者的序号，用于判断是否是最后一个等待者
                             let seq = *count;
 
                             // 释放写锁
                             let key = entry.into_key();
 
-                            // 多个任务有序等待获取写锁的许可
+                            // 多个任务有序等待获取写锁的许可。
                             let _ = intention_lock.lock().await;
 
                             // 重新获取写锁
                             let mut new_entry = db.entries.entry(key.clone());
 
-                            // 如果当前任务是最后一个获取写锁的任务，则由该任务负责移除IntentionLock事件
                             if let Entry::Occupied(e) = &mut new_entry {
                                 let obj = e.get_mut();
 
@@ -462,6 +461,7 @@ impl Object {
                                     .get_mut(i)
                                     .expect("must exist since no one removed it")
                                 {
+                                    // 如果当前任务是最后一个获取写锁的任务，则由该任务负责移除IntentionLock事件
                                     if seq == *count {
                                         obj.remove_event(i, INTENTION_LOCK_FLAG);
                                         obj.remove_flag(INTENTION_LOCK_FLAG);
@@ -491,7 +491,7 @@ impl Object {
 
     #[inline]
     #[instrument(level = "debug", skip(self))]
-    pub(super) fn trigger_may_update_event(&mut self, key: &Bytes) {
+    pub(super) fn trigger_may_update_event(&mut self, key: &Key) {
         if !self.events.contains(MAY_UPDATE_FLAG) {
             return;
         }
@@ -519,10 +519,9 @@ impl Object {
 
         self.events.inner.retain(|e| {
             if let Event::Track(sender) = e {
-                // PERF: 池化
                 let res = sender.send(Resp3::new_push(vec![
                     Resp3::new_blob_string("invalidate".into()),
-                    Resp3::new_array(vec![Resp3::new_blob_string(key.clone())]),
+                    Resp3::new_array(vec![Resp3::new_blob_string(key.to_bytes())]),
                 ]));
 
                 // 只要有一个发送失败，则不移除该事件的flag
@@ -609,7 +608,7 @@ pub enum Event {
     Track(Sender<Resp3>),
 
     /// 触发该事件代表对象的值(不包括expire)可能被修改了
-    MayUpdate(Sender<Bytes>),
+    MayUpdate(Sender<Key>),
     // Remove,
 }
 
@@ -1034,7 +1033,7 @@ mod object_tests {
         obj.trigger_may_update_event(&"key".into());
 
         let key = rx.recv().unwrap();
-        assert_eq!(&key, "key");
+        assert_eq!(&key.to_bytes(), "key");
     }
 
     #[test]

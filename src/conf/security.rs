@@ -130,9 +130,6 @@ pub struct SecurityConf {
     pub requirepass: Option<String>, // 访问密码
     // TODO:
     #[serde(skip)]
-    pub forbaiden_commands: Vec<bool>,
-    // TODO:
-    #[serde(skip)]
     pub rename_commands: Vec<Option<String>>,
     pub default_ac: ArcSwap<AccessControl>,
     pub acl: Option<Acl>, // None代表禁用ACL
@@ -142,7 +139,6 @@ impl Default for SecurityConf {
     fn default() -> Self {
         Self {
             requirepass: None,
-            forbaiden_commands: vec![],
             rename_commands: vec![],
             default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
             acl: Some(Acl::new()),
@@ -383,7 +379,6 @@ impl AccessControl {
     }
 
     // 密码是否正确
-    #[inline]
     pub fn is_pwd_correct(&self, pwd: &Bytes) -> bool {
         if !self.enable {
             return false;
@@ -424,30 +419,6 @@ impl AccessControl {
         }
     }
 
-    #[inline]
-    pub fn is_forbidden_keys(&self, keys: &[impl AsRef<[u8]>], cmd_type: CmdType) -> bool {
-        if !self.enable {
-            return true;
-        }
-
-        match cmd_type {
-            CmdType::Read => {
-                if let Some(patterns) = &self.deny_read_key_patterns {
-                    return keys.iter().any(|key| patterns.is_match(key.as_ref()));
-                }
-            }
-            CmdType::Write => {
-                if let Some(patterns) = &self.deny_write_key_patterns {
-                    return keys.iter().any(|key| patterns.is_match(key.as_ref()));
-                }
-            }
-            _ => {}
-        }
-
-        false
-    }
-
-    #[inline]
     pub fn is_forbidden_channel(&self, channel: &dyn AsRef<[u8]>) -> bool {
         if !self.enable {
             return true;
@@ -458,21 +429,6 @@ impl AccessControl {
         } else {
             false
         }
-    }
-
-    #[inline]
-    pub fn is_forbidden_channels(&self, channels: &[impl AsRef<[u8]>]) -> bool {
-        if !self.enable {
-            return true;
-        }
-
-        if let Some(patterns) = &self.deny_channel_patterns {
-            return channels
-                .iter()
-                .any(|channel| patterns.is_match(channel.as_ref()));
-        }
-
-        false
     }
 }
 

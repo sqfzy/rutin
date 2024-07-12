@@ -60,7 +60,7 @@ impl CmdExecutor for Append {
         }
 
         Ok(Append {
-            key,
+            key: key.into(),
             value: args.next().unwrap(),
         })
     }
@@ -106,7 +106,7 @@ impl CmdExecutor for Decr {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Decr { key })
+        Ok(Decr { key: key.into() })
     }
 }
 
@@ -152,7 +152,7 @@ impl CmdExecutor for DecrBy {
         }
 
         Ok(DecrBy {
-            key,
+            key: key.into(),
             decrement: atoi(&args.next().unwrap())
                 .map_err(|_| RutinError::from("ERR decrement is not an integer"))?,
         })
@@ -201,7 +201,7 @@ impl CmdExecutor for Get {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Get { key })
+        Ok(Get { key: key.into() })
     }
 }
 
@@ -257,7 +257,11 @@ impl CmdExecutor for GetRange {
             RutinError::from("ERR index parameter is not a positive integer or out of range")
         })?;
 
-        Ok(GetRange { key, start, end })
+        Ok(GetRange {
+            key: key.into(),
+            start,
+            end,
+        })
     }
 }
 
@@ -305,7 +309,7 @@ impl CmdExecutor for GetSet {
         }
 
         Ok(GetSet {
-            key,
+            key: key.into(),
             new_value: args.next().unwrap(),
         })
     }
@@ -352,7 +356,7 @@ impl CmdExecutor for Incr {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Incr { key })
+        Ok(Incr { key: key.into() })
     }
 }
 
@@ -398,7 +402,7 @@ impl CmdExecutor for IncrBy {
         }
 
         Ok(IncrBy {
-            key,
+            key: key.into(),
             increment: atoi(&args.next().unwrap())
                 .map_err(|_| RutinError::from("ERR increment is not an integer"))?,
         })
@@ -445,10 +449,14 @@ impl CmdExecutor for MGet {
             return Err(RutinError::WrongArgNum);
         }
 
-        let keys: Vec<_> = args.collect();
-        if ac.is_forbidden_keys(&keys, Self::TYPE) {
-            return Err(RutinError::NoPermission);
-        }
+        let keys = args
+            .map(|k| {
+                if ac.is_forbidden_key(&k, Self::TYPE) {
+                    return Err(RutinError::NoPermission);
+                }
+                Ok(k.into())
+            })
+            .collect::<RutinResult<Vec<Key>>>()?;
 
         Ok(MGet { keys })
     }
@@ -493,7 +501,7 @@ impl CmdExecutor for MSet {
                 return Err(RutinError::NoPermission);
             }
 
-            pairs.push((key, value));
+            pairs.push((key.into(), value));
         }
 
         Ok(MSet { pairs })
@@ -546,7 +554,7 @@ impl CmdExecutor for MSetNx {
                 return Err(RutinError::NoPermission);
             }
 
-            pairs.push((key, value));
+            pairs.push((key.into(), value));
         }
 
         Ok(MSetNx { pairs })
@@ -643,6 +651,7 @@ impl CmdExecutor for Set {
         if ac.is_forbidden_key(&key, Self::TYPE) {
             return Err(RutinError::NoPermission);
         }
+        let key = key.into();
 
         let value = args.next().unwrap();
 
@@ -797,7 +806,11 @@ impl CmdExecutor for SetEx {
         let expire = Duration::from_secs(atoi(&args.next().unwrap())?);
         let value = args.next().unwrap();
 
-        Ok(SetEx { key, value, expire })
+        Ok(SetEx {
+            key: key.into(),
+            value,
+            expire,
+        })
     }
 }
 
@@ -843,7 +856,7 @@ impl CmdExecutor for SetNx {
         }
 
         Ok(SetNx {
-            key,
+            key: key.into(),
             value: args.next().unwrap(),
         })
     }
@@ -888,7 +901,7 @@ impl CmdExecutor for StrLen {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(StrLen { key })
+        Ok(StrLen { key: key.into() })
     }
 }
 

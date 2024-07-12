@@ -109,7 +109,7 @@ impl Rdb {
 }
 
 mod rdb_save {
-    use crate::util::UNIX_EPOCH;
+    use crate::{shared::db::as_bytes, util::UNIX_EPOCH};
 
     use super::*;
 
@@ -148,27 +148,27 @@ mod rdb_save {
             match obj_inner.value().clone() {
                 ObjValue::Str(value) => {
                     buf.put_u8(RDB_TYPE_STRING);
-                    encode_key(&mut buf, key);
+                    encode_key(&mut buf, as_bytes!(key));
                     encode_str_value(&mut buf, value);
                 }
                 ObjValue::List(value) => {
                     buf.put_u8(RDB_TYPE_LIST);
-                    encode_key(&mut buf, key);
+                    encode_key(&mut buf, as_bytes!(key));
                     encode_list_value(&mut buf, value);
                 }
                 ObjValue::Set(value) => {
                     buf.put_u8(RDB_TYPE_SET);
-                    encode_key(&mut buf, key);
+                    encode_key(&mut buf, as_bytes!(key));
                     encode_set_value(&mut buf, value);
                 }
                 ObjValue::Hash(value) => {
                     buf.put_u8(RDB_TYPE_HASH);
-                    encode_key(&mut buf, key);
+                    encode_key(&mut buf, as_bytes!(key));
                     encode_hash_value(&mut buf, value);
                 }
                 ObjValue::ZSet(value) => {
                     buf.put_u8(RDB_TYPE_ZSET);
-                    encode_key(&mut buf, key);
+                    encode_key(&mut buf, as_bytes!(key));
                     encode_zset_value(&mut buf, value)
                 }
             }
@@ -217,7 +217,7 @@ mod rdb_save {
 
                 let mut buf2 = itoa::Buffer::new();
                 for (k, v) in *hash {
-                    encode_raw(buf, &k);
+                    encode_raw(buf, as_bytes!(k));
                     encode_raw(buf, v.as_bytes(&mut buf2));
                 }
             }
@@ -280,9 +280,9 @@ mod rdb_save {
         }
     }
 
-    pub fn encode_key(buf: &mut BytesMut, key: Bytes) {
+    pub fn encode_key(buf: &mut BytesMut, key: &[u8]) {
         encode_length(buf, key.len() as u32, None);
-        buf.extend(key);
+        buf.put_slice(key);
     }
 
     pub fn encode_length(buf: &mut BytesMut, len: u32, special_format: Option<u8>) {
@@ -384,7 +384,7 @@ mod rdb_load {
 
                     trace!("String: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_str(value, expire))
+                    db.insert_object(key.into(), ObjectInner::new_str(value, expire))
                         .await?;
                     expire = *NEVER_EXPIRE;
                 }
@@ -394,7 +394,7 @@ mod rdb_load {
 
                     trace!("List: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_list(value, expire))
+                    db.insert_object(key.into(), ObjectInner::new_list(value, expire))
                         .await?;
                     expire = *NEVER_EXPIRE;
                 }
@@ -404,7 +404,7 @@ mod rdb_load {
 
                     trace!("Hash: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_hash(value, expire))
+                    db.insert_object(key.into(), ObjectInner::new_hash(value, expire))
                         .await?;
                     expire = *NEVER_EXPIRE;
                 }
@@ -414,7 +414,7 @@ mod rdb_load {
 
                     trace!("Set: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_set(value, expire))
+                    db.insert_object(key.into(), ObjectInner::new_set(value, expire))
                         .await?;
                     expire = *NEVER_EXPIRE;
                 }
@@ -424,7 +424,7 @@ mod rdb_load {
 
                     trace!("ZSet: key: {:?}, value: {:?}", key, value);
 
-                    db.insert_object(key, ObjectInner::new_zset(value, expire))
+                    db.insert_object(key.into(), ObjectInner::new_zset(value, expire))
                         .await?;
                     expire = *NEVER_EXPIRE;
                 }
@@ -470,7 +470,7 @@ mod rdb_load {
             for _ in 0..hash_size {
                 let field = decode_key(bytes)?;
                 let value = decode_str_value(bytes)?.to_bytes();
-                hash.insert(field, value.into());
+                hash.insert(field.into(), value.into());
             }
 
             Ok(Hash::HashMap(Box::new(hash)))
@@ -853,7 +853,7 @@ mod rdb_test {
         test_init();
 
         let mut buf = BytesMut::with_capacity(1024);
-        encode_key(&mut buf, "key".into());
+        encode_key(&mut buf, "key".as_bytes());
         assert_eq!(buf.as_ref(), [3, 107, 101, 121]);
         let key = decode_key(&mut buf).unwrap();
         assert_eq!(key, "key".as_bytes());

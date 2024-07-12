@@ -5,7 +5,6 @@ use crate::{
     frame::Resp3,
     server::{FakeHandler, Handler, HandlerContext},
     shared::Shared,
-    Key,
 };
 use ahash::RandomState;
 use bytes::Bytes;
@@ -270,7 +269,7 @@ impl LuaScript {
         &self,
         handler: &Handler<impl AsyncStream>,
         chunk: Bytes,
-        keys: Vec<Key>,
+        keys: Vec<Bytes>,
         argv: Vec<Bytes>,
     ) -> RutinResult<Resp3> {
         let shared = handler.shared.clone();
@@ -301,7 +300,7 @@ impl LuaScript {
                     for key in &keys {
                         if let Some(notify_unlock) = shared
                             .db()
-                            .add_lock_event(key.clone(), fake_handler.context.client_id)
+                            .add_lock_event(key.clone().into(), fake_handler.context.client_id)
                             .await?
                         {
                             intention_locks.push(notify_unlock);
@@ -353,7 +352,7 @@ impl LuaScript {
         &self,
         handler: &Handler<impl AsyncStream>,
         script_name: Bytes,
-        keys: Vec<Key>,
+        keys: Vec<Bytes>,
         argv: Vec<Bytes>,
     ) -> RutinResult<Resp3> {
         let chunk = match self.lua_scripts.get(&script_name) {

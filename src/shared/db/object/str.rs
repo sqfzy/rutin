@@ -10,6 +10,10 @@ use atoi::atoi;
 use bytes::{BufMut, Bytes, BytesMut};
 use strum::{EnumDiscriminants, IntoStaticStr};
 
+pub macro as_bytes($str:expr) {
+    $str.as_bytes(&mut itoa::Buffer::new())
+}
+
 // WARN: 禁止直接使用Str::Raw和Str::Int构造，应使用Str::from()方法
 #[derive(EnumDiscriminants, IntoStaticStr)]
 #[strum_discriminants(vis(pub))]
@@ -120,7 +124,7 @@ impl Str {
 
     pub fn incr_by(&mut self, num: Int) -> RutinResult<Int> {
         match self {
-            Self::Int(i) => Ok(i.checked_add(num.into()).ok_or(RutinError::Overflow)? as Int),
+            Self::Int(i) => Ok(i.checked_add(num).ok_or(RutinError::Overflow)? as Int),
             _ => Err(RutinError::TypeErr {
                 expected: StrType::Int.into(),
                 found: self.type_str(),
@@ -130,7 +134,7 @@ impl Str {
 
     pub fn decr_by(&mut self, num: Int) -> RutinResult<Int> {
         match self {
-            Self::Int(i) => Ok(i.checked_sub(num.into()).ok_or(RutinError::Overflow)? as Int),
+            Self::Int(i) => Ok(i.checked_sub(num).ok_or(RutinError::Overflow)? as Int),
             _ => Err(RutinError::TypeErr {
                 expected: StrType::Int.into(),
                 found: self.type_str(),
@@ -195,7 +199,7 @@ impl From<&[u8]> for Str {
     fn from(b: &[u8]) -> Self {
         let str = {
             if let Some(i) = atoi::<Int>(b) {
-                return Str::Int(i.into());
+                return Str::Int(i);
             }
             Self::Raw(Bytes::copy_from_slice(b))
         };

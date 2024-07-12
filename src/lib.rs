@@ -2,6 +2,7 @@
 #![feature(never_type)]
 #![feature(try_blocks)]
 #![warn(clippy::print_stdout)]
+#![feature(decl_macro)]
 
 use mimalloc::MiMalloc;
 
@@ -20,7 +21,7 @@ pub mod server;
 pub mod shared;
 pub mod util;
 
-pub type Key = bytes::Bytes;
-pub type Int = i64;
+pub type Key = shared::db::Str;
+pub type Int = i128;
 pub type Id = u64;
 pub type CmdFlag = u128;

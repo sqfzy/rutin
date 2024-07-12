@@ -62,8 +62,8 @@ impl CmdExecutor for HDel {
         }
 
         Ok(HDel {
-            key,
-            fields: args.collect(),
+            key: key.into(),
+            fields: args.map(Key::from).collect(),
         })
     }
 }
@@ -73,7 +73,7 @@ impl CmdExecutor for HDel {
 #[derive(Debug)]
 pub struct HExists {
     pub key: Key,
-    pub field: Bytes,
+    pub field: Key,
 }
 
 impl CmdExecutor for HExists {
@@ -110,8 +110,8 @@ impl CmdExecutor for HExists {
         }
 
         Ok(HExists {
-            key,
-            field: args.next().unwrap(),
+            key: key.into(),
+            field: args.next().unwrap().into(),
         })
     }
 }
@@ -121,7 +121,7 @@ impl CmdExecutor for HExists {
 #[derive(Debug)]
 pub struct HGet {
     pub key: Key,
-    pub field: Bytes,
+    pub field: Key,
 }
 
 impl CmdExecutor for HGet {
@@ -158,8 +158,8 @@ impl CmdExecutor for HGet {
         }
 
         Ok(HGet {
-            key,
-            field: args.next().unwrap(),
+            key: key.into(),
+            field: args.next().unwrap().into(),
         })
     }
 }
@@ -168,7 +168,7 @@ impl CmdExecutor for HGet {
 #[derive(Debug)]
 pub struct HSet {
     pub key: Key,
-    pub fields: Vec<(Bytes, Bytes)>,
+    pub fields: Vec<(Key, Bytes)>,
 }
 
 impl CmdExecutor for HSet {
@@ -209,12 +209,15 @@ impl CmdExecutor for HSet {
 
         let mut fields = Vec::with_capacity(args.len() / 2);
         while !args.is_empty() {
-            let field = args.next().unwrap();
+            let field = args.next().unwrap().into();
             let value = args.next().unwrap();
             fields.push((field, value));
         }
 
-        Ok(HSet { key, fields })
+        Ok(HSet {
+            key: key.into(),
+            fields,
+        })
     }
 }
 

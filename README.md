@@ -2,7 +2,7 @@ Ruin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 
 
-## 1）IO（多线程+多协程，提高CPU利用率）
+## 1）IO和命令的执行（多线程+多协程，提高CPU利用率）
 
 ​	在Redis中使用了事件循环来处理多个连接，在单线程模式下，Redis无法利用多核优势，即使在多线程模式下，Redis也只是利用多线程提升IO性能，但命令仍然需要由主线程来执行。这样做虽然减少了同步以及上下文切换的开销（数据的操作只由主线程执行），但也导致CPU的利用率不足。在一般情况下，这是可以接受的，因为Redis是IO密集型应用并且大部分命令都不是计算昂贵的，所以Redis大部分时间是在等待读数据或等待写数据，执行命令的时间只占小部分。
 
@@ -12,7 +12,7 @@ Ruin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 ## 2）并发存取（读写锁+锁分片）
 
-​	Redis通过主线程来执行命令，因此存储引擎不需要考虑并发问题，而Ruin使用多线程来执行命令，需要考虑并发安全问题。Ruin使用`DashMap`库的哈希表作为键值对的基本存储引擎，该哈希表使用读写锁保证并发安全。对于锁的争用的问题，`DashMap`采用锁的分片来减轻争用，默认的锁的分片为cpu的核心数目，只有当多个的CPU都在对同一片锁分区进行操作（至少一个操作是写操作）时才会引起锁争用，因此`DashMap`对于随机的键的写并发也有着优异的性能表现（见Benchmark）
+​	Redis通过主线程来执行命令，因此存储引擎不需要考虑并发问题，而Ruin使用多线程来执行命令，需要考虑并发安全问题。Ruin使用`DashMap`库的哈希表作为键值对的基本存储引擎，该哈希表使用读写锁保证并发安全。对于锁的争用的问题，`DashMap`采用锁的分片来减轻争用，默认的锁的分片为cpu的核心数目，只有当多个的CPU都在对同一片锁分区进行操作（至少一个操作是写操作）时才会引起锁争用，因此`DashMap`对于随机的键的写并发也有着不错的性能表现（见Benchmark）
 
 
 
@@ -32,7 +32,7 @@ Ruin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 ​	在Ruin中，每个键都可以被绑定任意数量的事件，目前事件有Track（用于实现客户端缓存），MayUpdate，IntentionLock（用于实现事务）三类。
 
-​	例如某一连接处理`BLPop list1`请求时，如果`list1`为空，**线程不会轮询，而是向`list1`映射的object注册MayUpdate事件**（实际上是保存一个用于向当前连接通信的Sender（这里使用的是`flume`库的通道，克隆Sender几乎没有开销，只是简单地增加引用计数）），然后`.await`等待消息传来。当另一个客户端处理`BLPush list1 v1`时，会检查该键是否有update事件，如果没有，则什么都不做；如果有（即当前的情况），则遍历所有Sender（不同的Sender对应着不同的连接）并发送该键（即发送`list1`），然后清空事件。处理`BLPop list1`的连接收到键后，再次查看数据库中`list1`，返回弹出的值。
+​	例如某一连接处理`BLPop list1`请求时，如果`list1`为空，**线程不会轮询，而是向`list1`映射的object注册MayUpdate事件**（实际上是保存一个用于向当前连接通信的Sender），然后`.await`等待消息传来。当另一个客户端处理`BLPush list1 v1`时，会检查该键是否有update事件，如果没有，则什么都不做；如果有（即当前的情况），则遍历所有update事件的Sender（不同的Sender对应着不同的连接），发送该键（即发送`list1`），然后清空事件。处理`BLPop list1`的连接收到键后，再次查看数据库中`list1`，返回弹出的值。
 
 
 
@@ -40,21 +40,27 @@ Ruin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 ​	目前，Ruin通过Lua脚本支持事务，满足Isolation和Consistency，但不保证Atomicity和Durability。用户可以通过SCRIPT REGISTER命令注册一个带有名称的脚本， 然后通过EVALNAME命令执行该脚本，也可以直接使用EVAL命令执行临时脚本。
 
-​	事务的Isolation主要通过事件机制的IntentionLock事件实现。在Ruin中，每个处理命令的Handler都有其唯一的ID，而Ruin中的每个Lua环境（Ruin会在运行时动态创建Lua环境）都拥有自己的Handler。当执行脚本时，首先会对事务中涉及的键值对设置IntentionLock事件，IntentionLock事件拥有一个target_id字段，只有ID符合要求的handler，才能修改该键值对（但允许访问），其余handler会在**获取写锁后马上释放**，并等待允许再次获取写锁的通知（等待是异步的，因此不会阻塞线程），每个键值对可能有多个等待的handler，这些**等待的handler都是按序的，因此对于单个键值对的命令也会按序执行**。当事务执行完毕后，会分别向每个键值对中首个等待的handler，发送通知，允许其获取写锁，当该handler使用完写锁后，会继续通知下一个handler，以此类推，直到最后一个handler获取写锁后，由它负责释放IntentionLock事件。在此期间，任何希望想要获取写锁的handler仍然需要按序等待通知（即使事务已经结束了），如果其中有某个handler再次设置了IntentionLock事件，则会修改事件的target_id，然后按同样的方式继续
+​	事务的Isolation主要通过事件机制的IntentionLock事件实现。在Ruin中，每个处理命令的Handler都有其唯一的ID，而Ruin中的每个Lua环境（Ruin使用thread local存储Lua环境）都拥有自己的Handler。当执行脚本时，首先会对事务中涉及的键值对设置IntentionLock事件，IntentionLock事件包含一个target_id，只有ID符合要求的handler，才能修改该键值对（但允许访问），其余handler会在**获取写锁后马上释放**，并等待允许再次获取写锁的通知（等待是异步的，因此不会阻塞线程），每个键值对可能有多个等待的handler，这些**等待的handler都是按序的，因此对于单个键值对的命令也会按序执行**。当事务执行完毕后，会分别向涉及的每个键值对中首个等待的handler，发送通知，允许其获取写锁，当该handler使用完写锁后，会继续通知下一个handler，以此类推，直到最后一个handler获取写锁后，由它负责释放IntentionLock事件。在此期间，任何希望想要获取写锁的handler仍然需要按序等待通知（即使事务已经结束了），如果其中有某个handler再次设置了IntentionLock事件，则会修改事件的target_id，然后按同样的方式继续
 
 
 
 ## 7）访问控制（ACL, Access Control List）
 
-​	Redis提供ACL控制命令执行以及键的访问。Ruin也提供了相似的支持，且配置的可读性更高。每个连接在初始化时，都会拥有自己的***Access Control***。所有连接初始化时都会设置为**default_ac**用户（可以设置disable禁用该用户），如果没有配置ACL则表示禁用ACL（禁用后无法增删用户，可以选择置空），如果设置了ACL则可以通过AUTH命令认证使用该账户。当使用脚本执行命令时，脚本会使用与连接相同的用户（用户名与权限都一致）。
+​	Redis提供ACL控制命令执行以及键的访问。Ruin也提供了相似的支持，且配置的可读性更高。每个连接在初始化时，都会拥有自己的***Access Control***。所有连接初始化时都会设置为**default_ac**用户，如果没有配置ACL则表示禁用ACL（禁用后无法增删用户，可以选择置空），如果设置了ACL则可以通过AUTH命令认证使用该账户。当使用脚本执行命令时，脚本的权限和用户名与连接一致。
 
-​	目前支持的访问控制包括：允许命令，禁用命令，允许一类命令，禁用一类命令，允许键的读操作（使用正则），允许键的写操作（使用正则），允许使用的通道（使用正则）
+​	目前支持的访问控制包括：允许命令，禁用命令，允许一类命令，禁用一类命令，允许键的读操作（使用正则），允许键的写操作（使用正则），允许使用的pubsub（使用正则）
 
 
 
 ## 8）OOM处理
 
-​	在Redis中，用户可以选择不同的OOM处理策略（`AllKeysLRU`，`AllKeysLFU`，`AllKeysRandom`，`NoEviction`等），Ruin也提供了相同的支持，具体做法为：Rutin中每个键都有20bit用于记录最新的`access time`，有12bit用于记录最新的`access count`，每次访问键，都会更新access time，并有$\frac{1} {count / 2}$的概率access count增1。每次企图修改Object（获取写锁）时，都会检查是否OOM，如果是，（以AllKeysLRU为例）则随机选择`maxmemory_samples`个键，并挑出access time最旧的一个键，淘汰掉。如此往复，直到有了新的可用内存（**Tip**：该检查只保证修改之前必须有可用的内存，但不保证修改后的使用内存不超出`maxmemory`）
+​	在Redis中，用户可以选择不同的OOM处理策略（`AllKeysLRU`，`AllKeysLFU`，`AllKeysRandom`，`NoEviction`等），Ruin也提供了相同的支持，具体做法为：Rutin中每个键都有20bit用于记录最新的`access time`，有12bit用于记录最新的`access count`，每次访问键，都会更新access time，并有$\frac{1} {count / 2}$的概率access count增1。
+
+​	判断是否达到了OOM：1. Rutin中设有一个USED_MEMORY全局变量用于统计已使用内存，并用于判断是否达到OOM。Rutin中每个Str Object的创建和释放都会更新该值。
+
+
+
+每次企图修改Object（获取写锁）时，都会检查是否OOM，如果是，（以AllKeysLRU为例）则随机选择`maxmemory_samples`个键，并挑出access time最旧的一个键，淘汰掉。如此往复，直到有了新的可用内存（**Tip**：该检查只保证修改之前必须有可用的内存，但不保证修改后的使用内存不超出`maxmemory`）
 
 
 

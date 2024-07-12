@@ -42,7 +42,7 @@ impl CmdExecutor for Publish {
             let res = listener
                 .send_async(Resp3::new_array(vec![
                     Resp3::new_blob_string("message".into()),
-                    Resp3::new_blob_string(self.topic.clone()),
+                    Resp3::new_blob_string(self.topic.to_bytes()),
                     Resp3::new_blob_string(self.msg.clone()),
                 ]))
                 .await;
@@ -72,7 +72,7 @@ impl CmdExecutor for Publish {
         }
 
         Ok(Publish {
-            topic,
+            topic: topic.into(),
             msg: args.next().unwrap(),
         })
     }
@@ -116,7 +116,7 @@ impl CmdExecutor for Subscribe {
 
             conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
                 Resp3::new_blob_string("subscribe".into()),
-                Resp3::new_blob_string(topic),
+                Resp3::new_blob_string(topic.to_bytes()),
                 Resp3::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await?;
@@ -130,10 +130,14 @@ impl CmdExecutor for Subscribe {
             return Err(RutinError::WrongArgNum);
         }
 
-        let topics: Vec<_> = args.collect();
-        if ac.is_forbidden_channels(&topics) {
-            return Err(RutinError::NoPermission);
-        }
+        let topics = args
+            .map(|k| {
+                if ac.is_forbidden_key(&k, Self::TYPE) {
+                    return Err(RutinError::NoPermission);
+                }
+                Ok(k.into())
+            })
+            .collect::<RutinResult<Vec<Key>>>()?;
 
         Ok(Subscribe { topics })
     }
@@ -169,7 +173,7 @@ impl CmdExecutor for Unsubscribe {
             for topic in self.topics {
                 conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
                     Resp3::new_blob_string("unsubscribe".into()),
-                    Resp3::new_blob_string(topic),
+                    Resp3::new_blob_string(topic.to_bytes()),
                     Resp3::new_integer(0),
                 ]))
                 .await?;
@@ -188,7 +192,7 @@ impl CmdExecutor for Unsubscribe {
 
             conn.write_frame::<Bytes, String>(&Resp3::new_array(vec![
                 Resp3::new_blob_string("unsubscribe".into()),
-                Resp3::new_blob_string(topic),
+                Resp3::new_blob_string(topic.to_bytes()),
                 Resp3::new_integer(subscribed_channels.len() as Int),
             ]))
             .await?;
@@ -202,10 +206,14 @@ impl CmdExecutor for Unsubscribe {
             return Err(RutinError::WrongArgNum);
         }
 
-        let topics: Vec<_> = args.collect();
-        if ac.is_forbidden_channels(&topics) {
-            return Err(RutinError::NoPermission);
-        }
+        let topics = args
+            .map(|k| {
+                if ac.is_forbidden_key(&k, Self::TYPE) {
+                    return Err(RutinError::NoPermission);
+                }
+                Ok(k.into())
+            })
+            .collect::<RutinResult<Vec<Key>>>()?;
 
         Ok(Unsubscribe { topics })
     }
@@ -233,12 +241,12 @@ mod cmd_pub_sub_tests {
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(b"channel1")
+            .get_channel_all_listener(&"channel1".into())
             .is_some());
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(b"channel2")
+            .get_channel_all_listener(&"channel2".into())
             .is_some());
 
         assert_eq!(
@@ -257,7 +265,7 @@ mod cmd_pub_sub_tests {
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(b"channel3")
+            .get_channel_all_listener(&"channel3".into())
             .is_some());
 
         assert_eq!(
@@ -351,7 +359,7 @@ mod cmd_pub_sub_tests {
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(b"channel1")
+            .get_channel_all_listener(&"channel1".into())
             .is_none());
 
         assert_eq!(

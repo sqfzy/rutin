@@ -9,7 +9,7 @@ use crate::{
         encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
     },
     server::Handler,
-    shared::db::{ObjValueType, NEVER_EXPIRE},
+    shared::db::{as_bytes, ObjValueType, NEVER_EXPIRE},
     util::{atoi, UNIX_EPOCH},
     CmdFlag, Id, Int, Key,
 };
@@ -72,10 +72,14 @@ impl CmdExecutor for Del {
             return Err(RutinError::WrongArgNum);
         }
 
-        let keys: Vec<_> = args.collect();
-        if ac.is_forbidden_keys(&keys, Self::TYPE) {
-            return Err(RutinError::NoPermission);
-        }
+        let keys = args
+            .map(|k| {
+                if ac.is_forbidden_key(&k, Self::TYPE) {
+                    return Err(RutinError::NoPermission);
+                }
+                Ok(k.into())
+            })
+            .collect::<RutinResult<Vec<Key>>>()?;
 
         Ok(Del { keys })
     }
@@ -128,7 +132,7 @@ impl CmdExecutor for Dump {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Dump { key })
+        Ok(Dump { key: key.into() })
     }
 }
 
@@ -162,10 +166,14 @@ impl CmdExecutor for Exists {
             return Err(RutinError::WrongArgNum);
         }
 
-        let keys: Vec<_> = args.collect();
-        if ac.is_forbidden_keys(&keys, Self::TYPE) {
-            return Err(RutinError::NoPermission);
-        }
+        let keys = args
+            .map(|k| {
+                if ac.is_forbidden_key(&k, Self::TYPE) {
+                    return Err(RutinError::NoPermission);
+                }
+                Ok(k.into())
+            })
+            .collect::<RutinResult<Vec<Key>>>()?;
 
         Ok(Exists { keys })
     }
@@ -264,7 +272,11 @@ impl CmdExecutor for Expire {
             None => None,
         };
 
-        Ok(Expire { key, seconds, opt })
+        Ok(Expire {
+            key: key.into(),
+            seconds,
+            opt,
+        })
     }
 }
 
@@ -361,7 +373,7 @@ impl CmdExecutor for ExpireAt {
         };
 
         Ok(ExpireAt {
-            key,
+            key: key.into(),
             timestamp,
             opt,
         })
@@ -416,7 +428,7 @@ impl CmdExecutor for ExpireTime {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(ExpireTime { key })
+        Ok(ExpireTime { key: key.into() })
     }
 }
 
@@ -444,16 +456,16 @@ impl CmdExecutor for Keys {
                 db.entries()
                     .par_iter()
                     .filter_map(|entry| {
-                        re.is_match(entry.key())
-                            .then(|| Resp3::new_blob_string(entry.key().clone()))
+                        re.is_match(as_bytes!(entry.key()))
+                            .then(|| Resp3::new_blob_string(entry.key().to_bytes()))
                     })
                     .collect::<Vec<Resp3>>()
             } else {
                 db.entries()
                     .iter()
                     .filter_map(|entry| {
-                        re.is_match(entry.key())
-                            .then(|| Resp3::new_blob_string(entry.key().clone()))
+                        re.is_match(as_bytes!(entry.key()))
+                            .then(|| Resp3::new_blob_string(entry.key().to_bytes()))
                     })
                     .collect::<Vec<Resp3>>()
             };
@@ -515,20 +527,24 @@ impl CmdExecutor for NBKeys {
                 db.entries()
                     .par_iter()
                     .filter_map(|entry| {
-                        std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key)
-                                .then(|| Resp3::new_blob_string(entry.key().clone()))
-                        })
+                        std::str::from_utf8(as_bytes!(entry.key()))
+                            .ok()
+                            .and_then(|key| {
+                                re.is_match(key)
+                                    .then(|| Resp3::new_blob_string(entry.key().to_bytes()))
+                            })
                     })
                     .collect::<Vec<Resp3>>()
             } else {
                 db.entries()
                     .iter()
                     .filter_map(|entry| {
-                        std::str::from_utf8(entry.key()).ok().and_then(|key| {
-                            re.is_match(key)
-                                .then(|| Resp3::new_blob_string(entry.key().clone()))
-                        })
+                        std::str::from_utf8(as_bytes!(entry.key()))
+                            .ok()
+                            .and_then(|key| {
+                                re.is_match(key)
+                                    .then(|| Resp3::new_blob_string(entry.key().to_bytes()))
+                            })
                     })
                     .collect::<Vec<Resp3>>()
             };
@@ -600,7 +616,7 @@ impl CmdExecutor for Persist {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Persist { key })
+        Ok(Persist { key: key.into() })
     }
 }
 
@@ -652,7 +668,7 @@ impl CmdExecutor for Pttl {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Pttl { key })
+        Ok(Pttl { key: key.into() })
     }
 }
 
@@ -704,7 +720,7 @@ impl CmdExecutor for Ttl {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Ttl { key })
+        Ok(Ttl { key: key.into() })
     }
 }
 
@@ -748,7 +764,7 @@ impl CmdExecutor for Type {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Type { key })
+        Ok(Type { key: key.into() })
     }
 }
 

@@ -89,7 +89,7 @@ impl CmdExecutor for AclDelUser {
             }
         }
 
-        Ok(Some(Resp3::new_integer(count as i64)))
+        Ok(Some(Resp3::new_integer(count)))
     }
 
     fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {

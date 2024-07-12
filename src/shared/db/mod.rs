@@ -6,7 +6,6 @@ use std::sync::{
     Arc,
 };
 
-use bytes::Bytes;
 pub use object::*;
 use object_entry::IntentionLock;
 pub use object_entry::ObjectEntry;
@@ -114,7 +113,7 @@ impl Db {
         Ok(self.get_mut(key).await?.add_lock_event(target_id).1)
     }
 
-    pub async fn add_may_update_event(&self, key: Key, sender: Sender<Bytes>) -> RutinResult<()> {
+    pub async fn add_may_update_event(&self, key: Key, sender: Sender<Key>) -> RutinResult<()> {
         let _ = self.get_mut(key).await?.add_may_update_event(sender);
 
         Ok(())
@@ -173,7 +172,7 @@ impl Db {
     }
 
     #[instrument(level = "debug", skip(self))]
-    pub async fn get(&self, key: &Key) -> RutinResult<Ref<'_, Bytes, Object>> {
+    pub async fn get(&self, key: &Key) -> RutinResult<Ref<'_, Key, Object>> {
         // 键存在
         if let Some(e) = self.entries.get(key) {
             // 对象不为空
@@ -280,7 +279,7 @@ impl Db {
 impl Db {
     // 获取该频道的所有监听者
     #[instrument(level = "debug", skip(self))]
-    pub fn get_channel_all_listener(&self, topic: &[u8]) -> Option<Vec<Sender<Resp3>>> {
+    pub fn get_channel_all_listener(&self, topic: &Key) -> Option<Vec<Sender<Resp3>>> {
         self.pub_sub.get(topic).map(|listener| listener.clone())
     }
 
@@ -294,7 +293,7 @@ impl Db {
     #[instrument(level = "debug", skip(self, listener))]
     pub fn remove_channel_listener(
         &self,
-        topic: &[u8],
+        topic: &Key,
         listener: &Sender<Resp3>,
     ) -> Option<Sender<Resp3>> {
         if let Some(mut pubs) = self.pub_sub.get_mut(topic) {
@@ -379,7 +378,7 @@ pub mod db_tests {
         assert_eq!(db.lru_clock.load(Ordering::Relaxed), 4);
 
         let res = rx.recv().unwrap();
-        assert_eq!(res.as_ref(), b"key1");
+        assert_eq!(&res.to_bytes(), "key1");
 
         // 存在空对象时插入对象，触发Update事件
         db.add_may_update_event("key2".into(), tx.clone())
@@ -401,7 +400,7 @@ pub mod db_tests {
         assert_eq!(db.lru_clock.load(Ordering::Relaxed), 5);
 
         let res = rx.recv().unwrap();
-        assert_eq!(res.as_ref(), b"key2");
+        assert_eq!(&res.to_bytes(), "key2");
     }
 
     #[tokio::test]
@@ -479,7 +478,7 @@ pub mod db_tests {
         assert_eq!(update_res, "value2".as_bytes());
 
         let event_res = rx.recv().unwrap();
-        assert_eq!(event_res.as_ref(), b"key1");
+        assert_eq!(&event_res.to_bytes(), "key1");
 
         // 更新不存在的对象，应该失败
         db.update_object("key_not_exist".into(), |_| Ok(()))
@@ -542,7 +541,7 @@ pub mod db_tests {
         assert_eq!(update_res, "value2".as_bytes());
 
         let event_res = rx.recv().unwrap();
-        assert_eq!(event_res.as_ref(), b"key1");
+        assert_eq!(&event_res.to_bytes(), "key1");
 
         // 更新或创建，更新不存在的对象，应该创建新对象
         db.update_or_create_object("key_not_exist".into(), ObjValueType::Str, |obj| {
@@ -584,6 +583,6 @@ pub mod db_tests {
         assert_eq!(update_res, "value".as_bytes());
 
         let event_res = rx.recv().unwrap();
-        assert_eq!(event_res.as_ref(), b"key_none");
+        assert_eq!(&event_res.to_bytes(), "key_none");
     }
 }

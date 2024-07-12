@@ -2151,7 +2151,7 @@ impl FromLua<'_> for Resp3 {
             }),
             // Lua String -> SimpleError
             LuaValue::Integer(n) => Ok(Resp3::Integer {
-                inner: n,
+                inner: n as Int,
                 attributes: None,
             }),
             // Lua Number -> Double
