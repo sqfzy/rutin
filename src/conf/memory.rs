@@ -49,16 +49,12 @@ pub enum Policy {
 }
 
 impl MemoryConf {
+    #[inline]
     pub async fn try_evict(&self, db: &Db) -> RutinResult<()> {
         let mut loop_limit = 1000;
 
         // 一直淘汰直到有空余的内存或者达到循环次数限制
         loop {
-            // let used_mem = SYSTEM.with_borrow_mut(|system| {
-            //     let pid = sysinfo::get_current_pid().unwrap();
-            //     system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
-            //     system.process(pid).unwrap().memory()
-            // });
             let used_mem = USED_MEMORY.load(Ordering::Relaxed);
             if self.maxmemory > used_mem {
                 // 仍有可用内存
