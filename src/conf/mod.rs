@@ -74,6 +74,7 @@ impl Conf {
         ));
 
         // 2. 从用户自定义配置文件中加载配置
+        // TODO: 应该override而不是add
         let config_builder = config_builder.add_source(config::File::new(
             "config/custom.toml",
             config::FileFormat::Toml,

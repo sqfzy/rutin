@@ -42,14 +42,14 @@ max_replica = 10 # 最多允许多少个从服务器连接到当前服务器
 # masterauth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
 # read-only = true
 
-[rdb]
-file_path = "dump.rdb" # RDB文件路径
-
-# RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
-# 每seconds时间内有changes个键发生变化，则触发RDB快照
-save = { seconds = 1, changes = 0 }
-version = 6                         # RDB版本
-enable_checksum = true              # 是否开启RDB校验和
+# [rdb]
+# file_path = "dump.rdb" # RDB文件路径
+#
+# # RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
+# # 每seconds时间内有changes个键发生变化，则触发RDB快照
+# save = { seconds = 1, changes = 0 }
+# version = 6                         # RDB版本
+# enable_checksum = true              # 是否开启RDB校验和
 
 # [aof]
 # use_rdb_preamble = true        # 是否在AOF文件开头加入RDB版本信息

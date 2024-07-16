@@ -169,6 +169,7 @@ impl CmdExecutor for AclSetUser {
 
         let args = args.into_iter();
 
+        // FIX: 键名无法包含','
         while let Some(b) = args.next() {
             match b.as_ref() {
                 b"enable" => aci.enable = Some(true),

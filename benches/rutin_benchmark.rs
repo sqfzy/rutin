@@ -40,8 +40,10 @@ fn bench_vec(c: &mut Criterion) {
 }
 
 // [688.22 ns 690.18 ns 692.34 ns]
-fn bench_dispatch(c: &mut Criterion) {
-    c.bench_function("dispatch", |b| {
+// dispatch                time:   [1.1938 µs 1.2065 µs 1.2197 µs]
+// dispatch                time:   [959.19 ns 964.38 ns 969.48 ns]
+fn bench_get_cmd(c: &mut Criterion) {
+    c.bench_function("bench_get_cmd", |b| {
         let rt = tokio::runtime::Runtime::new().unwrap();
         b.to_async(rt).iter_custom(|iters| async move {
             let (mut handler, _client) = Handler::new_fake();
@@ -52,8 +54,21 @@ fn bench_dispatch(c: &mut Criterion) {
                     .await
                     .unwrap()
                     .unwrap();
+            }
+            start.elapsed()
+        })
+    });
+}
+
+fn bench_set_cmd(c: &mut Criterion) {
+    c.bench_function("bench_set_cmd", |b| {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        b.to_async(rt).iter_custom(|iters| async move {
+            let (mut handler, _client) = Handler::new_fake();
+            let start = Instant::now();
+            for _ in 0..iters {
                 handler
-                    .dispatch(gen_get_cmd(black_box("key")))
+                    .dispatch(gen_set_cmd(black_box("key"), black_box("value")))
                     .await
                     .unwrap()
                     .unwrap();
@@ -64,5 +79,5 @@ fn bench_dispatch(c: &mut Criterion) {
 }
 
 // criterion_group!(benches, bench_dispatch, bench);
-criterion_group!(benches, bench_dispatch);
+criterion_group!(benches, bench_get_cmd, bench_set_cmd);
 criterion_main!(benches);

@@ -13,7 +13,6 @@ use dashmap::{mapref::entry::Entry, DashMap};
 use futures_intrusive::sync::LocalMutex;
 use mlua::{prelude::*, StdLib};
 use std::{rc::Rc, sync::Arc};
-use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
 // 在单线程中，协程调度可能会导致运行时中有多个任务企图获取RefCell的可变引用，从而导致panic。因此需要使用LocalMutex
@@ -246,19 +245,13 @@ fn get_or_create_lua_env(
 // TODO: 新增排序辅助函数
 #[derive(Debug)]
 pub struct LuaScript {
-    /// 由于Lua的异步function不满足Send，因此Lua脚本需要在线程池[`LocalPoolHandle`]中执行(该线程池中的异步任务
-    /// 不会被其它线程窃取，因此不必满足Send)。
-    pool: LocalPoolHandle,
-
-    /// script_name -> script
+    // script_name -> script
     lua_scripts: DashMap<Bytes, Bytes, RandomState>,
 }
 
 impl Default for LuaScript {
     fn default() -> Self {
-        let max = num_cpus::get();
         Self {
-            pool: LocalPoolHandle::new(max),
             lua_scripts: DashMap::with_hasher(RandomState::default()),
         }
     }
@@ -276,75 +269,71 @@ impl LuaScript {
         let client_ac = handler.context.ac.clone();
         let user = handler.context.user.clone();
 
-        let res = self
-            .pool
-            .spawn_pinned(|| async move {
-                let (lua, fake_handler) = get_or_create_lua_env(&shared)?;
+        let res: anyhow::Result<Resp3> = try {
+            let (lua, fake_handler) = get_or_create_lua_env(&shared)?;
 
-                let mut lua = lua.lock().await;
-                let lua = lua.as_mut().unwrap();
+            let mut lua = lua.lock().await;
+            let lua = lua.as_mut().unwrap();
 
-                let mut intention_locks = Vec::with_capacity(keys.len());
-                {
-                    let mut fake_handler = fake_handler.lock().await;
-                    let fake_handler = fake_handler.as_mut().unwrap();
+            let mut intention_locks = Vec::with_capacity(keys.len());
+            {
+                let mut fake_handler = fake_handler.lock().await;
+                let fake_handler = fake_handler.as_mut().unwrap();
 
-                    // 清空fake_handler的上下文
-                    fake_handler.context.clear();
-                    // 脚本执行的权限与客户端的权限一致
-                    fake_handler.context.ac = client_ac;
-                    // 脚本的用户与客户端的用户一致
-                    fake_handler.context.user = user;
+                // 清空fake_handler的上下文
+                fake_handler.context.clear();
+                // 脚本执行的权限与客户端的权限一致
+                fake_handler.context.ac = client_ac;
+                // 脚本的用户与客户端的用户一致
+                fake_handler.context.user = user;
 
-                    // 给需要操作的键加上意向锁
-                    for key in &keys {
-                        if let Some(notify_unlock) = shared
-                            .db()
-                            .add_lock_event(key.clone().into(), fake_handler.context.client_id)
-                            .await?
-                        {
-                            intention_locks.push(notify_unlock);
-                        }
+                // 给需要操作的键加上意向锁
+                for key in &keys {
+                    if let Some(notify_unlock) = shared
+                        .db()
+                        .add_lock_event(key.clone().into(), fake_handler.context.client_id)
+                        .await?
+                    {
+                        intention_locks.push(notify_unlock);
                     }
-                    // 释放fake_handler的锁，以便在执行脚本时可以获取fake_handler的锁
                 }
+                // 释放fake_handler的锁，以便在执行脚本时可以获取fake_handler的锁
+            }
 
-                let global = lua.globals();
+            let global = lua.globals();
 
-                // 传入KEYS和ARGV
-                let lua_keys = global.get::<_, LuaTable>("KEYS")?;
-                for (i, key) in keys.into_iter().enumerate() {
-                    lua_keys.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(key))?;
-                }
+            // 传入KEYS和ARGV
+            let lua_keys = global.get::<_, LuaTable>("KEYS")?;
+            for (i, key) in keys.into_iter().enumerate() {
+                lua_keys.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(key))?;
+            }
 
-                let lua_argv = global.get::<_, LuaTable>("ARGV")?;
-                for (i, arg) in argv.into_iter().enumerate() {
-                    lua_argv.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(arg))?;
-                }
+            let lua_argv = global.get::<_, LuaTable>("ARGV")?;
+            for (i, arg) in argv.into_iter().enumerate() {
+                lua_argv.set(i + 1, Resp3::<bytes::Bytes, String>::new_blob_string(arg))?;
+            }
 
-                // 执行脚本
-                let res: Resp3 = lua
-                    .load(chunk.as_ref())
-                    .eval_async()
-                    .await
-                    .unwrap_or_else(|e| Resp3::new_simple_error(e.to_string().into()));
+            // 执行脚本
+            let res: Resp3 = lua
+                .load(chunk.as_ref())
+                .eval_async()
+                .await
+                .unwrap_or_else(|e| Resp3::new_simple_error(e.to_string().into()));
 
-                // 脚本执行完毕，唤醒一个等待的任务
-                for intention_lock in intention_locks {
-                    intention_lock.unlock();
-                }
+            // 脚本执行完毕，唤醒一个等待的任务
+            for intention_lock in intention_locks {
+                intention_lock.unlock();
+            }
 
-                // 清理Lua环境
-                lua_keys.clear()?;
-                lua_argv.clear()?;
-                lua.gc_collect()?;
+            // 清理Lua环境
+            lua_keys.clear()?;
+            lua_argv.clear()?;
+            lua.gc_collect()?;
 
-                Ok::<Resp3, anyhow::Error>(res)
-            })
-            .await;
+            res
+        };
 
-        res.map_err(|e| RutinError::new_server_error(e.to_string()))?
-            .map_err(|e| RutinError::new_server_error(e.to_string()))
+        res.map_err(|e| RutinError::new_server_error(e.to_string()))
     }
 
     // 通过脚本名称执行脚本
@@ -395,101 +384,95 @@ impl LuaScript {
 async fn lua_tests() {
     crate::util::test_init();
 
-    let pool = tokio_util::task::LocalPoolHandle::new(1);
+    let lua_script = LuaScript::default();
 
-    pool.spawn_pinned(|| async move {
-        let lua_script = LuaScript::default();
+    let handler = Handler::new_fake().0;
 
-        let handler = Handler::new_fake().0;
+    lua_script
+        .eval(&handler, r#"print("exec")"#.into(), vec![], vec![])
+        .await
+        .unwrap();
 
-        lua_script
-            .eval(&handler, r#"print("exec")"#.into(), vec![], vec![])
-            .await
-            .unwrap();
+    // 不允许require module
+    let res = lua_script
+        .eval(&handler, r#"require("module")"#.into(), vec![], vec![])
+        .await
+        .unwrap();
+    assert!(res.is_simple_error());
 
-        // 不允许require module
-        let res = lua_script
-            .eval(&handler, r#"require("module")"#.into(), vec![], vec![])
-            .await
-            .unwrap();
-        assert!(res.is_simple_error());
+    //  不允许增加新的全局变量
+    let res = lua_script
+        .eval(&handler, "x = 10".into(), vec![], vec![])
+        .await
+        .unwrap();
+    assert!(res.is_simple_error());
 
-        //  不允许增加新的全局变量
-        let res = lua_script
-            .eval(&handler, "x = 10".into(), vec![], vec![])
-            .await
-            .unwrap();
-        assert!(res.is_simple_error());
+    let res = lua_script
+        .eval(
+            &handler,
+            r#"return redis.call("ping")"#.into(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(res, Resp3::new_simple_string("PONG".into()));
 
-        let res = lua_script
-            .eval(
-                &handler,
-                r#"return redis.call("ping")"#.into(),
-                vec![],
-                vec![],
-            )
-            .await
-            .unwrap();
-        assert_eq!(res, Resp3::new_simple_string("PONG".into()));
+    let res = lua_script
+        .eval(
+            &handler,
+            r#"return redis.call("set", KEYS[1], ARGV[1])"#.into(),
+            vec!["key".into()],
+            vec!["value".into()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(res, Resp3::new_simple_string("OK".into()),);
 
-        let res = lua_script
-            .eval(
-                &handler,
-                r#"return redis.call("set", KEYS[1], ARGV[1])"#.into(),
-                vec!["key".into()],
-                vec!["value".into()],
-            )
-            .await
-            .unwrap();
-        assert_eq!(res, Resp3::new_simple_string("OK".into()),);
+    let res = lua_script
+        .eval(
+            &handler,
+            r#"return redis.call("get", KEYS[1])"#.into(),
+            vec!["key".into()],
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(res, Resp3::new_blob_string("value".into()));
 
-        let res = lua_script
-            .eval(
-                &handler,
-                r#"return redis.call("get", KEYS[1])"#.into(),
-                vec!["key".into()],
-                vec![],
-            )
-            .await
-            .unwrap();
-        assert_eq!(res, Resp3::new_blob_string("value".into()));
+    let res = lua_script
+        .eval(
+            &handler,
+            r#"return { err = 'ERR My very special table error' }"#.into(),
+            vec![],
+            vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        res,
+        Resp3::new_simple_error("ERR My very special table error".into()),
+    );
 
-        let res = lua_script
-            .eval(
-                &handler,
-                r#"return { err = 'ERR My very special table error' }"#.into(),
-                vec![],
-                vec![],
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            res,
-            Resp3::new_simple_error("ERR My very special table error".into()),
-        );
+    let script = r#"return redis.call("ping")"#;
 
-        let script = r#"return redis.call("ping")"#;
+    // 创建脚本
+    lua_script
+        .register_script("f1".into(), script.into())
+        .unwrap();
 
-        // 创建脚本
-        lua_script
-            .register_script("f1".into(), script.into())
-            .unwrap();
+    // 执行保存的脚本
+    let res = lua_script
+        .eval_name(&handler, "f1".into(), vec![], vec![])
+        .await
+        .unwrap();
+    assert_eq!(res, Resp3::new_simple_string("PONG".into()));
 
-        // 执行保存的脚本
-        let res = lua_script
-            .eval_name(&handler, "f1".into(), vec![], vec![])
-            .await
-            .unwrap();
-        assert_eq!(res, Resp3::new_simple_string("PONG".into()));
+    // 删除脚本
+    lua_script.remove_script("f1".into()).unwrap();
 
-        // 删除脚本
-        lua_script.remove_script("f1".into()).unwrap();
-
-        lua_script
-            .eval_name(&handler, "f1".into(), vec![], vec![])
-            .await
-            .unwrap_err();
-    })
-    .await
-    .unwrap();
+    lua_script
+        .eval_name(&handler, "f1".into(), vec![], vec![])
+        .await
+        .unwrap_err();
 }

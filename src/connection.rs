@@ -6,6 +6,7 @@ use flume::{
 };
 use futures::{pin_mut, task::noop_waker_ref, Future};
 use pin_project::{pin_project, pinned_drop};
+use smallvec::SmallVec;
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -88,8 +89,8 @@ impl<S: AsyncStream> Connection<S> {
     // 尝试读取多个frame，直到buffer和stream都为空
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frames(&mut self) -> RutinResult<Option<Vec<Resp3>>> {
-        let mut frames = Vec::with_capacity(32);
+    pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 32]>>> {
+        let mut frames = SmallVec::new();
 
         loop {
             let frame = match Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await? {
@@ -106,8 +107,11 @@ impl<S: AsyncStream> Connection<S> {
                 return Ok(Some(frames));
             }
 
-            // 尝试继续从stream读取数据到buffer，如果buffer为空则继续读取，如果阻塞则返回结果
-            while self.reader_buf.is_empty() {
+            // 如果buffer为空则尝试继续从stream读取数据到buffer。如果阻塞或连接
+            // 断开(内核中暂无数据)则返回目前解析到frame；如果读取到数据则继续
+            // 解析(服务端总是假定客户端会发送完整的RESP3 frame，如果出现半包情
+            // 况，则需要等待该frame的完整数据，其它frame请求的处理也会被阻塞)。
+            if self.reader_buf.is_empty() {
                 let fut = self.stream.read_buf(&mut self.reader_buf);
                 pin_mut!(fut);
 
@@ -116,6 +120,8 @@ impl<S: AsyncStream> Connection<S> {
                     Poll::Ready(Ok(n)) if n != 0 => {}
                     _ => return Ok(Some(frames)),
                 }
+
+                debug_assert!(!self.reader_buf.is_empty());
             }
         }
     }
@@ -200,6 +206,7 @@ enum State<'a> {
     Remain(BytesMut),
 }
 
+/// 使用channel模拟客户端与服务端的连接。目前主要用于测试以及lua script功能的实现
 #[pin_project(PinnedDrop)]
 pub struct FakeStream {
     tx: Sender<BytesMut>,

@@ -58,6 +58,7 @@ pub async fn run(listener: TcpListener, conf: Conf) {
 
     let limit_connections = Arc::new(Semaphore::new(conf.server.max_connections));
     let conf = Arc::new(conf);
+    let local_set = tokio::task::LocalSet::new();
     let mut server = Listener {
         shared: Shared::new(
             Arc::new(Db::new(conf.clone())),
@@ -68,6 +69,7 @@ pub async fn run(listener: TcpListener, conf: Conf) {
         tls_acceptor,
         limit_connections,
         delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
+        local_set,
     };
 
     // 运行服务，阻塞主线程。当shutdown触发时，解除主线程的阻塞
