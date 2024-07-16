@@ -93,11 +93,7 @@ impl Aof {
                 tokio::select! {
                     _ = shutdown.wait_shutdown_triggered() => break,
                     wcmd = wcmd_receiver.recv() => {
-                        let mut wcmd = wcmd?;
-
-                        while let Some(w) = wcmd_receiver.try_recv()? {
-                            wcmd.unsplit(w);
-                        }
+                        let wcmd = wcmd?;
 
                         curr_aof_size += wcmd.len() as u128;
                         if curr_aof_size >= auto_aof_rewrite_min_size {
@@ -105,32 +101,25 @@ impl Aof {
                             curr_aof_size = 0;
                         }
 
-                        self.file.write_all_buf(&mut wcmd).await?;
+                        self.file.write_all(&wcmd).await?;
                         self.file.sync_data().await?;
                     }
                 }
             },
             AppendFSync::EverySec => {
                 let mut interval = tokio::time::interval(Duration::from_secs(1));
-                let mut buffer = BytesMut::with_capacity(1024);
 
                 loop {
                     tokio::select! {
                         _ = shutdown.wait_shutdown_triggered() => {
                             break
-                        } ,
+                        },
                         // 每隔一秒，同步文件
-                        // PERF: 同步文件时会造成性能波动
                         _ = interval.tick() => {
-                            self.file.write_all_buf(&mut buffer).await?;
                             self.file.sync_data().await?;
                         }
                         wcmd = wcmd_receiver.recv() => {
-                            let mut wcmd = wcmd?;
-
-                            while let Some(w) = wcmd_receiver.try_recv()? {
-                                wcmd.unsplit(w);
-                            }
+                            let  wcmd = wcmd?;
 
                             curr_aof_size += wcmd.len() as u128;
                             if curr_aof_size >= auto_aof_rewrite_min_size {
@@ -138,7 +127,8 @@ impl Aof {
                                 curr_aof_size = 0;
                             }
 
-                            buffer.unsplit(wcmd);
+                            self.file.write_all(& wcmd).await?;
+
                         }
                     }
                 }
@@ -147,11 +137,7 @@ impl Aof {
                 tokio::select! {
                     _ = shutdown.wait_shutdown_triggered() => break,
                     wcmd = wcmd_receiver.recv() => {
-                        let mut wcmd = wcmd?;
-
-                        while let Some(w) = wcmd_receiver.try_recv()? {
-                            wcmd.unsplit(w);
-                        }
+                        let wcmd = wcmd?;
 
                         curr_aof_size += wcmd.len() as u128;
                         if curr_aof_size >= auto_aof_rewrite_min_size {
@@ -159,14 +145,14 @@ impl Aof {
                             curr_aof_size = 0;
                         }
 
-                        self.file.write_all_buf(&mut wcmd).await?;
+                        self.file.write_all(&wcmd).await?;
                     }
                 }
             },
         }
 
-        while let Ok(Some(mut wcmd)) = wcmd_receiver.try_recv() {
-            self.file.write_all_buf(&mut wcmd).await?;
+        while let Ok(Some(wcmd)) = wcmd_receiver.try_recv() {
+            self.file.write_all(&wcmd).await?;
         }
 
         self.file.sync_data().await?;
@@ -203,4 +189,127 @@ pub enum AppendFSync {
     #[default]
     EverySec,
     No,
+}
+
+#[tokio::test]
+async fn aof_test() {
+    use crate::{
+        cmd::dispatch, conf::AofConf, frame::Resp3, server::Handler, shared::db::Db,
+        util::test_init,
+    };
+    use std::io::Write;
+
+    test_init();
+    use crate::persist::aof::AppendFSync;
+
+    const INIT_CONTENT: &[u8; 315] = b"*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000042\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000003\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000025\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000010\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000004\r\n$3\r\nVXK\r\n";
+
+    // 1. 测试写传播以及AOF save
+    // 2. 测试AOF load
+
+    let test_file_path = "tests/appendonly/test.aof";
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(test_file_path)
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to open file: {}", e);
+            std::process::exit(1);
+        });
+    file.write_all(INIT_CONTENT).unwrap();
+    drop(file);
+
+    let conf = Arc::new(Conf {
+        aof: Some(AofConf {
+            use_rdb_preamble: false,
+            file_path: test_file_path.to_string(),
+            append_fsync: AppendFSync::Always,
+            auto_aof_rewrite_min_size: 64,
+        }),
+        ..Default::default()
+    });
+
+    let shutdown = async_shutdown::ShutdownManager::new();
+    let shared = Shared::new(Arc::new(Db::default()), conf.clone(), shutdown.clone());
+
+    let mut aof = Aof::new(shared.clone(), conf.clone(), test_file_path)
+        .await
+        .unwrap();
+
+    aof.load().await.unwrap();
+
+    tokio::spawn(async move {
+        aof.save().await.unwrap();
+    });
+
+    let db = shared.db();
+    // 断言AOF文件中的内容已经加载到内存中
+    assert_eq!(
+        db.get(&"key:000000000015".into())
+            .await
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+        b"VXK"
+    );
+    assert_eq!(
+        db.get(&"key:000000000003".into())
+            .await
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+        b"VXK"
+    );
+    assert_eq!(
+        db.get(&"key:000000000025".into())
+            .await
+            .unwrap()
+            .on_str()
+            .unwrap()
+            .unwrap()
+            .to_vec(),
+        b"VXK"
+    );
+
+    let (mut handler, _) = Handler::new_fake_with(shared.clone(), None, None);
+
+    let file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(test_file_path)
+        .await
+        .unwrap();
+    file.set_len(0).await.unwrap(); // 清空AOF文件
+    drop(file);
+
+    let frames = vec![
+        Resp3::new_array(vec![
+            Resp3::new_blob_string("SET".into()),
+            Resp3::new_blob_string("key:000000000015".into()),
+            Resp3::new_blob_string("VXK".into()),
+        ]),
+        Resp3::new_array(vec![
+            Resp3::new_blob_string("SET".into()),
+            Resp3::new_blob_string("key:000000000003".into()),
+            Resp3::new_blob_string("VXK".into()),
+        ]),
+        Resp3::new_array(vec![
+            Resp3::new_blob_string("SET".into()),
+            Resp3::new_blob_string("key:000000000025".into()),
+            Resp3::new_blob_string("VXK".into()),
+        ]),
+    ];
+
+    // 执行SET命令, handler会将命令写入AOF文件
+    for f in frames {
+        dispatch(f, &mut handler).await.unwrap();
+    }
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    shutdown.trigger_shutdown(()).unwrap();
 }

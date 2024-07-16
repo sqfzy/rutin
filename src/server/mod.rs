@@ -3,6 +3,7 @@ mod handler;
 mod listener;
 
 pub use bg_task_channel::*;
+use bytes::BytesMut;
 pub use handler::*;
 pub use listener::*;
 use sysinfo::System;
@@ -29,6 +30,7 @@ task_local! { pub static ID: Id; }
 
 thread_local! {
     pub static SYSTEM: RefCell<System>  = RefCell::new(System::new_all());
+    pub static WCMD_BUF: RefCell<BytesMut>  = RefCell::new(BytesMut::new());
 }
 
 #[inline]

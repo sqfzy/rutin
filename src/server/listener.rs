@@ -31,61 +31,56 @@ impl Listener {
         #[cfg(feature = "debug")]
         println!("debug mode is enabled");
 
-        self.local_set
-            .run_until(async {
-                loop {
-                    #[cfg(not(feature = "debug"))]
-                    let permit = self
-                        .limit_connections
-                        .clone()
-                        .acquire_owned()
-                        .await
-                        .unwrap();
+        loop {
+            #[cfg(not(feature = "debug"))]
+            let permit = self
+                .limit_connections
+                .clone()
+                .acquire_owned()
+                .await
+                .unwrap();
 
-                    let (stream, _) = (|| async { self.listener.accept().await })
-                        .retry(&backon::ExponentialBuilder::default())
-                        .await?;
+            let (stream, _) = (|| async { self.listener.accept().await })
+                .retry(&backon::ExponentialBuilder::default())
+                .await?;
 
-                    let shared = self.shared.clone();
+            let shared = self.shared.clone();
 
-                    // 对于每个连接都创建一个delay_token，只有当所有连接都正常退出时，才关闭服务
-                    let delay_token = self.delay_token.clone();
-                    match &self.tls_acceptor {
-                        None => {
-                            let mut handler = Handler::new(shared, stream);
+            // 对于每个连接都创建一个delay_token，只有当所有连接都正常退出时，才关闭服务
+            let delay_token = self.delay_token.clone();
+            match &self.tls_acceptor {
+                None => {
+                    let mut handler = Handler::new(shared, stream);
 
-                            self.local_set.spawn_local(async move {
-                                // 开始处理连接
-                                if let Err(err) = handler.run().await {
-                                    error!(cause = ?err, "connection error");
-                                }
-
-                                // handler.run()不应该block，这会导致delay_token无法释放
-                                drop(delay_token);
-                                #[cfg(not(feature = "debug"))]
-                                drop(permit);
-                            });
+                    tokio::spawn(async move {
+                        // 开始处理连接
+                        if let Err(err) = handler.run().await {
+                            error!(cause = ?err, "connection error");
                         }
-                        // 如果开启了TLS，则使用TlsStream
-                        Some(tls_acceptor) => {
-                            let mut handler =
-                                Handler::new(shared, tls_acceptor.accept(stream).await?);
 
-                            self.local_set.spawn_local(async move {
-                                // 开始处理连接
-                                if let Err(err) = handler.run().await {
-                                    error!(cause = ?err, "connection error");
-                                }
-
-                                drop(delay_token);
-                                #[cfg(not(feature = "debug"))]
-                                drop(permit);
-                            });
-                        }
-                    };
+                        // handler.run()不应该block，这会导致delay_token无法释放
+                        drop(delay_token);
+                        #[cfg(not(feature = "debug"))]
+                        drop(permit);
+                    });
                 }
-            })
-            .await
+                // 如果开启了TLS，则使用TlsStream
+                Some(tls_acceptor) => {
+                    let mut handler = Handler::new(shared, tls_acceptor.accept(stream).await?);
+
+                    tokio::spawn(async move {
+                        // 开始处理连接
+                        if let Err(err) = handler.run().await {
+                            error!(cause = ?err, "connection error");
+                        }
+
+                        drop(delay_token);
+                        #[cfg(not(feature = "debug"))]
+                        drop(permit);
+                    });
+                }
+            };
+        }
     }
 
     pub async fn clean(&mut self) {

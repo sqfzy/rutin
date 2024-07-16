@@ -34,12 +34,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
         if Self::TYPE == CmdType::Write {
             // 也许存在replicate需要传播
-            handler
-                .shared
-                .wcmd_propagator()
-                .clone()
-                .may_propagate(args, handler)
-                .await;
+            handler.shared.wcmd_propagator().clone().may_propagate(args);
 
             // TODO:
             // if let Some(rdb) =  handler.shared.conf().rdb.as_ref() {
