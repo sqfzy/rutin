@@ -7,6 +7,7 @@ mod server;
 mod tls;
 
 pub use aof::*;
+use figment::providers::{Format, Toml};
 pub use memory::*;
 pub use rdb::*;
 pub use replica::*;
@@ -16,7 +17,7 @@ use sysinfo::ProcessRefreshKind;
 pub use tls::*;
 
 use crate::{
-    cli::Cli,
+    cli::{merge_cli, Cli},
     persist::{aof::Aof, rdb::Rdb},
     server::Listener,
     shared::Shared,
@@ -67,27 +68,28 @@ impl Default for Conf {
 
 impl Conf {
     pub fn new() -> anyhow::Result<Self> {
-        // 1. 从默认配置文件中加载配置
-        let config_builder = config::Config::builder().add_source(config::File::new(
-            "config/default.toml",
-            config::FileFormat::Toml,
-        ));
+        let mut conf: Conf = figment::Figment::new()
+            .join(Toml::file("config/default.toml"))
+            .merge(Toml::file("config/custom.toml"))
+            .extract()?;
 
-        // 2. 从用户自定义配置文件中加载配置
-        // TODO: 应该override而不是add
-        let config_builder = config_builder.add_source(config::File::new(
-            "config/custom.toml",
-            config::FileFormat::Toml,
-        ));
+        // // 1. 从默认配置文件中加载配置
+        // let config_builder = config::Config::builder().add_source(config::File::new(
+        //     "config/default.toml",
+        //     config::FileFormat::Toml,
+        // ));
+        //
+        // // 2. 从用户自定义配置文件中加载配置
+        // // TODO: 应该override而不是add
+        // let config_builder = config_builder.add_source(config::File::new(
+        //     "config/custom.toml",
+        //     config::FileFormat::Toml,
+        // ));
 
         // 3. 从命令行中加载配置
         let cli = Cli::parse();
-        let config_builder = config_builder
-            .set_override_option("replication.replicaof", cli.replicaof)?
-            .set_override_option("server.port", cli.port)?
-            .set_override_option("rdb.file_path", cli.rdb_path)?;
 
-        let mut config: Conf = config_builder.build()?.try_deserialize()?;
+        merge_cli(&mut conf, cli);
 
         // 4. 运行时配置
         let run_id: String = rand::thread_rng()
@@ -96,7 +98,7 @@ impl Conf {
             .map(char::from)
             .collect();
 
-        config.server.run_id = run_id;
+        conf.server.run_id = run_id;
 
         // 5. 初始化系统内存
         let mut system = sysinfo::System::new();
@@ -105,7 +107,7 @@ impl Conf {
         let process = system.process(pid).unwrap();
         USED_MEMORY.store(process.memory(), Ordering::Relaxed);
 
-        Ok(config)
+        Ok(conf)
     }
 
     pub async fn prepare(listener: &mut Listener) -> anyhow::Result<()> {
