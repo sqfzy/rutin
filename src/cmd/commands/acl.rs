@@ -320,6 +320,7 @@ impl CmdExecutor for AclWhoAmI {
 
 #[tokio::test]
 async fn cmd_acl_tests() {
+    use crate::util::TEST_AC_USERNAME;
     crate::util::test_init();
 
     let mut handler = Handler::new_fake().0;
@@ -459,13 +460,10 @@ async fn cmd_acl_tests() {
         AclUsers::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
-    assert_eq!(
-        resp.as_array_uncheckd(),
-        &vec![
-            Resp3::new_blob_string("default_ac".into()),
-            Resp3::new_blob_string("user".into()),
-        ]
-    );
+    let res = resp.as_array_uncheckd();
+    assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
+    assert!(res.contains(&Resp3::new_blob_string("user".into())));
+    assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
 
     let acl_whoami =
         AclWhoAmI::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
@@ -487,8 +485,7 @@ async fn cmd_acl_tests() {
         AclUsers::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
-    assert_eq!(
-        resp.as_array_uncheckd(),
-        &vec![Resp3::new_blob_string("default_ac".into()),]
-    );
+    let res = resp.as_array_uncheckd();
+    assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
+    assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
 }

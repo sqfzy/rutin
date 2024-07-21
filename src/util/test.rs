@@ -13,9 +13,9 @@ use crossbeam::atomic::AtomicCell;
 use rand::Rng;
 use tracing::Level;
 
-pub const TEST_ACL_USERNAME: &str = "admin";
-pub const TEST_ACL_PASSWORD: &str = "admin";
-pub const TEST_ACL_CMD_FLAG: u128 = 0x010;
+pub const TEST_AC_USERNAME: &str = "test_ac";
+pub const TEST_AC_PASSWORD: &str = "test_pwd";
+pub const TEST_AC_CMD_FLAG: u128 = 0x010;
 
 pub fn test_init() {
     tracing_subscriber::fmt()
@@ -32,10 +32,10 @@ pub fn get_test_config() -> Arc<Conf> {
 
     let acl = Acl::new();
     acl.insert(
-        TEST_ACL_USERNAME.into(),
+        TEST_AC_USERNAME.into(),
         AccessControl {
-            password: TEST_ACL_PASSWORD.into(),
-            cmd_flag: TEST_ACL_CMD_FLAG,
+            password: TEST_AC_PASSWORD.into(),
+            cmd_flag: TEST_AC_CMD_FLAG,
             ..Default::default()
         },
     );
@@ -54,7 +54,7 @@ pub fn get_test_config() -> Arc<Conf> {
             requirepass: None,
             rename_commands: vec![],
             default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
-            acl: Some(Acl::new()),
+            acl: Some(acl),
         },
         replica: ReplicaConf {
             replicaof: None,
@@ -74,11 +74,11 @@ pub fn get_test_config() -> Arc<Conf> {
             append_fsync: AppendFSync::EverySec,
             auto_aof_rewrite_min_size: 128,
         }),
-        memory: MemoryConf {
-            maxmemory: 1024,
+        memory: Some(MemoryConf {
+            maxmemory: u64::MAX,
             maxmemory_policy: Default::default(),
             maxmemory_samples: 5,
-        },
+        }),
         tls: None,
     };
 

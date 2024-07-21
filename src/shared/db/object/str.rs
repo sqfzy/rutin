@@ -1,13 +1,12 @@
-use std::{mem::size_of, sync::atomic::Ordering};
-
 use crate::{
-    conf::USED_MEMORY,
+    conf::{may_decr_used_mem, may_incr_used_mem},
     error::{RutinError, RutinResult},
     util::to_valid_range,
     Int,
 };
 use atoi::atoi;
 use bytes::{BufMut, Bytes, BytesMut};
+use std::mem::size_of;
 use strum::{EnumDiscriminants, IntoStaticStr};
 
 pub macro as_bytes($str:expr) {
@@ -174,7 +173,7 @@ impl From<Bytes> for Str {
             Self::Raw(b)
         };
 
-        USED_MEMORY.fetch_add(str.size(), Ordering::Relaxed);
+        may_incr_used_mem(str.size());
 
         str
     }
@@ -189,7 +188,7 @@ impl From<&'static str> for Str {
             Self::Raw(Bytes::from(s))
         };
 
-        USED_MEMORY.fetch_add(str.size(), Ordering::Relaxed);
+        may_incr_used_mem(str.size());
 
         str
     }
@@ -204,7 +203,7 @@ impl From<&[u8]> for Str {
             Self::Raw(Bytes::copy_from_slice(b))
         };
 
-        USED_MEMORY.fetch_add(str.size(), Ordering::Relaxed);
+        may_incr_used_mem(str.size());
 
         str
     }
@@ -214,7 +213,7 @@ impl From<i128> for Str {
     fn from(i: i128) -> Self {
         let str = Self::Int(i);
 
-        USED_MEMORY.fetch_add(str.size(), Ordering::Relaxed);
+        may_incr_used_mem(str.size());
 
         str
     }
@@ -224,7 +223,7 @@ impl Default for Str {
     fn default() -> Self {
         let str = Str::Raw("".into());
 
-        USED_MEMORY.fetch_add(str.size(), Ordering::Relaxed);
+        may_incr_used_mem(str.size());
 
         str
     }
@@ -232,6 +231,6 @@ impl Default for Str {
 
 impl Drop for Str {
     fn drop(&mut self) {
-        USED_MEMORY.fetch_sub(self.size(), Ordering::Relaxed);
+        may_decr_used_mem(self.size());
     }
 }

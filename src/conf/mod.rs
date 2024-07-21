@@ -27,14 +27,38 @@ use serde::Deserialize;
 use std::{
     fs::File,
     io::BufReader,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        OnceLock,
+    },
     time::Duration,
 };
 use tokio::{runtime::Handle, time::Instant};
 use tokio_rustls::rustls;
 use tracing::{error, info};
 
-pub static USED_MEMORY: AtomicU64 = AtomicU64::new(0);
+// 内存使用的粗略统计，每一秒更新为准确值
+pub static USED_MEMORY: OnceLock<AtomicU64> = OnceLock::new();
+
+// PERF:
+pub fn may_incr_used_mem(size: u64) {
+    if let Some(used_mem) = USED_MEMORY.get() {
+        used_mem.store(
+            used_mem.load(Ordering::Relaxed).saturating_add(size),
+            Ordering::Relaxed,
+        );
+    }
+}
+
+// PERF:
+pub fn may_decr_used_mem(size: u64) {
+    if let Some(used_mem) = USED_MEMORY.get() {
+        used_mem.store(
+            used_mem.load(Ordering::Relaxed).saturating_sub(size),
+            Ordering::Relaxed,
+        );
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Conf {
@@ -71,11 +95,13 @@ impl Conf {
         conf.server.run_id = run_id;
 
         // 5. 初始化系统内存
-        let mut system = sysinfo::System::new();
-        system.refresh_processes();
-        let pid = sysinfo::get_current_pid().unwrap();
-        let process = system.process(pid).unwrap();
-        USED_MEMORY.store(process.memory(), Ordering::Relaxed);
+        if conf.memory.is_some() {
+            let mut system = sysinfo::System::new();
+            system.refresh_processes();
+            let pid = sysinfo::get_current_pid().unwrap();
+            let process = system.process(pid).unwrap();
+            USED_MEMORY.get_or_init(|| AtomicU64::new(process.memory()));
+        }
 
         Ok(conf)
     }
@@ -155,19 +181,21 @@ impl Conf {
             }
         });
 
-        // 定时(每秒)更新内存使用情况
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+        if let Some(used_mem) = USED_MEMORY.get() {
+            // 定时(每秒)更新内存使用情况
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(1));
 
-            let mut system = sysinfo::System::new();
-            let pid = sysinfo::get_current_pid().unwrap();
-            loop {
-                interval.tick().await;
-                system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
-                let used_mem = system.process(pid).unwrap().memory();
-                USED_MEMORY.store(used_mem, Ordering::Relaxed);
-            }
-        });
+                let mut system = sysinfo::System::new();
+                let pid = sysinfo::get_current_pid().unwrap();
+                loop {
+                    interval.tick().await;
+                    system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
+                    let new_used_mem = system.process(pid).unwrap().memory();
+                    used_mem.store(new_used_mem, Ordering::Relaxed);
+                }
+            });
+        };
 
         Ok(())
     }

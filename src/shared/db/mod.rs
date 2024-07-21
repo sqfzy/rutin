@@ -87,7 +87,12 @@ impl Db {
 
     #[inline]
     pub async fn try_evict(&self) -> RutinResult<()> {
-        self.conf.memory.try_evict(self).await
+        if let Some(mem_conf) = &self.conf.memory {
+            // PERF:
+            mem_conf.try_evict(self).await
+        } else {
+            Ok(())
+        }
     }
 
     // 记录客户端ID和其对应的`BgTaskSender`，用于向客户端发送消息

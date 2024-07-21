@@ -106,7 +106,7 @@ harness = false
 opt-level = 3 # 最大优化
 # lto = "fat"   # 启用链接时优化（Link Time Optimization）
 lto = true
-debug = true      # 调试信息
+debug = false     # 调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 panic = "abort"
 

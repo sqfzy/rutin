@@ -61,7 +61,7 @@ max_replica = 10 # 最多允许多少个从服务器连接到当前服务器
 
 [memory]
 
-# maxmemory = 4194304
+maxmemory = 1844674407370955161
 
 # MAXMEMORY POLICY: how Redis will select what to remove when maxmemory
 # is reached. You can select one from the following behaviors:

@@ -365,9 +365,7 @@ mod cmd_other_tests {
     use super::*;
     use crate::{
         conf::AccessControl,
-        util::{
-            get_test_shared, test_init, TEST_ACL_CMD_FLAG, TEST_ACL_PASSWORD, TEST_ACL_USERNAME,
-        },
+        util::{get_test_shared, test_init, TEST_AC_CMD_FLAG, TEST_AC_PASSWORD, TEST_AC_USERNAME},
     };
 
     #[tokio::test]
@@ -378,7 +376,7 @@ mod cmd_other_tests {
         let (mut handler, _) = Handler::new_fake_with(shared, None, None);
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from([TEST_ACL_USERNAME, "1234567"].as_ref()),
+            &mut CmdUnparsed::from([TEST_AC_USERNAME, "1234567"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -386,7 +384,7 @@ mod cmd_other_tests {
         assert_eq!(res.unwrap_err().to_string(), "ERR invalid password");
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from(["admin1", TEST_ACL_PASSWORD].as_ref()),
+            &mut CmdUnparsed::from(["admin1", TEST_AC_PASSWORD].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -394,12 +392,12 @@ mod cmd_other_tests {
         assert_eq!(res.unwrap_err().to_string(), "ERR invalid username");
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from([TEST_ACL_USERNAME, TEST_ACL_PASSWORD].as_ref()),
+            &mut CmdUnparsed::from([TEST_AC_USERNAME, TEST_AC_PASSWORD].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         auth.execute(&mut handler).await.unwrap();
-        assert_eq!(handler.context.ac.cmd_flag(), TEST_ACL_CMD_FLAG);
+        assert_eq!(handler.context.ac.cmd_flag(), TEST_AC_CMD_FLAG);
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@ use serde::Deserialize;
 pub struct ReplicaConf {
     pub replicaof: Option<String>, // 主服务器的地址
     /// 最多允许多少个从服务器连接到当前服务器
-    pub max_replica: u8,
+    pub max_replica: usize,
     /// 用于记录当前服务器的复制偏移量。当从服务器发送 PSYNC
     /// 命令给主服务器时，比较从服务器和主服务器的ACK_OFFSET，从而判断主从是否一致。
     #[serde(skip)]
