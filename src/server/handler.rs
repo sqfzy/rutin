@@ -7,6 +7,7 @@ use crate::{
     frame::Resp3,
     server::{RESERVE_ID, RESERVE_MAX_ID},
     shared::Shared,
+    util::get_test_shared,
     Id, Key,
 };
 use bytes::BytesMut;
@@ -161,11 +162,11 @@ pub type FakeHandler = Handler<FakeStream>;
 
 impl Handler<FakeStream> {
     pub fn new_fake() -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(Shared::default(), None, None)
+        Self::new_fake_with(get_test_shared(), None, None)
     }
 
     pub fn with_capacity(capacity: usize) -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(Shared::default(), None, Some(capacity))
+        Self::new_fake_with(get_test_shared(), None, Some(capacity))
     }
 
     pub fn with_shared(shared: Shared) -> (Self, Connection<FakeStream>) {

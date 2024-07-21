@@ -10,21 +10,10 @@ use tracing::error;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename = "memory")]
-#[serde(default)]
 pub struct MemoryConf {
     pub maxmemory: u64,
     pub maxmemory_policy: Policy,
     pub maxmemory_samples: usize,
-}
-
-impl Default for MemoryConf {
-    fn default() -> Self {
-        Self {
-            maxmemory: u64::MAX,
-            maxmemory_policy: Default::default(),
-            maxmemory_samples: 5,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]

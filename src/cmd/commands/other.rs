@@ -362,45 +362,23 @@ impl CmdExecutor for ClientTracking {
 
 #[cfg(test)]
 mod cmd_other_tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::{
-        conf::{AccessControl, Acl, Conf},
-        shared::Shared,
-        util::test_init,
+        conf::AccessControl,
+        util::{
+            get_test_shared, test_init, TEST_ACL_CMD_FLAG, TEST_ACL_PASSWORD, TEST_ACL_USERNAME,
+        },
     };
 
     #[tokio::test]
     async fn auth_test() {
         test_init();
 
-        let username = "admin";
-        let password = "123456";
-        let cmd_flag = 0x010;
-        let acl = Acl::new();
-        acl.insert(
-            Bytes::from(username),
-            AccessControl {
-                password: Bytes::from(password),
-                cmd_flag,
-                ..Default::default()
-            },
-        );
-
-        let conf = Conf {
-            security: crate::conf::SecurityConf {
-                acl: Some(acl),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let shared = Shared::new(Default::default(), Arc::new(conf), Default::default());
+        let shared = get_test_shared();
         let (mut handler, _) = Handler::new_fake_with(shared, None, None);
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from([username, "1234567"].as_ref()),
+            &mut CmdUnparsed::from([TEST_ACL_USERNAME, "1234567"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -408,7 +386,7 @@ mod cmd_other_tests {
         assert_eq!(res.unwrap_err().to_string(), "ERR invalid password");
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from(["admin1", password].as_ref()),
+            &mut CmdUnparsed::from(["admin1", TEST_ACL_PASSWORD].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -416,12 +394,12 @@ mod cmd_other_tests {
         assert_eq!(res.unwrap_err().to_string(), "ERR invalid username");
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from([username, password].as_ref()),
+            &mut CmdUnparsed::from([TEST_ACL_USERNAME, TEST_ACL_PASSWORD].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         auth.execute(&mut handler).await.unwrap();
-        assert_eq!(handler.context.ac.cmd_flag(), cmd_flag);
+        assert_eq!(handler.context.ac.cmd_flag(), TEST_ACL_CMD_FLAG);
     }
 
     #[tokio::test]

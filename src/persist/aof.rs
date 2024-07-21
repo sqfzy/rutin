@@ -194,13 +194,14 @@ pub enum AppendFSync {
 #[tokio::test]
 async fn aof_test() {
     use crate::{
-        cmd::dispatch, conf::AofConf, frame::Resp3, server::Handler, shared::db::Db,
-        util::test_init,
+        cmd::dispatch,
+        frame::Resp3,
+        server::Handler,
+        util::{get_test_shared, test_init},
     };
     use std::io::Write;
 
     test_init();
-    use crate::persist::aof::AppendFSync;
 
     const INIT_CONTENT: &[u8; 315] = b"*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000042\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000003\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000025\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000010\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000015\r\n$3\r\nVXK\r\n*3\r\n$3\r\nSET\r\n$16\r\nkey:000000000004\r\n$3\r\nVXK\r\n";
 
@@ -221,20 +222,9 @@ async fn aof_test() {
     file.write_all(INIT_CONTENT).unwrap();
     drop(file);
 
-    let conf = Arc::new(Conf {
-        aof: Some(AofConf {
-            use_rdb_preamble: false,
-            file_path: test_file_path.to_string(),
-            append_fsync: AppendFSync::Always,
-            auto_aof_rewrite_min_size: 64,
-        }),
-        ..Default::default()
-    });
+    let shared = get_test_shared();
 
-    let shutdown = async_shutdown::ShutdownManager::new();
-    let shared = Shared::new(Arc::new(Db::default()), conf.clone(), shutdown.clone());
-
-    let mut aof = Aof::new(shared.clone(), conf.clone(), test_file_path)
+    let mut aof = Aof::new(shared.clone(), shared.conf().clone(), test_file_path)
         .await
         .unwrap();
 
@@ -311,5 +301,5 @@ async fn aof_test() {
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    shutdown.trigger_shutdown(()).unwrap();
+    shared.shutdown().trigger_shutdown(()).unwrap();
 }

@@ -9,7 +9,6 @@ use dashmap::mapref::entry::{self, Entry};
 use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
 
-// ObjectEntry不必检查expire，因为在Db中已经检查过了
 pub struct ObjectEntry<'a> {
     pub(super) entry: Entry<'a, Str, Object>,
     db: &'a Db,
@@ -392,6 +391,7 @@ impl IntentionLock {
 }
 
 impl Drop for IntentionLock {
+    #[inline]
     fn drop(&mut self) {
         self.0.notify_one();
     }

@@ -135,17 +135,6 @@ pub struct SecurityConf {
     pub acl: Option<Acl>, // None代表禁用ACL
 }
 
-impl Default for SecurityConf {
-    fn default() -> Self {
-        Self {
-            requirepass: None,
-            rename_commands: vec![],
-            default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
-            acl: Some(Acl::new()),
-        }
-    }
-}
-
 #[repr(transparent)]
 #[derive(Debug, Deserialize, Default)]
 pub struct Acl(DashMap<Bytes, AccessControl>);

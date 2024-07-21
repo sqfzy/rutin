@@ -11,7 +11,7 @@ use crate::{
 use async_shutdown::ShutdownManager;
 use std::sync::Arc;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Shared {
     db: Arc<Db>,
     conf: Arc<Conf>,

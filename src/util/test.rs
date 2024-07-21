@@ -1,7 +1,94 @@
+use std::sync::Arc;
+
+use crate::{
+    conf::{
+        AccessControl, Acl, AofConf, Conf, MemoryConf, RdbConf, ReplicaConf, SecurityConf,
+        ServerConf,
+    },
+    persist::aof::AppendFSync,
+    shared::{db::Db, Shared},
+};
+use arc_swap::ArcSwap;
+use crossbeam::atomic::AtomicCell;
+use rand::Rng;
 use tracing::Level;
+
+pub const TEST_ACL_USERNAME: &str = "admin";
+pub const TEST_ACL_PASSWORD: &str = "admin";
+pub const TEST_ACL_CMD_FLAG: u128 = 0x010;
 
 pub fn test_init() {
     tracing_subscriber::fmt()
         .with_max_level(Level::DEBUG)
         .init();
+}
+
+pub fn get_test_config() -> Arc<Conf> {
+    let run_id: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(40)
+        .map(char::from)
+        .collect();
+
+    let acl = Acl::new();
+    acl.insert(
+        TEST_ACL_USERNAME.into(),
+        AccessControl {
+            password: TEST_ACL_PASSWORD.into(),
+            cmd_flag: TEST_ACL_CMD_FLAG,
+            ..Default::default()
+        },
+    );
+
+    let conf = Conf {
+        server: ServerConf {
+            addr: "127.0.0.1".to_string(),
+            port: 6379,
+            run_id,
+            expire_check_interval_secs: 1,
+            log_level: "info".to_string(),
+            max_connections: 1024,
+            max_batch: 1024,
+        },
+        security: SecurityConf {
+            requirepass: None,
+            rename_commands: vec![],
+            default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
+            acl: Some(Acl::new()),
+        },
+        replica: ReplicaConf {
+            replicaof: None,
+            max_replica: 6,
+            offset: AtomicCell::new(0),
+            masterauth: None,
+        },
+        rdb: Some(RdbConf {
+            file_path: "dump.rdb".to_string(),
+            save: None,
+            version: 9,
+            enable_checksum: true,
+        }),
+        aof: Some(AofConf {
+            use_rdb_preamble: true,
+            file_path: "tests/appendonly/test.aof".to_string(),
+            append_fsync: AppendFSync::EverySec,
+            auto_aof_rewrite_min_size: 128,
+        }),
+        memory: MemoryConf {
+            maxmemory: 1024,
+            maxmemory_policy: Default::default(),
+            maxmemory_samples: 5,
+        },
+        tls: None,
+    };
+
+    Arc::new(conf)
+}
+
+pub fn get_test_db() -> Arc<Db> {
+    Arc::new(Db::new(get_test_config()))
+}
+
+pub fn get_test_shared() -> Shared {
+    Shared::new(get_test_db(), get_test_config(), Default::default())
 }

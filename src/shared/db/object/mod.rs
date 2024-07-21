@@ -1019,6 +1019,8 @@ impl From<ZSet> for ObjValue {
 
 #[cfg(test)]
 mod object_tests {
+    use crate::util::get_test_db;
+
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1060,7 +1062,7 @@ mod object_tests {
     #[tokio::test]
     async fn intention_lock_test() {
         let flag = Arc::new(AtomicUsize::new(0));
-        let db = Arc::new(Db::default());
+        let db = Arc::new(get_test_db());
 
         let notifiy = Arc::new(Notify::const_new());
 

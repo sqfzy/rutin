@@ -1,6 +1,7 @@
 /target
 /benches/perf/*
 /temp/*/*
+env/
 
 dump.rdb
 appendonly.aof

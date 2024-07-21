@@ -15,15 +15,3 @@ pub struct ReplicaConf {
     // pub repli_backlog: RepliBackLog, // 复制积压缓冲区大小
     pub masterauth: Option<String>, // 主服务器密码，设置该值之后，当从服务器连接到主服务器时会发送该值
 }
-
-impl Default for ReplicaConf {
-    fn default() -> Self {
-        Self {
-            replicaof: None,
-            max_replica: 6,
-            offset: AtomicCell::new(0),
-            // repli_backlog: RepliBackLog::default(),
-            masterauth: None,
-        }
-    }
-}

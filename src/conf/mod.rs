@@ -43,44 +43,18 @@ pub struct Conf {
     pub replica: ReplicaConf,
     pub rdb: Option<RdbConf>,
     pub aof: Option<AofConf>,
-    #[serde(default)]
-    pub memory: MemoryConf,
+    pub memory: Option<MemoryConf>,
     pub tls: Option<TLSConf>,
-}
-
-impl Default for Conf {
-    fn default() -> Self {
-        Self {
-            server: ServerConf::default(),
-            security: SecurityConf::default(),
-            replica: ReplicaConf::default(),
-            rdb: Some(RdbConf::default()),
-            aof: Some(AofConf::default()),
-            memory: MemoryConf::default(),
-            tls: None,
-        }
-    }
 }
 
 impl Conf {
     pub fn new() -> anyhow::Result<Self> {
         let mut conf: Conf = figment::Figment::new()
+            // 1. 从默认配置文件中加载配置
             .join(Toml::file("config/default.toml"))
+            // 2. 从用户自定义配置文件中加载配置
             .merge(Toml::file("config/custom.toml"))
             .extract()?;
-
-        // // 1. 从默认配置文件中加载配置
-        // let config_builder = config::Config::builder().add_source(config::File::new(
-        //     "config/default.toml",
-        //     config::FileFormat::Toml,
-        // ));
-        //
-        // // 2. 从用户自定义配置文件中加载配置
-        // // TODO: 应该override而不是add
-        // let config_builder = config_builder.add_source(config::File::new(
-        //     "config/custom.toml",
-        //     config::FileFormat::Toml,
-        // ));
 
         // 3. 从命令行中加载配置
         let cli = Cli::parse();

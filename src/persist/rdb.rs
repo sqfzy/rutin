@@ -787,8 +787,11 @@ mod rdb_test {
     use super::rdb_load::*;
     use super::rdb_save::*;
     use super::*;
-    use crate::shared::db::{ObjectInner, NEVER_EXPIRE};
-    use crate::{shared::Shared, util::test_init};
+    use crate::util::test_init;
+    use crate::{
+        shared::db::{ObjectInner, NEVER_EXPIRE},
+        util::get_test_shared,
+    };
     use bytes::BytesMut;
     use tokio::time::Instant;
 
@@ -864,7 +867,7 @@ mod rdb_test {
     async fn rdb_save_and_load_test() {
         test_init();
 
-        let shared = Shared::default();
+        let shared = get_test_shared();
         let db = shared.db();
 
         let str1 = ObjectInner::new_str("hello", *NEVER_EXPIRE);
@@ -935,7 +938,7 @@ mod rdb_test {
         let mut rdb = Rdb::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.save().await.unwrap();
 
-        let shared = Shared::default();
+        let shared = get_test_shared();
         let mut rdb = Rdb::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
         rdb.load().await.unwrap();
 

@@ -54,8 +54,15 @@ pub struct Db {
 impl Db {
     pub fn new(conf: Arc<Conf>) -> Self {
         Self {
+            entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
+            entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
+            pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
+            client_records: DashMap::with_capacity_and_hasher(
+                1024,
+                nohash::BuildNoHashHasher::default(),
+            ),
+            lru_clock: AtomicU32::new(0),
             conf,
-            ..Default::default()
         }
     }
 
@@ -312,25 +319,9 @@ impl Db {
     }
 }
 
-impl Default for Db {
-    fn default() -> Self {
-        Self {
-            entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
-            entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
-            pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
-            client_records: DashMap::with_capacity_and_hasher(
-                1024,
-                nohash::BuildNoHashHasher::default(),
-            ),
-            lru_clock: AtomicU32::new(0),
-            conf: Default::default(),
-        }
-    }
-}
-
 #[cfg(test)]
 pub mod db_tests {
-    use crate::util::test_init;
+    use crate::util::{get_test_db, test_init};
 
     use super::*;
 
@@ -338,7 +329,7 @@ pub mod db_tests {
     async fn insert_object_test() {
         test_init();
 
-        let db = Db::default();
+        let db = get_test_db();
 
         // 无对象时插入对象
         db.insert_object("key1".into(), ObjectInner::new_str("value1", *NEVER_EXPIRE))
@@ -407,7 +398,7 @@ pub mod db_tests {
     async fn visit_object_test() {
         test_init();
 
-        let db = Db::default();
+        let db = get_test_db();
 
         db.insert_object("key1".into(), ObjectInner::new_str("value1", *NEVER_EXPIRE))
             .await
@@ -448,7 +439,7 @@ pub mod db_tests {
     async fn update_object_test() {
         test_init();
 
-        let db = Db::default();
+        let db = get_test_db();
         let (tx, rx) = flume::unbounded();
 
         db.insert_object("key1".into(), ObjectInner::new_str("value1", *NEVER_EXPIRE))
@@ -511,7 +502,7 @@ pub mod db_tests {
     async fn update_or_create_object_test() {
         test_init();
 
-        let db = Db::default();
+        let db = get_test_db();
         let (tx, rx) = flume::unbounded();
 
         db.insert_object("key1".into(), ObjectInner::new_str("value1", *NEVER_EXPIRE))
