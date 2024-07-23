@@ -1,14 +1,10 @@
 mod object;
 mod object_entry;
 
-use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    Arc,
-};
-
 pub use object::*;
 use object_entry::IntentionLock;
 pub use object_entry::ObjectEntry;
+use std::sync::Arc;
 
 use crate::{
     conf::Conf,
@@ -46,9 +42,7 @@ pub struct Db {
     // 消息
     client_records: DashMap<Id, BgTaskSender, nohash::BuildNoHashHasher<u64>>,
 
-    lru_clock: AtomicU32,
-
-    conf: Arc<Conf>,
+    pub conf: Arc<Conf>,
 }
 
 impl Db {
@@ -61,7 +55,6 @@ impl Db {
                 1024,
                 nohash::BuildNoHashHasher::default(),
             ),
-            lru_clock: AtomicU32::new(0),
             conf,
         }
     }
@@ -78,17 +71,9 @@ impl Db {
         self.entries.len()
     }
 
-    /// lru始终前进一步，达到最大值（1 << LRU_BITS）后，重新从0开始
-    #[inline]
-    fn incr_lru_clock(&self) -> u32 {
-        let clock = self.lru_clock.fetch_add(1, Ordering::Relaxed);
-        clock & Atc::LRU_CLOCK_MAX
-    }
-
     #[inline]
     pub async fn try_evict(&self) -> RutinResult<()> {
         if let Some(mem_conf) = &self.conf.memory {
-            // PERF:
             mem_conf.try_evict(self).await
         } else {
             Ok(())
@@ -191,7 +176,8 @@ impl Db {
             if let Some(inner) = e.value().inner() {
                 // 对象未过期
                 if !inner.is_expired() {
-                    inner.update_atc(self.incr_lru_clock());
+                    // PERF:
+                    inner.update_lru();
                     return Ok(e);
                 }
 
@@ -219,7 +205,8 @@ impl Db {
                     return Err(RutinError::Null);
                 }
 
-                inner.update_atc(self.incr_lru_clock());
+                // PERF:
+                inner.update_lru();
             }
         }
 
@@ -326,7 +313,10 @@ impl Db {
 
 #[cfg(test)]
 pub mod db_tests {
-    use crate::util::{get_test_db, test_init};
+    use crate::{
+        conf::get_lru_clock,
+        util::{get_test_db, test_init},
+    };
 
     use super::*;
 
@@ -340,7 +330,7 @@ pub mod db_tests {
         db.insert_object("key1".into(), ObjectInner::new_str("value1", *NEVER_EXPIRE))
             .await
             .unwrap();
-        assert_eq!(db.lru_clock.load(Ordering::Relaxed), 0);
+        assert_eq!(get_lru_clock(), 0);
 
         let res = db
             .get(&"key1".into())
@@ -351,7 +341,7 @@ pub mod db_tests {
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value1".as_bytes());
-        assert_eq!(db.lru_clock.load(Ordering::Relaxed), 1);
+        assert_eq!(get_lru_clock(), 1);
 
         // 有对象时插入对象，触发旧对象的Update事件
         let (tx, rx) = flume::unbounded();
@@ -371,7 +361,7 @@ pub mod db_tests {
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
-        assert_eq!(db.lru_clock.load(Ordering::Relaxed), 4);
+        assert_eq!(get_lru_clock(), 4);
 
         let res = rx.recv().unwrap();
         assert_eq!(&res.to_bytes(), "key1");
@@ -393,7 +383,7 @@ pub mod db_tests {
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
-        assert_eq!(db.lru_clock.load(Ordering::Relaxed), 5);
+        assert_eq!(get_lru_clock(), 5);
 
         let res = rx.recv().unwrap();
         assert_eq!(&res.to_bytes(), "key2");

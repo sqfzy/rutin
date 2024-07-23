@@ -12,6 +12,7 @@ pub use str::*;
 pub use zset::*;
 
 use crate::{
+    conf::get_lru_clock,
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::ID,
@@ -139,10 +140,10 @@ impl Object {
     }
 
     #[inline]
-    pub fn atc(&self) -> Atc {
+    pub fn atc(&self) -> Lru {
         self.inner
             .as_ref()
-            .map_or(Atc::default(), |inner| inner.atc())
+            .map_or(Lru::default(), |inner| inner.lru())
     }
 
     pub fn new_str(s: Str, expire: Instant) -> Self {
@@ -630,18 +631,18 @@ pub struct ObjectInner {
     expire: Instant,
     /// access time and count，高位[`LRU_BITS`]表示access time，其余表示access count
     /// 在读取时也需要更新atc，由于不可变引用无法更新，因此需要使用原子操作
-    pub(super) atc: AtomicU32,
+    pub(super) lru: AtomicU32,
 }
 
 impl ObjectInner {
     ///  access time更新为lru_clock，access count加1
     #[inline]
-    pub fn update_atc(&self, lru_clock: u32) {
-        let atc = self.atc.load(Relaxed);
+    pub fn update_lru(&self) {
+        let atc = self.lru.load(Relaxed);
 
-        let count = atc & Atc::LFU_MASK;
+        let count = atc & Lru::LFU_MASK;
 
-        let new_count = if count == Atc::LFU_FREQUENCY_MAX {
+        let new_count = if count == Lru::LFU_FREQUENCY_MAX {
             count
         } else {
             // 每次有1 / (count / 2)的概率更新count
@@ -653,15 +654,15 @@ impl ObjectInner {
             }
         };
 
-        let new_atc = (lru_clock << Atc::LFU_BITS) | new_count;
+        let new_atc = (get_lru_clock() << Lru::LFU_BITS) | new_count;
 
         // 如果更新失败，则放弃更新
-        let _ = self.atc.compare_exchange(atc, new_atc, Relaxed, Relaxed);
+        let _ = self.lru.compare_exchange(atc, new_atc, Relaxed, Relaxed);
     }
 
     #[inline]
-    pub fn atc(&self) -> Atc {
-        Atc(self.atc.load(Relaxed))
+    pub fn lru(&self) -> Lru {
+        Lru(self.lru.load(Relaxed))
     }
 
     #[inline]
@@ -669,7 +670,7 @@ impl ObjectInner {
         ObjectInner {
             value: ObjValue::Str(s.into()),
             expire,
-            atc: Default::default(),
+            lru: Default::default(),
         }
     }
 
@@ -678,7 +679,7 @@ impl ObjectInner {
         ObjectInner {
             value: ObjValue::List(l.into()),
             expire,
-            atc: Default::default(),
+            lru: Default::default(),
         }
     }
 
@@ -687,7 +688,7 @@ impl ObjectInner {
         ObjectInner {
             value: ObjValue::Set(s.into()),
             expire,
-            atc: Default::default(),
+            lru: Default::default(),
         }
     }
 
@@ -696,7 +697,7 @@ impl ObjectInner {
         ObjectInner {
             value: ObjValue::Hash(h.into()),
             expire,
-            atc: Default::default(),
+            lru: Default::default(),
         }
     }
 
@@ -705,7 +706,7 @@ impl ObjectInner {
         ObjectInner {
             value: ObjValue::ZSet(z.into()),
             expire,
-            atc: Default::default(),
+            lru: Default::default(),
         }
     }
 
@@ -896,9 +897,9 @@ impl ObjectInner {
 }
 
 #[derive(Debug, Clone)]
-pub struct Atc(u32);
+pub struct Lru(u32);
 
-impl Atc {
+impl Lru {
     pub const LRU_BITS: u8 = 20;
     pub const LFU_BITS: u8 = 12;
 
@@ -921,13 +922,13 @@ impl Atc {
     }
 }
 
-impl Default for Atc {
+impl Default for Lru {
     fn default() -> Self {
-        Atc(Self::LRU_MASK)
+        Lru(Self::LRU_MASK)
     }
 }
 
-impl Deref for Atc {
+impl Deref for Lru {
     type Target = u32;
 
     fn deref(&self) -> &Self::Target {
@@ -935,9 +936,9 @@ impl Deref for Atc {
     }
 }
 
-impl From<u32> for Atc {
+impl From<u32> for Lru {
     fn from(atc: u32) -> Self {
-        Atc(atc)
+        Lru(atc)
     }
 }
 
@@ -946,7 +947,7 @@ impl Clone for ObjectInner {
         Self {
             value: self.value.clone(),
             expire: self.expire,
-            atc: Default::default(),
+            lru: Default::default(),
         }
     }
 }

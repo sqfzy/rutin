@@ -1,5 +1,4 @@
 use crate::{
-    conf::{may_decr_used_mem, may_incr_used_mem},
     error::{RutinError, RutinResult},
     util::to_valid_range,
     Int,
@@ -166,71 +165,42 @@ impl Str {
 
 impl From<Bytes> for Str {
     fn from(b: Bytes) -> Self {
-        let str = {
-            if let Some(i) = atoi(&b) {
-                return Str::Int(i);
-            }
-            Self::Raw(b)
-        };
+        if let Some(i) = atoi(&b) {
+            return Str::Int(i);
+        }
 
-        may_incr_used_mem(str.size());
-
-        str
+        Self::Raw(b)
     }
 }
 
 impl From<&'static str> for Str {
     fn from(s: &'static str) -> Self {
-        let str = {
-            if let Some(i) = atoi(s.as_bytes()) {
-                return Str::Int(i);
-            }
-            Self::Raw(Bytes::from(s))
-        };
+        if let Some(i) = atoi(s.as_bytes()) {
+            return Str::Int(i);
+        }
 
-        may_incr_used_mem(str.size());
-
-        str
+        Self::Raw(Bytes::from(s))
     }
 }
 
 impl From<&[u8]> for Str {
     fn from(b: &[u8]) -> Self {
-        let str = {
-            if let Some(i) = atoi::<Int>(b) {
-                return Str::Int(i);
-            }
-            Self::Raw(Bytes::copy_from_slice(b))
-        };
+        if let Some(i) = atoi::<Int>(b) {
+            return Str::Int(i);
+        }
 
-        may_incr_used_mem(str.size());
-
-        str
+        Self::Raw(Bytes::copy_from_slice(b))
     }
 }
 
 impl From<i128> for Str {
     fn from(i: i128) -> Self {
-        let str = Self::Int(i);
-
-        may_incr_used_mem(str.size());
-
-        str
+        Self::Int(i)
     }
 }
 
 impl Default for Str {
     fn default() -> Self {
-        let str = Str::Raw("".into());
-
-        may_incr_used_mem(str.size());
-
-        str
-    }
-}
-
-impl Drop for Str {
-    fn drop(&mut self) {
-        may_decr_used_mem(self.size());
+        Str::Raw("".into())
     }
 }

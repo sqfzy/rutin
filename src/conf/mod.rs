@@ -20,17 +20,15 @@ use crate::{
     cli::{merge_cli, Cli},
     persist::{aof::Aof, rdb::Rdb},
     server::Listener,
+    shared::db::Lru,
 };
 use clap::Parser;
-use rand::Rng;
+use rand::{seq::IteratorRandom, Rng};
 use serde::Deserialize;
 use std::{
     fs::File,
     io::BufReader,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        OnceLock,
-    },
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
     time::Duration,
 };
 use tokio::{runtime::Handle, time::Instant};
@@ -38,26 +36,18 @@ use tokio_rustls::rustls;
 use tracing::{error, info};
 
 // 内存使用的粗略统计，每一秒更新为准确值
-pub static USED_MEMORY: OnceLock<AtomicU64> = OnceLock::new();
+pub static USED_MEMORY: AtomicU64 = AtomicU64::new(0);
 
-// PERF:
-pub fn may_incr_used_mem(size: u64) {
-    if let Some(used_mem) = USED_MEMORY.get() {
-        used_mem.store(
-            used_mem.load(Ordering::Relaxed).saturating_add(size),
-            Ordering::Relaxed,
-        );
-    }
+static LRU_CLOCK: AtomicU32 = AtomicU32::new(0);
+
+#[inline]
+pub fn incr_lru_clock() {
+    LRU_CLOCK.fetch_add(1, Ordering::Relaxed);
 }
 
-// PERF:
-pub fn may_decr_used_mem(size: u64) {
-    if let Some(used_mem) = USED_MEMORY.get() {
-        used_mem.store(
-            used_mem.load(Ordering::Relaxed).saturating_sub(size),
-            Ordering::Relaxed,
-        );
-    }
+#[inline]
+pub fn get_lru_clock() -> u32 {
+    LRU_CLOCK.load(Ordering::Relaxed) % Lru::LRU_CLOCK_MAX
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,7 +90,7 @@ impl Conf {
             system.refresh_processes();
             let pid = sysinfo::get_current_pid().unwrap();
             let process = system.process(pid).unwrap();
-            USED_MEMORY.get_or_init(|| AtomicU64::new(process.memory()));
+            USED_MEMORY.store(process.memory(), Ordering::Relaxed);
         }
 
         Ok(conf)
@@ -153,49 +143,57 @@ impl Conf {
         /* 开启过期键定时检查 */
         /**********************/
         let period = Duration::from_secs(conf.server.expire_check_interval_secs);
-        let handle = Handle::current();
-        std::thread::spawn({
+        tokio::spawn({
             let shared = shared.clone();
-            move || {
-                std::thread::sleep(period);
+
+            async move {
+                let mut interval = tokio::time::interval(period);
+
                 loop {
-                    // TODO: 采用自适应算法，根据过期键的数量动态调整检查周期
-                    let shared = shared.clone();
+                    interval.tick().await;
 
-                    let now = Instant::now();
-                    let expired_keys: Vec<_> = shared
-                        .db()
-                        .entry_expire_records()
-                        .iter()
-                        .filter(|entry| entry.key().0 <= now)
-                        .map(|entry| entry.key().1.clone())
-                        .collect();
+                    for _ in 0..10 {
+                        if let Some(record) = {
+                            let mut rng = rand::thread_rng();
 
-                    for key in expired_keys {
-                        tracing::trace!("key {:?} is expired", key);
-                        // 删除过期键，该过程会自动删除对应的expire_record
-                        // WARN: 执行remove_object时，不应该持有entry_expire_records元素的引用，否则会导致死锁
-                        handle.block_on(shared.db().remove_object(key));
+                            shared.db().entry_expire_records().iter().choose(&mut rng)
+                        } {
+                            if record.0 <= Instant::now() {
+                                tracing::trace!("key {:?} is expired", record.1);
+
+                                let _ = shared.db().remove_object(record.1.clone()).await;
+                            }
+                        }
                     }
                 }
             }
         });
 
-        if let Some(used_mem) = USED_MEMORY.get() {
-            // 定时(每秒)更新内存使用情况
+        if conf.memory.is_some() {
+            // 定时更新内存使用情况
             tokio::spawn(async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(1));
+                let mut interval = tokio::time::interval(Duration::from_millis(300));
 
                 let mut system = sysinfo::System::new();
                 let pid = sysinfo::get_current_pid().unwrap();
+                let kind = ProcessRefreshKind::new().with_memory();
                 loop {
                     interval.tick().await;
-                    system.refresh_process_specifics(pid, ProcessRefreshKind::new().with_memory());
+                    system.refresh_process_specifics(pid, kind);
                     let new_used_mem = system.process(pid).unwrap().memory();
-                    used_mem.store(new_used_mem, Ordering::Relaxed);
+                    USED_MEMORY.store(new_used_mem, Ordering::Relaxed);
                 }
             });
         };
+
+        // 定时(每分钟)更新LRU_CLOCK
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                incr_lru_clock();
+            }
+        });
 
         Ok(())
     }

@@ -898,18 +898,12 @@ impl Resp3<BytesMut, ByteString> {
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> RutinResult<Option<Resp3>> {
-        if src.is_empty() && io_read.read_buf(src).await? == 0 {
-            return Ok(None);
-        }
-
-        debug_assert!(!src.is_empty());
-
         #[inline]
         async fn _decode_async<R: AsyncRead + Unpin + Send>(
             io_read: &mut R,
             src: &mut BytesMut,
         ) -> RutinResult<Resp3> {
-            let res = match src.get_u8() {
+            let res = match Resp3::get_u8(src)? {
                 SIMPLE_STRING_PREFIX => Resp3::SimpleString {
                     inner: Resp3::decode_string_async(io_read, src).await?,
                     attributes: None,
@@ -1157,6 +1151,12 @@ impl Resp3<BytesMut, ByteString> {
             Ok(res)
         }
 
+        if src.is_empty() && io_read.read_buf(src).await? == 0 {
+            return Ok(None);
+        }
+
+        debug_assert!(!src.is_empty());
+
         let res = _decode_async(io_read, src).await?;
         Ok(Some(res))
     }
@@ -1398,16 +1398,16 @@ impl Resp3<BytesMut, ByteString> {
 }
 
 #[derive(Debug, Clone)]
-pub struct RESP3Encoder;
+pub struct Resp3Encoder;
 
-impl<B, S> Encoder<Resp3<B, S>> for RESP3Encoder
+impl<B, S> Encoder<&Resp3<B, S>> for Resp3Encoder
 where
     B: AsRef<[u8]> + PartialEq,
     S: AsRef<str> + PartialEq,
 {
     type Error = RutinError;
 
-    fn encode(&mut self, item: Resp3<B, S>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+    fn encode(&mut self, item: &Resp3<B, S>, dst: &mut BytesMut) -> Result<(), Self::Error> {
         item.encode_buf(dst);
 
         Ok(())
@@ -1415,11 +1415,11 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct RESP3Decoder {
+pub struct Resp3Decoder {
     buf: BytesMut,
 }
 
-impl Default for RESP3Decoder {
+impl Default for Resp3Decoder {
     fn default() -> Self {
         Self {
             buf: BytesMut::with_capacity(1024),
@@ -1427,7 +1427,7 @@ impl Default for RESP3Decoder {
     }
 }
 
-impl Decoder for RESP3Decoder {
+impl Decoder for Resp3Decoder {
     type Error = RutinError;
     type Item = Resp3;
 
@@ -1443,8 +1443,8 @@ impl Decoder for RESP3Decoder {
 
         #[inline]
         fn _decode(
-            decoder: &mut RESP3Decoder,
-        ) -> Result<<RESP3Decoder as Decoder>::Item, <RESP3Decoder as Decoder>::Error> {
+            decoder: &mut Resp3Decoder,
+        ) -> Result<<Resp3Decoder as Decoder>::Item, <Resp3Decoder as Decoder>::Error> {
             let src = &mut decoder.buf;
 
             if src.is_empty() {
@@ -2328,7 +2328,7 @@ mod frame_tests {
 
     #[test]
     fn decode_resume() {
-        let mut decoder = RESP3Decoder::default();
+        let mut decoder = Resp3Decoder::default();
 
         let mut src = BytesMut::from("*2\r\n");
         let src_clone = src.clone();
@@ -2488,12 +2488,12 @@ mod frame_tests {
         ];
 
         for (case, expected_encoding) in cases {
-            let mut encoder = RESP3Encoder;
-            let mut decoder = RESP3Decoder::default();
+            let mut encoder = Resp3Encoder;
+            let mut decoder = Resp3Decoder::default();
             let mut buf = BytesMut::new();
 
             // Encode the case
-            encoder.encode(case.clone(), &mut buf).unwrap();
+            encoder.encode(&case, &mut buf).unwrap();
 
             // Assert the encoded result is correct
             assert_eq!(

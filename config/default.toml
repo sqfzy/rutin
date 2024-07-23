@@ -1,7 +1,7 @@
 [server]
 addr = "127.0.0.1"
 port = 6379                     # 服务器端口
-expire_check_interval_secs = 60 # 检查过期键的频率，单位为秒
+expire_check_interval_secs = 10 # 检查过期键的频率，单位为秒
 log_level = "off"               # 日志级别
 max_connections = 256           # 最大连接数
 max_batch = 1024                # 最大批量操作数
@@ -59,10 +59,10 @@ max_replica = 10 # 最多允许多少个从服务器连接到当前服务器
 # # auto-aof-rewrite-percentage 100
 # # auto-aof-rewrite-min-size 64mb
 
-[memory]
-
-maxmemory = 1844674407370955161
-
+# [memory]
+#
+# maxmemory = 1844674407370955161
+#
 # MAXMEMORY POLICY: how Redis will select what to remove when maxmemory
 # is reached. You can select one from the following behaviors:
 #
@@ -90,9 +90,9 @@ maxmemory = 1844674407370955161
 #
 # The default is:
 #
-maxmemory_policy = "noeviction"
-
-maxmemory_samples = 5
+# maxmemory_policy = "noeviction"
+#
+# maxmemory_samples = 5
 
 # [tls]
 # port = 6379

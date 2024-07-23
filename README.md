@@ -54,14 +54,7 @@ Ruin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 ## 8）OOM处理
 
-​	在Redis中，用户可以选择不同的OOM处理策略（`AllKeysLRU`，`AllKeysLFU`，`AllKeysRandom`，`NoEviction`等），Ruin也提供了相同的支持，具体做法为：Rutin中每个键都有20bit用于记录最新的`access time`，有12bit用于记录最新的`access count`，每次访问键，都会更新access time，并有$\frac{1} {count / 2}$的概率access count增1。每次企图修改Object（获取写锁）时，都会检查是否OOM，如果是，（以AllKeysLRU为例）则随机选择`maxmemory_samples`个键，并挑出access time最旧的一个键，淘汰掉。如此往复，直到有了新的可用内存（**Tip**：该检查只保证修改之前必须有可用的内存，但不保证修改后的使用内存不超出`maxmemory`）
-
-判断是否达到了OOM：
-
-1. Rutin中设有一个USED_MEMORY全局变量用于统计已使用内存，并用于判断是否达到OOM。每个Str Object的创建和释放都会更新该值。由于占用内存的大部分都是Str Object（其余类型，如List，Hash等，它们的基本元素也是Str Object），因此USED_MEMORY可作为粗略的估计。
-2. 在程序启动时，Rutin会每秒检查一次进程的内存使用量，并更新USED_MEMORY，确保USED_MEMORY的值不会有太大的误差
-
-
+​	在Redis中，用户可以选择不同的OOM处理策略（`AllKeysLRU`，`AllKeysLFU`，`AllKeysRandom`，`NoEviction`等），Ruin也提供了相同的支持，具体做法为：Rutin中每个键都有20bit用于记录最新的`access time`，有12bit用于记录最新的`access count`，每次访问键，都会更新access time（通过一个全局的`LRU_CLOCK`更新，该时钟每一分钟增1），并有$\frac{1} {count / 2}$的概率access count增1。Rutin每300毫秒会更新一次`USED_MEMORY`，每次企图修改Object（获取写锁）时，都会检查是否OOM，如果是，（以AllKeysLRU为例）则随机选择`maxmemory_samples`个键，并挑出access time最旧的一个键，淘汰掉。如此往复，直到有了新的可用内存（**Tip**：该检查只保证修改之前必须有可用的内存，但不保证修改后的使用内存不超出`maxmemory`）
 
 
 

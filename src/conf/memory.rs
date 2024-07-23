@@ -44,17 +44,14 @@ impl MemoryConf {
 
         // 一直淘汰直到有空余的内存或者达到循环次数限制
         loop {
-            let used_mem = if let Some(used_mem) = USED_MEMORY.get() {
-                used_mem.load(Ordering::Relaxed)
-            } else {
-                // 不存在MemoryConf
-                return Ok(());
-            };
+            let used_mem = USED_MEMORY.load(Ordering::Relaxed);
 
             if self.maxmemory > used_mem {
                 // 仍有可用内存
                 return Ok(());
             }
+
+            // PERF:
 
             // 如果策略是不淘汰，或者采样数设为0，直接返回内存不足错误
             if matches!(self.maxmemory_policy, Policy::NoEviction) || self.maxmemory_samples == 0 {

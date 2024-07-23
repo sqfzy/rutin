@@ -1,7 +1,7 @@
 use crate::{
     cmd::dispatch,
     conf::Conf,
-    frame::RESP3Decoder,
+    frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
     server::Handler,
     shared::Shared,
@@ -171,7 +171,7 @@ impl Aof {
         }
 
         let (mut handler, _) = Handler::new_fake_with(self.shared.clone(), None, None);
-        let mut decoder = RESP3Decoder::default();
+        let mut decoder = Resp3Decoder::default();
         while let Some(cmd_frame) = decoder.decode(&mut buf)? {
             dispatch(cmd_frame, &mut handler).await?;
         }

@@ -1,0 +1,15 @@
+ Performance counter stats for 'cargo run --release':
+
+         24,641.80 msec task-clock:u                     #    6.144 CPUs utilized
+                 0      context-switches:u               #    0.000 /sec
+                 0      cpu-migrations:u                 #    0.000 /sec
+            17,522      page-faults:u                    #  711.068 /sec
+   <not supported>      cycles:u
+   <not supported>      instructions:u
+   <not supported>      branches:u
+   <not supported>      branch-misses:u
+
+       4.010482993 seconds time elapsed
+
+      19.433348000 seconds user
+       5.838204000 seconds sys

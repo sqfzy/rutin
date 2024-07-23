@@ -1,11 +1,10 @@
-use std::sync::Arc;
-
 use super::*;
 use crate::{
     error::{RutinError, RutinResult},
     Key,
 };
 use dashmap::mapref::entry::{self, Entry};
+use std::sync::{atomic::Ordering, Arc};
 use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
 
@@ -110,8 +109,8 @@ impl ObjectEntry<'_> {
             Entry::Occupied(ref mut e) => {
                 if let Some(inner) = e.get().inner() {
                     object
-                        .atc
-                        .store(inner.atc.load(Ordering::Relaxed), Ordering::Relaxed);
+                        .lru
+                        .store(inner.lru.load(Ordering::Relaxed), Ordering::Relaxed);
                 }
                 let mut old_obj = e.insert(object.into());
 
