@@ -2,6 +2,7 @@
 /benches/perf/*
 /benches/flamegraph
 /temp
+/ca
 env/
 
 dump.rdb
