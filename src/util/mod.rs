@@ -37,9 +37,9 @@ impl Deref for UnixEpoch {
 }
 
 // 模拟服务端，接收客户端的命令并打印
-#[cfg(feature = "fake_server")]
+#[cfg(feature = "debug_server")]
 #[allow(dead_code)]
-pub async fn fake_server() {
+pub async fn debug_server() {
     use crate::{conf::Conf, util::test_init};
     use std::sync::Arc;
 
@@ -67,9 +67,9 @@ pub async fn fake_server() {
 }
 
 // 模拟客户端，发送命令给服务端并打印响应
-#[cfg(feature = "fake_client")]
+#[cfg(feature = "debug_client")]
 #[allow(dead_code)]
-pub async fn fake_client() {
+pub async fn debug_client() {
     use crate::frame::Resp3;
     use bytes::BytesMut;
     use clap::Parser;

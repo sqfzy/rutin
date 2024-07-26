@@ -15,7 +15,6 @@ pub mod conf;
 pub mod connection;
 pub mod error;
 pub mod frame;
-pub mod init;
 pub mod persist;
 pub mod server;
 pub mod shared;

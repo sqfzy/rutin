@@ -1,6 +1,7 @@
 /target
 /benches/perf/*
-/temp/*/*
+/benches/flamegraph
+/temp
 env/
 
 dump.rdb

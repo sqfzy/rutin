@@ -4,6 +4,7 @@ port = 6379                     # 服务器端口
 expire_check_interval_secs = 60 # 检查过期键的频率，单位为秒
 log_level = "off"               # 日志级别
 max_connections = 256           # 最大连接数
+# max_batch = 10240               # 最大批量操作数
 
 [security]
 # requirepass = "passwd" # 主服务器密码。当设置该值之后，客户端连接到服务器时需要发送AUTH命令进行认证

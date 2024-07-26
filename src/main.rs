@@ -1,22 +1,28 @@
 use rutin::conf;
+use std::str::FromStr;
 
 #[tokio::main]
 async fn main() {
-    #[cfg(feature = "fake_server")]
+    #[cfg(feature = "debug_server")]
     {
-        rutin::util::fake_server().await;
+        rutin::util::debug_server().await;
         return;
     }
 
-    #[cfg(feature = "fake_client")]
+    #[cfg(feature = "debug_client")]
     {
-        rutin::util::fake_client().await;
+        rutin::util::debug_client().await;
         return;
     }
 
     let conf = conf::Conf::new().unwrap();
 
-    rutin::init::init(conf.server.log_level.as_str());
+    if let Ok(level) = tracing::Level::from_str(conf.server.log_level.as_str()) {
+        tracing_subscriber::fmt()
+            .pretty()
+            .with_max_level(level)
+            .init();
+    }
 
     let listener =
         tokio::net::TcpListener::bind(format!("{}:{}", conf.server.addr, conf.server.port))
