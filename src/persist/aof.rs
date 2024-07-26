@@ -119,7 +119,7 @@ impl Aof {
                             self.file.sync_data().await?;
                         }
                         wcmd = wcmd_receiver.recv() => {
-                            let  wcmd = wcmd?;
+                            let wcmd = wcmd?;
 
                             curr_aof_size += wcmd.len() as u128;
                             if curr_aof_size >= auto_aof_rewrite_min_size {

@@ -12,9 +12,9 @@ pub use str::*;
 pub use zset::*;
 
 use crate::{
-    conf::get_lru_clock,
     error::{RutinError, RutinResult},
     frame::Resp3,
+    server::get_lru_clock,
     server::ID,
     shared::db::{
         object_entry::{IntentionLock, ObjectEntry},

@@ -1,6 +1,6 @@
 use crate::{
-    conf::USED_MEMORY,
     error::{RutinError, RutinResult},
+    server::USED_MEMORY,
     shared::db::Db,
 };
 use rand::seq::IteratorRandom;

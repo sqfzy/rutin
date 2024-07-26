@@ -314,7 +314,7 @@ impl Db {
 #[cfg(test)]
 pub mod db_tests {
     use crate::{
-        conf::get_lru_clock,
+        server::get_lru_clock,
         util::{get_test_db, test_init},
     };
 
