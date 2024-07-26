@@ -60,6 +60,7 @@ Ruin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 # Benchmark
 
+<img src="https://github.com/sqfzy/rutin/blob/main/benches/bench_batch_throughput%26latency_get.html" alt="替代文本" style="width:300px;height:200px;">
 
 
 
