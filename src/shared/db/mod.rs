@@ -4,7 +4,6 @@ mod object_entry;
 pub use object::*;
 use object_entry::IntentionLock;
 pub use object_entry::ObjectEntry;
-use std::sync::Arc;
 
 use crate::{
     conf::Conf,
@@ -19,8 +18,61 @@ use dashmap::{
     DashMap, DashSet,
 };
 use flume::Sender;
+use std::{cell::UnsafeCell, ops::Deref, sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tracing::instrument;
+
+pub static NEVER_EXPIRE: NeverExpire = NeverExpire(UnsafeCell::new(None));
+
+// 使用前必须在单线程中初始化
+pub struct NeverExpire(UnsafeCell<Option<Instant>>);
+
+unsafe impl Send for NeverExpire {}
+unsafe impl Sync for NeverExpire {}
+
+impl NeverExpire {
+    pub fn init(&self) {
+        unsafe {
+            if (*self.0.get()).is_none() {
+                *self.0.get() = Some(Instant::now() + Duration::from_secs(3600 * 24 * 365));
+            }
+        };
+    }
+}
+
+impl PartialEq<Instant> for NeverExpire {
+    fn eq(&self, other: &Instant) -> bool {
+        debug_assert!(unsafe { *self.0.get() }.is_some());
+
+        unsafe { *self.0.get() }.unwrap().eq(other)
+    }
+}
+
+impl PartialOrd<Instant> for NeverExpire {
+    fn partial_cmp(&self, other: &Instant) -> Option<std::cmp::Ordering> {
+        debug_assert!(unsafe { *self.0.get() }.is_some());
+
+        unsafe { (*self.0.get()).unwrap_unchecked() }.partial_cmp(other)
+    }
+}
+
+impl From<NeverExpire> for Instant {
+    fn from(val: NeverExpire) -> Self {
+        debug_assert!(unsafe { *val.0.get() }.is_some());
+
+        unsafe { (*val.0.get()).unwrap_unchecked() }
+    }
+}
+
+impl Deref for NeverExpire {
+    type Target = Instant;
+
+    fn deref(&self) -> &Self::Target {
+        debug_assert!(unsafe { *self.0.get() }.is_some());
+
+        unsafe { (*self.0.get()).as_ref().unwrap_unchecked() }
+    }
+}
 
 #[derive(Debug)]
 pub struct Db {
@@ -47,6 +99,9 @@ pub struct Db {
 
 impl Db {
     pub fn new(conf: Arc<Conf>) -> Self {
+        // 初始化NEVER_EXPIRE
+        NEVER_EXPIRE.init();
+
         Self {
             entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
@@ -135,11 +190,11 @@ impl Db {
         }
 
         // 如果old_expire不为NEVER_EXPIRE ，则记录中存有旧的过期时间需要移除
-        if old_ex != *NEVER_EXPIRE {
+        if NEVER_EXPIRE != old_ex {
             self.entry_expire_records.remove(&(old_ex, key.clone()));
         }
         // 如果new_expire不为NEVER_EXPIRE ，则需要记录新的过期时间
-        if new_ex != *NEVER_EXPIRE && new_ex > Instant::now() {
+        if NEVER_EXPIRE != new_ex && new_ex > Instant::now() {
             self.entry_expire_records.insert((new_ex, key.clone()));
         }
     }
@@ -176,7 +231,6 @@ impl Db {
             if let Some(inner) = e.value().inner() {
                 // 对象未过期
                 if !inner.is_expired() {
-                    // PERF:
                     inner.update_lru();
                     return Ok(e);
                 }
@@ -205,7 +259,6 @@ impl Db {
                     return Err(RutinError::Null);
                 }
 
-                // PERF:
                 inner.update_lru();
             }
         }
@@ -313,10 +366,7 @@ impl Db {
 
 #[cfg(test)]
 pub mod db_tests {
-    use crate::{
-        server::get_lru_clock,
-        util::{get_test_db, test_init},
-    };
+    use crate::util::{get_test_db, test_init};
 
     use super::*;
 
@@ -330,7 +380,6 @@ pub mod db_tests {
         db.insert_object("key1".into(), ObjectInner::new_str("value1", *NEVER_EXPIRE))
             .await
             .unwrap();
-        assert_eq!(get_lru_clock(), 0);
 
         let res = db
             .get(&"key1".into())
@@ -341,7 +390,6 @@ pub mod db_tests {
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value1".as_bytes());
-        assert_eq!(get_lru_clock(), 1);
 
         // 有对象时插入对象，触发旧对象的Update事件
         let (tx, rx) = flume::unbounded();
@@ -361,7 +409,6 @@ pub mod db_tests {
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
-        assert_eq!(get_lru_clock(), 4);
 
         let res = rx.recv().unwrap();
         assert_eq!(&res.to_bytes(), "key1");
@@ -383,7 +430,6 @@ pub mod db_tests {
             .unwrap()
             .to_bytes();
         assert_eq!(res, "value2".as_bytes());
-        assert_eq!(get_lru_clock(), 5);
 
         let res = rx.recv().unwrap();
         assert_eq!(&res.to_bytes(), "key2");

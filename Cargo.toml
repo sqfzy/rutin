@@ -43,7 +43,7 @@ ahash = "0.8.11"
 strum = { version = "0.26", features = ["derive"] }
 num_cpus = "1.16.0"
 regex = { version = "1.10.4", features = ["perf"] }
-monoio = "0.2.3"
+# monoio = "0.2.3"
 # lockfree-object-pool = "0.1.5"
 # async-recursion = "1.1.1"
 snafu = "0.8.2"

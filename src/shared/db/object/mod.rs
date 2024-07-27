@@ -6,7 +6,6 @@ mod zset;
 
 pub use hash::*;
 pub use list::*;
-use rand::Rng;
 pub use set::*;
 pub use str::*;
 pub use zset::*;
@@ -14,54 +13,26 @@ pub use zset::*;
 use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::get_lru_clock,
-    server::ID,
+    server::{get_lru_clock, ID},
     shared::db::{
         object_entry::{IntentionLock, ObjectEntry},
-        Db,
+        Db, NEVER_EXPIRE,
     },
     Id, Key,
 };
 use dashmap::mapref::entry::Entry;
 use flume::Sender;
+use rand::Rng;
 use std::{
     ops::Deref,
     sync::{
         atomic::{AtomicU32, Ordering::Relaxed},
-        Arc, OnceLock,
+        Arc,
     },
-    time::Duration,
 };
 use strum::{EnumDiscriminants, EnumProperty, IntoStaticStr};
 use tokio::{sync::Notify, time::Instant};
 use tracing::instrument;
-
-pub static NEVER_EXPIRE: NeverExpire = NeverExpire::new();
-
-pub struct NeverExpire(OnceLock<Instant>);
-
-impl NeverExpire {
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self(OnceLock::new())
-    }
-}
-
-impl Deref for NeverExpire {
-    type Target = Instant;
-
-    fn deref(&self) -> &Self::Target {
-        // Copy from `tokio`, actually expect Instant::MAX.
-        // This may change in the future.
-        //
-        // Roughly 30 years from now.
-        // API does not provide a way to obtain max `Instant`
-        // or convert specific date in the future to instant.
-        // 1000 years overflows on macOS, 100 years overflows on FreeBSD.
-        self.0
-            .get_or_init(|| Instant::now() + Duration::from_secs(86400 * 365 * 30))
-    }
-}
 
 // 对象可以为空对象(不存储对象值)，只存储事件
 #[derive(Debug, Default)]
@@ -638,6 +609,7 @@ impl ObjectInner {
     ///  access time更新为lru_clock，access count加1
     #[inline]
     pub fn update_lru(&self) {
+        // PERF:
         let atc = self.lru.load(Relaxed);
 
         let count = atc & Lru::LFU_MASK;
@@ -1020,13 +992,15 @@ impl From<ZSet> for ObjValue {
 
 #[cfg(test)]
 mod object_tests {
-    use crate::util::get_test_db;
+    use crate::util::{get_test_db, test_init};
 
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn may_update_test() {
+        test_init();
+
         let mut obj = Object::new_str("".into(), *NEVER_EXPIRE);
 
         let (tx, rx) = flume::unbounded();
@@ -1041,6 +1015,8 @@ mod object_tests {
 
     #[test]
     fn track_test() {
+        test_init();
+
         let mut obj = Object::new_str("".into(), *NEVER_EXPIRE);
 
         let (tx, rx) = flume::unbounded();
@@ -1062,6 +1038,8 @@ mod object_tests {
 
     #[tokio::test]
     async fn intention_lock_test() {
+        test_init();
+
         let flag = Arc::new(AtomicUsize::new(0));
         let db = Arc::new(get_test_db());
 

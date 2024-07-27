@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use crate::{
     conf::{
@@ -6,7 +6,10 @@ use crate::{
         ServerConf,
     },
     persist::aof::AppendFSync,
-    shared::{db::Db, Shared},
+    shared::{
+        db::{Db, NEVER_EXPIRE},
+        Shared,
+    },
 };
 use arc_swap::ArcSwap;
 use crossbeam::atomic::AtomicCell;
@@ -18,9 +21,15 @@ pub const TEST_AC_PASSWORD: &str = "test_pwd";
 pub const TEST_AC_CMD_FLAG: u128 = 0x010;
 
 pub fn test_init() {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
-        .init();
+    static INIT: Once = Once::new();
+
+    INIT.call_once(|| {
+        NEVER_EXPIRE.init();
+
+        tracing_subscriber::fmt()
+            .with_max_level(Level::DEBUG)
+            .init();
+    });
 }
 
 pub fn get_test_config() -> Arc<Conf> {

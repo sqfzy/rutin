@@ -787,11 +787,8 @@ mod rdb_test {
     use super::rdb_load::*;
     use super::rdb_save::*;
     use super::*;
-    use crate::util::test_init;
-    use crate::{
-        shared::db::{ObjectInner, NEVER_EXPIRE},
-        util::get_test_shared,
-    };
+    use crate::{shared::db::ObjectInner, util::get_test_shared};
+    use crate::{shared::db::NEVER_EXPIRE, util::test_init};
     use bytes::BytesMut;
     use tokio::time::Instant;
 
