@@ -60,9 +60,103 @@ Ruin是使用rust构建的redis-like数据库。该项目仍处于早期阶段�
 
 # Benchmark
 
-![bench_batch_throughput_latency_get](https://cdn.jsdelivr.net/gh/sqfzy/typora_img@main/imgs/bench_batch_throughput_latency_get.svg)
+### [Benchmark: GET command, varying batch size, measuring throughput and latency](https://github.com/sqfzy/rutin/blob/main/benches/bench_batch_throughput&latency_get.html)
+
+Batch Size: 1:
+	Redis Throughput (Kops/sec): 100.20039999999999, Redis Latency (msec): 0.399
+	Rutin Throughput (Kops/sec): 102.66941, Rutin Latency (msec): 0.399
+Batch Size: 4:
+	Redis Throughput (Kops/sec): 375.93984, Redis Latency (msec): 0.439
+	Rutin Throughput (Kops/sec): 412.79672, Rutin Latency (msec): 0.391
+Batch Size: 16:
+	Redis Throughput (Kops/sec): 1560.9756200000002, Redis Latency (msec): 0.407
+	Rutin Throughput (Kops/sec): 1445.34775, Rutin Latency (msec): 0.463
+Batch Size: 64:
+	Redis Throughput (Kops/sec): 3429.79625, Redis Latency (msec): 0.815
+	Rutin Throughput (Kops/sec): 3450.13475, Rutin Latency (msec): 0.767
+Batch Size: 256:
+	Redis Throughput (Kops/sec): 4056.84725, Redis Latency (msec): 3.015
+	Rutin Throughput (Kops/sec): 5691.5925, Rutin Latency (msec): 1.871
+Batch Size: 1024:
+	Redis Throughput (Kops/sec): 4370.797, Redis Latency (msec): 7.503
+	Rutin Throughput (Kops/sec): 6472.7405, Rutin Latency (msec): 6.951
 
 
+
+### [Benchmark: SET command, varying batch size, measuring throughput and latency](https://github.com/sqfzy/rutin/blob/main/benches/bench_batch_throughput&latency_set.html)
+
+Batch Size: 1:
+	Redis Throughput (Kops/sec): 97.65624000000001, Redis Latency (msec): 0.415
+	Rutin Throughput (Kops/sec): 98.81423, Rutin Latency (msec): 0.415
+Batch Size: 4:
+	Redis Throughput (Kops/sec): 394.86672, Redis Latency (msec): 0.407
+	Rutin Throughput (Kops/sec): 382.77512, Rutin Latency (msec): 0.423
+Batch Size: 16:
+	Redis Throughput (Kops/sec): 1376.9363799999999, Redis Latency (msec): 0.463
+	Rutin Throughput (Kops/sec): 1249.02412, Rutin Latency (msec): 0.543
+Batch Size: 64:
+	Redis Throughput (Kops/sec): 2212.2365, Redis Latency (msec): 1.263
+	Rutin Throughput (Kops/sec): 2910.414, Rutin Latency (msec): 0.911
+Batch Size: 256:
+	Redis Throughput (Kops/sec): 2896.0695, Redis Latency (msec): 4.207
+	Rutin Throughput (Kops/sec): 5268.7715, Rutin Latency (msec): 1.887
+Batch Size: 1024:
+	Redis Throughput (Kops/sec): 2991.78425, Redis Latency (msec): 8.119
+	Rutin Throughput (Kops/sec): 6782.2205, Rutin Latency (msec): 5.743
+
+### [Benchmark: GET command, varying client sessions, measuring throughput and latency](https://github.com/sqfzy/rutin/blob/main/benches/bench_client_throughput&latency_get.html)
+
+Client Sessions: 1:
+	Redis Throughput (Kops/sec): 7.75795, Redis Latency (msec): 0.119
+	Rutin Throughput (Kops/sec): 8.285, Rutin Latency (msec): 0.111
+Client Sessions: 2:
+	Redis Throughput (Kops/sec): 12.82051, Redis Latency (msec): 0.143
+	Rutin Throughput (Kops/sec): 11.19821, Rutin Latency (msec): 0.167
+Client Sessions: 4:
+	Redis Throughput (Kops/sec): 23.64066, Redis Latency (msec): 0.159
+	Rutin Throughput (Kops/sec): 19.92032, Rutin Latency (msec): 0.191
+Client Sessions: 8:
+	Redis Throughput (Kops/sec): 39.525690000000004, Redis Latency (msec): 0.183
+	Rutin Throughput (Kops/sec): 36.36364, Rutin Latency (msec): 0.207
+Client Sessions: 16:
+	Redis Throughput (Kops/sec): 61.72839, Redis Latency (msec): 0.231
+	Rutin Throughput (Kops/sec): 59.1716, Rutin Latency (msec): 0.239
+Client Sessions: 32:
+	Redis Throughput (Kops/sec): 84.74577000000001, Redis Latency (msec): 0.311
+	Rutin Throughput (Kops/sec): 82.64461999999999, Rutin Latency (msec): 0.327
+Client Sessions: 64:
+	Redis Throughput (Kops/sec): 120.48192999999999, Redis Latency (msec): 0.391
+	Rutin Throughput (Kops/sec): 109.89011, Rutin Latency (msec): 0.471
+Client Sessions: 128:
+	Redis Throughput (Kops/sec): 123.45679, Redis Latency (msec): 0.759
+	Rutin Throughput (Kops/sec): 136.9863, Rutin Latency (msec): 0.687
+
+### [Benchmark: SET command, varying client sessions, measuring throughput and latency](https://github.com/sqfzy/rutin/blob/main/benches/bench_client_throughput&latency_set.html)
+
+Client Sessions: 1:
+	Redis Throughput (Kops/sec): 7.363770000000001, Redis Latency (msec): 0.119
+	Rutin Throughput (Kops/sec): 6.7750699999999995, Rutin Latency (msec): 0.135
+Client Sessions: 2:
+	Redis Throughput (Kops/sec): 11.24859, Redis Latency (msec): 0.175
+	Rutin Throughput (Kops/sec): 11.91895, Rutin Latency (msec): 0.159
+Client Sessions: 4:
+	Redis Throughput (Kops/sec): 19.23077, Redis Latency (msec): 0.199
+	Rutin Throughput (Kops/sec): 20.53388, Rutin Latency (msec): 0.191
+Client Sessions: 8:
+	Redis Throughput (Kops/sec): 35.71429, Redis Latency (msec): 0.207
+	Rutin Throughput (Kops/sec): 36.10108, Rutin Latency (msec): 0.207
+Client Sessions: 16:
+	Redis Throughput (Kops/sec): 56.17977, Redis Latency (msec): 0.247
+	Rutin Throughput (Kops/sec): 57.14286, Rutin Latency (msec): 0.247
+Client Sessions: 32:
+	Redis Throughput (Kops/sec): 88.49558, Redis Latency (msec): 0.295
+	Rutin Throughput (Kops/sec): 83.33333999999999, Rutin Latency (msec): 0.327
+Client Sessions: 64:
+	Redis Throughput (Kops/sec): 117.64705000000001, Redis Latency (msec): 0.423
+	Rutin Throughput (Kops/sec): 112.35955, Rutin Latency (msec): 0.423
+Client Sessions: 128:
+	Redis Throughput (Kops/sec): 147.05881, Redis Latency (msec): 0.631
+	Rutin Throughput (Kops/sec): 128.20512, Rutin Latency (msec): 0.799
 
 
 
