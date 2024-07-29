@@ -1,8 +1,11 @@
+mod replica;
 mod test;
+
+pub use replica::*;
+pub use test::*;
 
 use bytes::Bytes;
 use snafu::OptionExt;
-pub use test::*;
 
 use crate::{
     error::{A2IParseSnafu, RutinError, RutinResult},

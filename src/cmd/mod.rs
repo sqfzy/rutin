@@ -52,6 +52,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>>;
 
+    // 需要检查是否有权限操作对应的键
     fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self>;
 }
 

@@ -92,6 +92,8 @@ impl<S: AsyncStream> Connection<S> {
     pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 32]>>> {
         let mut frames = SmallVec::new();
 
+        self.reader_buf.reserve(1024);
+
         loop {
             let frame = match Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await? {
                 Some(frame) => frame,

@@ -1,15 +1,16 @@
+use arc_swap::ArcSwapOption;
+use bytestring::ByteString;
 use clap::Parser;
+use std::sync::Arc;
 
 #[derive(Parser)]
 pub struct Cli {
     #[clap(short, long)]
     pub port: Option<u16>,
-    #[clap(long)]
-    pub replicaof: Option<String>,
+    #[clap(long, value_parser = parse_replicaof)]
+    pub replicaof: Option<(ByteString, u16)>,
     #[clap(long)]
     pub log_level: Option<String>,
-    // #[clap(long)]
-    // pub rdb_path: Option<String>,
 }
 
 pub fn merge_cli(conf: &mut crate::conf::Conf, cli: Cli) {
@@ -17,11 +18,24 @@ pub fn merge_cli(conf: &mut crate::conf::Conf, cli: Cli) {
         conf.server.port = port;
     }
 
-    if let Some(replicaof) = cli.replicaof {
-        conf.replica.replicaof = Some(replicaof);
+    if let Some(addr) = cli.replicaof {
+        conf.replica.master_addr = ArcSwapOption::new(Some(Arc::new(addr)));
     }
 
     if let Some(log_level) = cli.log_level {
         conf.server.log_level = log_level;
     }
+}
+
+fn parse_replicaof(s: &str) -> Result<(ByteString, u16), String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "'{}' is not in the correct format. Expected 'host:port'",
+            s
+        ));
+    }
+    let host = parts[0].into();
+    let port = parts[1].parse::<u16>().map_err(|e| e.to_string())?;
+    Ok((host, port))
 }

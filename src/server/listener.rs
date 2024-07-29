@@ -2,6 +2,7 @@ use super::Handler;
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
     shared::{db::Lru, Shared},
+    util::get_test_shared,
 };
 use async_shutdown::DelayShutdownToken;
 use backon::Retryable;

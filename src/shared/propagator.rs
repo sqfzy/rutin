@@ -1,5 +1,5 @@
 use arc_swap::ArcSwap;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use kanal::{AsyncReceiver, Sender};
 use std::sync::Arc;
 
@@ -76,8 +76,10 @@ impl Propagator {
         }
 
         // PERF:
-
         let wcmd = WCMD_BUF.with_borrow_mut(|buf| {
+            if buf.capacity() < 256 {
+                buf.reserve(4096);
+            }
             Resp3::from(cmd).encode_buf(buf);
             buf.split().freeze()
         });

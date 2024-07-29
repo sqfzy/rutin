@@ -4,6 +4,7 @@ mod key;
 mod list;
 mod other;
 mod pub_sub;
+mod replica;
 mod script;
 mod set;
 mod str;
@@ -85,3 +86,7 @@ pub(super) const ACLDELUSER_FLAG: CmdFlag = 1 << 52;
 pub(super) const ACLSETUSER_FLAG: CmdFlag = 1 << 53;
 pub(super) const ACLWHOAMI_FLAG: CmdFlag = 1 << 54;
 pub(super) const ACLUSERS_FLAG: CmdFlag = 1 << 55;
+
+pub(super) const PSYNC_FLAG: CmdFlag = 1 << 56;
+pub(super) const REPLCONF_FLAG: CmdFlag = 1 << 57;
+pub(super) const REPLICAOF_FLAG: CmdFlag = 1 << 58;

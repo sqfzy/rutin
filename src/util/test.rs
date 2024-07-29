@@ -11,7 +11,7 @@ use crate::{
         Shared,
     },
 };
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use crossbeam::atomic::AtomicCell;
 use rand::Rng;
 use tracing::Level;
@@ -66,10 +66,10 @@ pub fn get_test_config() -> Arc<Conf> {
             acl: Some(acl),
         },
         replica: ReplicaConf {
-            replicaof: None,
+            master_addr: ArcSwapOption::new(None),
             max_replica: 6,
             offset: AtomicCell::new(0),
-            masterauth: None,
+            master_auth: None,
         },
         rdb: Some(RdbConf {
             file_path: "dump.rdb".to_string(),

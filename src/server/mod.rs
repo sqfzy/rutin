@@ -30,7 +30,7 @@ task_local! { pub static ID: Id; }
 
 thread_local! {
     pub static SYSTEM: RefCell<System>  = RefCell::new(System::new_all());
-    pub static WCMD_BUF: RefCell<BytesMut>  = RefCell::new(BytesMut::new());
+    pub static WCMD_BUF: RefCell<BytesMut>  = RefCell::new(BytesMut::with_capacity(4096));
 }
 
 #[inline]
