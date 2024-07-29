@@ -51,7 +51,7 @@ impl CmdExecutor for HDel {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -99,7 +99,7 @@ impl CmdExecutor for HExists {
         Ok(Some(Resp3::new_integer(if exists { 1 } else { 0 })))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -147,7 +147,7 @@ impl CmdExecutor for HGet {
         Ok(value.map(|b| Resp3::new_blob_string(b.to_bytes())))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -197,7 +197,7 @@ impl CmdExecutor for HSet {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 3 || args.len() % 2 != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -232,7 +232,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            &mut ["key", "field1", "value1", "field2", "value2"]
+            ["key", "field1", "value1", "field2", "value2"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -244,7 +244,7 @@ mod cmd_hash_tests {
         );
 
         let hdel = HDel::parse(
-            &mut ["key", "field1", "field2"].as_ref().into(),
+            ["key", "field1", "field2"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -255,7 +255,7 @@ mod cmd_hash_tests {
         );
 
         let hdel = HDel::parse(
-            &mut ["key", "field1", "field2"].as_ref().into(),
+            ["key", "field1", "field2"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -271,7 +271,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            &mut ["key", "field1", "value1", "field2", "value2"]
+            ["key", "field1", "value1", "field2", "value2"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -283,7 +283,7 @@ mod cmd_hash_tests {
         );
 
         let hexists = HExists::parse(
-            &mut ["key", "field1"].as_ref().into(),
+            ["key", "field1"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -293,7 +293,7 @@ mod cmd_hash_tests {
         );
 
         let hexists = HExists::parse(
-            &mut ["key", "field3"].as_ref().into(),
+            ["key", "field3"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -309,7 +309,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            &mut ["key", "field1", "value1", "field2", "value2"]
+            ["key", "field1", "value1", "field2", "value2"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -321,7 +321,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            &mut ["key", "field1"].as_ref().into(),
+            ["key", "field1"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -331,7 +331,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            &mut ["key", "field3"].as_ref().into(),
+            ["key", "field3"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -344,7 +344,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            &mut ["key", "field1", "value1", "field2", "value2"]
+            ["key", "field1", "value1", "field2", "value2"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -356,7 +356,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            &mut ["key", "field1"].as_ref().into(),
+            ["key", "field1"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -366,7 +366,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            &mut ["key", "field2"].as_ref().into(),
+            ["key", "field2"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();

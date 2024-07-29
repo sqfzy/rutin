@@ -35,7 +35,7 @@ impl CmdExecutor for Eval {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -43,7 +43,15 @@ impl CmdExecutor for Eval {
         let script = args.next().unwrap();
         let numkeys = atoi::<usize>(&args.next().unwrap())?;
 
-        let keys = args.take(numkeys).collect();
+        if numkeys == 0 {
+            return Ok(Eval {
+                script,
+                keys: vec![],
+                args: args.collect(),
+            });
+        }
+
+        let keys = args.by_ref().take(numkeys).collect();
         let args = args.collect();
 
         Ok(Eval { script, keys, args })
@@ -74,7 +82,7 @@ impl CmdExecutor for EvalName {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -82,7 +90,15 @@ impl CmdExecutor for EvalName {
         let name = args.next().unwrap();
         let numkeys = atoi::<usize>(&args.next().unwrap())?;
 
-        let keys = args.take(numkeys).collect();
+        if numkeys == 0 {
+            return Ok(EvalName {
+                name,
+                keys: vec![],
+                args: args.collect(),
+            });
+        }
+
+        let keys = args.by_ref().take(numkeys).collect();
         let args = args.collect();
 
         Ok(EvalName { name, keys, args })
@@ -113,7 +129,7 @@ impl CmdExecutor for ScriptExists {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -139,7 +155,7 @@ impl CmdExecutor for ScriptFlush {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -170,7 +186,7 @@ impl CmdExecutor for ScriptRegister {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -191,7 +207,7 @@ mod cmd_script_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let eval = Eval::parse(
-            &mut ["return 1", "0"].as_ref().into(),
+            ["return 1", "0"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -199,7 +215,7 @@ mod cmd_script_tests {
         assert_eq!(res, Resp3::new_integer(1));
 
         let eval = Eval::parse(
-            &mut ["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"]
+            ["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -209,7 +225,7 @@ mod cmd_script_tests {
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let eval = Eval::parse(
-            &mut ["return redis.call('get', KEYS[1])", "1", "key"]
+            ["return redis.call('get', KEYS[1])", "1", "key"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -224,7 +240,7 @@ mod cmd_script_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let script_register = ScriptRegister::parse(
-            &mut ["test", "redis.call('set', KEYS[1], ARGV[1])"]
+            ["test", "redis.call('set', KEYS[1], ARGV[1])"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -238,7 +254,7 @@ mod cmd_script_tests {
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let script_exists = ScriptExists::parse(
-            &mut ["test", "nothing"].as_ref().into(),
+            ["test", "nothing"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -249,7 +265,7 @@ mod cmd_script_tests {
         );
 
         let eval_name = EvalName::parse(
-            &mut ["test", "1", "key", "value"].as_ref().into(),
+            ["test", "1", "key", "value"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -257,13 +273,12 @@ mod cmd_script_tests {
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let script_flush =
-            ScriptFlush::parse(&mut [].as_ref().into(), &AccessControl::new_loose()).unwrap();
+            ScriptFlush::parse(Default::default(), &AccessControl::new_loose()).unwrap();
         let res = script_flush.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let script_exists =
-            ScriptExists::parse(&mut ["test"].as_ref().into(), &AccessControl::new_loose())
-                .unwrap();
+            ScriptExists::parse(["test"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         let res = script_exists.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_array(vec![Resp3::new_boolean(false)]));
     }

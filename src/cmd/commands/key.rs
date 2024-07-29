@@ -67,7 +67,7 @@ impl CmdExecutor for Del {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -122,7 +122,7 @@ impl CmdExecutor for Dump {
         Ok(Some(Resp3::new_blob_string(buf.freeze())))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -161,7 +161,7 @@ impl CmdExecutor for Exists {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -256,7 +256,7 @@ impl CmdExecutor for Expire {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 && args.len() != 3 {
             return Err(RutinError::WrongArgNum);
         }
@@ -351,7 +351,7 @@ impl CmdExecutor for ExpireAt {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 && args.len() != 3 {
             return Err(RutinError::WrongArgNum);
         }
@@ -418,7 +418,7 @@ impl CmdExecutor for ExpireTime {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -476,7 +476,7 @@ impl CmdExecutor for Keys {
         Ok(Some(Resp3::new_array(matched_keys)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -555,7 +555,7 @@ impl CmdExecutor for NBKeys {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -606,7 +606,7 @@ impl CmdExecutor for Persist {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -658,7 +658,7 @@ impl CmdExecutor for Pttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -710,7 +710,7 @@ impl CmdExecutor for Ttl {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -754,7 +754,7 @@ impl CmdExecutor for Type {
         Ok(Some(Resp3::new_simple_string(typ.into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -791,7 +791,7 @@ mod cmd_key_tests {
 
         // case: 键存在
         let del = Del::parse(
-            &mut CmdUnparsed::from(["DEL", "key1"].as_ref()),
+            CmdUnparsed::from(["DEL", "key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -801,7 +801,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let del = Del::parse(
-            &mut CmdUnparsed::from(["DEL", "key_nil"].as_ref()),
+            CmdUnparsed::from(["DEL", "key_nil"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -824,7 +824,7 @@ mod cmd_key_tests {
 
         // case: 键存在
         let exists = Exists::parse(
-            &mut CmdUnparsed::from(["key1"].as_ref()),
+            CmdUnparsed::from(["key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -833,7 +833,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let exists = Exists::parse(
-            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            CmdUnparsed::from(["key_nil"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -862,7 +862,7 @@ mod cmd_key_tests {
 
         // case: 键存在，设置过期时间
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key1", "10"].as_ref()),
+            CmdUnparsed::from(["key1", "10"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -878,7 +878,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_nil", "10"].as_ref()),
+            CmdUnparsed::from(["key_nil", "10"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -899,7 +899,7 @@ mod cmd_key_tests {
         .unwrap();
         // case: with EX option
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -907,7 +907,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_without_ex", "10", "NX"].as_ref()),
+            CmdUnparsed::from(["key_without_ex", "10", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -929,7 +929,7 @@ mod cmd_key_tests {
 
         // case: with NX option
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "10", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -937,7 +937,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_without_ex", "10", "NX"].as_ref()),
+            CmdUnparsed::from(["key_without_ex", "10", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -959,7 +959,7 @@ mod cmd_key_tests {
 
         // case: with GT option
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "5", "GT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "5", "GT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -967,7 +967,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "20", "GT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "20", "GT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -989,7 +989,7 @@ mod cmd_key_tests {
 
         // case: with LT option
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "20", "LT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "20", "LT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -997,7 +997,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire = Expire::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "5", "LT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "5", "LT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1026,7 +1026,7 @@ mod cmd_key_tests {
 
         // case: 键存在，设置过期时间
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(
+            CmdUnparsed::from(
                 [
                     "key1",
                     "1893427200", // 2030-01-01 00:00:00
@@ -1048,7 +1048,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_nil", "1893427200"].as_ref()),
+            CmdUnparsed::from(["key_nil", "1893427200"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1073,7 +1073,7 @@ mod cmd_key_tests {
 
         // case: with EX option
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "1893427200", "NX"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "1893427200", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1081,7 +1081,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_without_ex", "1893427200", "NX"].as_ref()),
+            CmdUnparsed::from(["key_without_ex", "1893427200", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1106,7 +1106,7 @@ mod cmd_key_tests {
 
         // case: with NX option
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "1893427200", "NX"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "1893427200", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1114,7 +1114,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_without_ex", "1893427200", "NX"].as_ref()),
+            CmdUnparsed::from(["key_without_ex", "1893427200", "NX"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1139,7 +1139,7 @@ mod cmd_key_tests {
 
         // case: with GT option
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "1893427000", "GT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "1893427000", "GT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1147,7 +1147,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "1893427201", "GT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "1893427201", "GT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1172,7 +1172,7 @@ mod cmd_key_tests {
 
         // case: with LT option
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "1893427201", "LT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "1893427201", "LT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1180,7 +1180,7 @@ mod cmd_key_tests {
         matches!(result, RutinError::ErrCode { code } if code == 0);
 
         let expire_at = ExpireAt::parse(
-            &mut CmdUnparsed::from(["key_with_ex", "1893427000", "LT"].as_ref()),
+            CmdUnparsed::from(["key_with_ex", "1893427000", "LT"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1216,7 +1216,7 @@ mod cmd_key_tests {
 
         // case: 键存在，但没有过期时间
         let expire_time = ExpireTime::parse(
-            &mut CmdUnparsed::from(["key1"].as_ref()),
+            CmdUnparsed::from(["key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1225,7 +1225,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let expire_time = ExpireTime::parse(
-            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            CmdUnparsed::from(["key_nil"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1234,7 +1234,7 @@ mod cmd_key_tests {
 
         // case: 键存在且有过期时间
         let expire_time = ExpireTime::parse(
-            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            CmdUnparsed::from(["key_with_ex"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1276,7 +1276,7 @@ mod cmd_key_tests {
         .unwrap();
 
         let keys = Keys::parse(
-            &mut CmdUnparsed::from([".*"].as_ref()),
+            CmdUnparsed::from([".*"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1296,7 +1296,7 @@ mod cmd_key_tests {
         );
 
         let keys = Keys::parse(
-            &mut CmdUnparsed::from(["key*"].as_ref()),
+            CmdUnparsed::from(["key*"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1316,7 +1316,7 @@ mod cmd_key_tests {
         );
 
         let keys = Keys::parse(
-            &mut CmdUnparsed::from(["key1"].as_ref()),
+            CmdUnparsed::from(["key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1351,7 +1351,7 @@ mod cmd_key_tests {
 
         // case: 键存在，有过期时间
         let persist = Persist::parse(
-            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            CmdUnparsed::from(["key_with_ex"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1367,7 +1367,7 @@ mod cmd_key_tests {
 
         // case: 键存在，没有过期时间
         let persist = Persist::parse(
-            &mut CmdUnparsed::from(["key_without_ex"].as_ref()),
+            CmdUnparsed::from(["key_without_ex"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1376,7 +1376,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let persist = Persist::parse(
-            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            CmdUnparsed::from(["key_nil"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1413,7 +1413,7 @@ mod cmd_key_tests {
 
         // case: 键存在，但没有过期时间
         let pttl = Pttl::parse(
-            &mut CmdUnparsed::from(["key1"].as_ref()),
+            CmdUnparsed::from(["key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1422,7 +1422,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let pttl = Pttl::parse(
-            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            CmdUnparsed::from(["key_nil"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1431,7 +1431,7 @@ mod cmd_key_tests {
 
         // case: 键存在且有过期时间
         let pttl = Pttl::parse(
-            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            CmdUnparsed::from(["key_with_ex"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1474,7 +1474,7 @@ mod cmd_key_tests {
 
         // case: 键存在，但没有过期时间
         let ttl = Ttl::parse(
-            &mut CmdUnparsed::from(["key1"].as_ref()),
+            CmdUnparsed::from(["key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1483,7 +1483,7 @@ mod cmd_key_tests {
 
         // case: 键不存在
         let ttl = Ttl::parse(
-            &mut CmdUnparsed::from(["key_nil"].as_ref()),
+            CmdUnparsed::from(["key_nil"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1492,7 +1492,7 @@ mod cmd_key_tests {
 
         // case: 键存在且有过期时间
         let ttl = Ttl::parse(
-            &mut CmdUnparsed::from(["key_with_ex"].as_ref()),
+            CmdUnparsed::from(["key_with_ex"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1544,7 +1544,7 @@ mod cmd_key_tests {
 
         // case: 键存在
         let typ = Type::parse(
-            &mut CmdUnparsed::from(["key1"].as_ref()),
+            CmdUnparsed::from(["key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1559,7 +1559,7 @@ mod cmd_key_tests {
         assert_eq!(result, "string");
 
         let typ = Type::parse(
-            &mut CmdUnparsed::from(["key2"].as_ref()),
+            CmdUnparsed::from(["key2"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1574,7 +1574,7 @@ mod cmd_key_tests {
         assert_eq!(result, "list");
 
         let typ = Type::parse(
-            &mut CmdUnparsed::from(["key3"].as_ref()),
+            CmdUnparsed::from(["key3"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1589,7 +1589,7 @@ mod cmd_key_tests {
         assert_eq!(result, "set");
 
         let typ = Type::parse(
-            &mut CmdUnparsed::from(["key4"].as_ref()),
+            CmdUnparsed::from(["key4"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1604,7 +1604,7 @@ mod cmd_key_tests {
         assert_eq!(result, "hash");
 
         let typ = Type::parse(
-            &mut CmdUnparsed::from(["key5"].as_ref()),
+            CmdUnparsed::from(["key5"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();

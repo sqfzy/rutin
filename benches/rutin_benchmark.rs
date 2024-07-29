@@ -113,6 +113,12 @@ fn bench_get_cmd(c: &mut Criterion) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         b.to_async(rt).iter_custom(|iters| async move {
             let (mut handler, _client) = Handler::new_fake();
+            handler
+                .dispatch(gen_set_cmd(black_box("key"), black_box("value")))
+                .await
+                .unwrap()
+                .unwrap();
+
             let start = Instant::now();
             for _ in 0..iters {
                 handler

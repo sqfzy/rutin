@@ -1,5 +1,7 @@
 pub mod commands;
 
+use std::{collections::VecDeque, num::NonZero};
+
 use crate::{
     conf::AccessControl,
     connection::AsyncStream,
@@ -10,6 +12,7 @@ use crate::{
 };
 use bytes::Bytes;
 use commands::*;
+use itertools::Itertools;
 use tracing::instrument;
 
 #[allow(async_fn_in_trait)]
@@ -20,7 +23,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
     #[inline]
     async fn apply(
-        mut args: CmdUnparsed,
+        args: CmdUnparsed,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<Resp3>> {
         // 检查是否有权限执行该命令
@@ -28,13 +31,13 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
             return Err(RutinError::NoPermission);
         }
 
-        let cmd = Self::parse(&mut args, &handler.context.ac)?;
+        let cmd = Self::parse(args, &handler.context.ac)?;
 
         let res = cmd.execute(handler).await?;
 
         if Self::TYPE == CmdType::Write {
             // 也许存在replicate需要传播
-            handler.shared.wcmd_propagator().may_propagate(args);
+            // handler.shared.wcmd_propagator().may_propagate(args);
         }
 
         // TODO:
@@ -49,7 +52,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>>;
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self>;
+    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self>;
 }
 
 #[derive(PartialEq)]
@@ -113,8 +116,7 @@ pub async fn dispatch(
     let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
 
     let res = dispatch_command!(
-        cmd,
-        handler,
+        cmd, handler,
         // commands::other
         BgSave, Ping, Echo, Auth,
 
@@ -123,9 +125,9 @@ pub async fn dispatch(
         Pttl, Ttl, Type,
 
         // commands::str
-        Append, Decr, DecrBy, Get, GetRange, GetSet, Incr, IncrBy, MGet, MSet,
-        MSetNx, Set, SetEx, SetNx, StrLen,
-
+        Append, Decr, DecrBy, Get, GetRange, GetSet, Incr, IncrBy, MGet, MSet, MSetNx, Set, SetEx,
+        SetNx,
+        StrLen,
         // commands::list
         LLen, LPush, LPop, BLPop, LPos, NBLPop, BLMove,
 
@@ -314,26 +316,24 @@ pub fn flag_to_cmd_names(flag: CmdFlag) -> RutinResult<Vec<&'static str>> {
     Ok(names)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CmdUnparsed {
-    inner: Vec<Resp3>,
-    start: usize,
-    end: usize,
+    inner: VecDeque<Resp3>,
 }
 
 impl CmdUnparsed {
     #[inline]
     pub fn len(&self) -> usize {
-        // self.end - self.start + 1
-        self.end.saturating_sub(self.start) + 1
+        self.inner.len()
     }
 
-    pub const fn is_empty(&self) -> bool {
-        self.start > self.end
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
-    pub fn get_uppercase<'a>(&self, index: usize, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-        match self.inner.get(self.start + index) {
+    pub fn get_uppercase<'a>(&mut self, index: usize, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+        match self.inner.get(index) {
             Some(Resp3::BlobString { inner: b, .. }) => {
                 debug_assert!(b.len() <= buf.len());
 
@@ -343,37 +343,11 @@ impl CmdUnparsed {
         }
     }
 
-    pub fn next_back(&mut self) -> Option<Bytes> {
-        match self.inner.get(self.end) {
-            Some(Resp3::BlobString { inner: b, .. }) => {
-                self.end -= 1;
-                Some(b.clone())
-            }
-            _ => None,
-        }
-    }
-
-    pub fn advance(&mut self, n: usize) {
-        self.start += n;
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = &Bytes> {
-        self.inner[self.start..=self.end]
-            .iter()
-            .filter_map(|r| match r {
-                Resp3::BlobString { inner, .. } => Some(inner),
-                _ => None,
-            })
-    }
-}
-
-impl Default for CmdUnparsed {
-    fn default() -> Self {
-        Self {
-            inner: Vec::new(),
-            start: 1,
-            end: 0,
-        }
+        self.inner.iter().filter_map(|r| match r {
+            Resp3::BlobString { inner, .. } => Some(inner),
+            _ => None,
+        })
     }
 }
 
@@ -382,15 +356,58 @@ impl Iterator for CmdUnparsed {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        match self.inner.get(self.start) {
-            Some(Resp3::BlobString { inner: b, .. }) => {
-                self.start += 1;
-                Some(b.clone())
-            }
+        self.inner.pop_front().and_then(|r| match r {
+            Resp3::BlobString { inner, .. } => Some(inner),
             _ => None,
-        }
+        })
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.inner.len(), Some(self.inner.len()))
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.inner.len()
+    }
+
+    fn advance_by(&mut self, n: usize) -> Result<(), std::num::NonZero<usize>> {
+        let len = self.inner.len();
+        let rem = if len < n {
+            self.inner.clear();
+            n - len
+        } else {
+            self.inner.drain(..n);
+            0
+        };
+        NonZero::new(rem).map_or(Ok(()), Err)
     }
 }
+
+impl DoubleEndedIterator for CmdUnparsed {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.inner.pop_back().and_then(|r| match r {
+            Resp3::BlobString { inner, .. } => Some(inner),
+            _ => None,
+        })
+    }
+
+    fn advance_back_by(&mut self, n: usize) -> Result<(), NonZero<usize>> {
+        let len = self.inner.len();
+        let rem = if len < n {
+            self.inner.clear();
+            n - len
+        } else {
+            self.inner.drain(len - n..);
+            0
+        };
+        NonZero::new(rem).map_or(Ok(()), Err)
+    }
+}
+
+impl ExactSizeIterator for CmdUnparsed {}
 
 impl TryFrom<Resp3> for CmdUnparsed {
     type Error = RutinError;
@@ -399,10 +416,7 @@ impl TryFrom<Resp3> for CmdUnparsed {
     fn try_from(value: Resp3) -> Result<Self, Self::Error> {
         match value {
             Resp3::Array { inner, .. } => Ok(Self {
-                start: 0,
-                end: inner.len() - 1,
-                // 不检查元素是否都为RESP3::Bulk，如果不是RESP3::Bulk，parse时会返回错误给客户端
-                inner,
+                inner: inner.into(),
             }),
             _ => Err(RutinError::Syntax),
         }
@@ -411,18 +425,11 @@ impl TryFrom<Resp3> for CmdUnparsed {
 
 impl From<&[&str]> for CmdUnparsed {
     fn from(val: &[&str]) -> Self {
-        let inner: Vec<_> = val
-            .iter()
-            .map(|s| Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
-            .collect();
-        if inner.is_empty() {
-            Self::default()
-        } else {
-            Self {
-                end: inner.len() - 1,
-                inner,
-                start: 0,
-            }
+        Self {
+            inner: val
+                .iter()
+                .map(|s| Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
+                .collect(),
         }
     }
 }

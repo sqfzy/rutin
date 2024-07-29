@@ -11,6 +11,7 @@ use crate::{
     Int, Key,
 };
 use bytes::Bytes;
+use bytestring::ByteString;
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::instrument;
@@ -49,7 +50,7 @@ impl CmdExecutor for Append {
         Ok(length)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -96,7 +97,7 @@ impl CmdExecutor for Decr {
         Ok(Some(Resp3::new_integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -141,7 +142,7 @@ impl CmdExecutor for DecrBy {
         Ok(Some(Resp3::new_integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -191,7 +192,7 @@ impl CmdExecutor for Get {
     }
 
     #[inline]
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -240,7 +241,7 @@ impl CmdExecutor for GetRange {
         Ok(Some(Resp3::new_blob_string(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 3 {
             return Err(RutinError::WrongArgNum);
         }
@@ -298,7 +299,7 @@ impl CmdExecutor for GetSet {
         Ok(Some(Resp3::new_blob_string(old)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -346,7 +347,7 @@ impl CmdExecutor for Incr {
         Ok(Some(Resp3::new_integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -391,7 +392,7 @@ impl CmdExecutor for IncrBy {
         Ok(Some(Resp3::new_integer(new_i)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -444,7 +445,7 @@ impl CmdExecutor for MGet {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -489,7 +490,7 @@ impl CmdExecutor for MSet {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 || args.len() % 2 != 0 {
             return Err(RutinError::WrongArgNum);
         }
@@ -542,7 +543,7 @@ impl CmdExecutor for MSetNx {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 || args.len() % 2 != 0 {
             return Err(RutinError::WrongArgNum);
         }
@@ -642,7 +643,7 @@ impl CmdExecutor for Set {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -657,7 +658,7 @@ impl CmdExecutor for Set {
 
         let mut buf = [0; 7];
         let mut next = args.get_uppercase(0, &mut buf);
-        args.advance(1);
+        let _ = args.advance_by(1);
         let opt = match next {
             None => {
                 // 已经没有参数了
@@ -673,12 +674,12 @@ impl CmdExecutor for Set {
                 match opt {
                     b"NX" => {
                         next = args.get_uppercase(0, &mut buf);
-                        args.advance(1);
+                        let _ = args.advance_by(1);
                         Some(SetOpt::NX)
                     }
                     b"XX" => {
                         next = args.get_uppercase(0, &mut buf);
-                        args.advance(1);
+                        let _ = args.advance_by(1);
                         Some(SetOpt::XX)
                     }
                     // 该参数不是设置选项的参数
@@ -702,7 +703,7 @@ impl CmdExecutor for Set {
                 match get {
                     b"GET" => {
                         next = args.get_uppercase(0, &mut buf);
-                        args.advance(1);
+                        let _ = args.advance_by(1);
                         true
                     }
                     // 该参数不是设置GET的参数
@@ -793,7 +794,7 @@ impl CmdExecutor for SetEx {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 3 {
             return Err(RutinError::WrongArgNum);
         }
@@ -845,7 +846,7 @@ impl CmdExecutor for SetNx {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -891,7 +892,7 @@ impl CmdExecutor for StrLen {
         Ok(Some(Resp3::new_integer(len as Int)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -923,7 +924,7 @@ mod cmd_str_tests {
         /* 测试简单的无过期时间的键值对存取 */
         /************************************/
         let set = Set::parse(
-            &mut ["key_never_expire", "value_never_expire"].as_ref().into(),
+            ["key_never_expire", "value_never_expire"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -938,7 +939,7 @@ mod cmd_str_tests {
         );
 
         let get = Get::parse(
-            &mut ["key_never_expire"].as_ref().into(),
+            ["key_never_expire"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -957,7 +958,7 @@ mod cmd_str_tests {
         /* 测试带有NX和XX的键值对存取 */
         /******************************/
         let set = Set::parse(
-            &mut ["key_nx", "value_nx", "NX"].as_ref().into(),
+            ["key_nx", "value_nx", "NX"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -971,7 +972,7 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(&mut ["key_nx"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(["key_nx"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -983,7 +984,7 @@ mod cmd_str_tests {
         );
 
         let set = Set::parse(
-            &mut ["key_nx", "value_nx", "NX"].as_ref().into(),
+            ["key_nx", "value_nx", "NX"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -993,7 +994,7 @@ mod cmd_str_tests {
         ));
 
         let set = Set::parse(
-            &mut ["key_xx", "value_xx", "XX"].as_ref().into(),
+            ["key_xx", "value_xx", "XX"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1003,7 +1004,7 @@ mod cmd_str_tests {
         ));
 
         let set = Set::parse(
-            &mut ["key_nx", "value_xx", "XX"].as_ref().into(),
+            ["key_nx", "value_xx", "XX"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1017,7 +1018,7 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(&mut ["key_nx"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(["key_nx"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1032,7 +1033,7 @@ mod cmd_str_tests {
         /* 测试带有GET的键值对存取 */
         /******************************/
         let set = Set::parse(
-            &mut ["key_never_expire", "value_never_expire", "GET"]
+            ["key_never_expire", "value_never_expire", "GET"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -1049,7 +1050,7 @@ mod cmd_str_tests {
         );
 
         let set = Set::parse(
-            &mut ["key_never_exist", "value_never_exist", "GET"]
+            ["key_never_exist", "value_never_exist", "GET"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -1064,7 +1065,7 @@ mod cmd_str_tests {
         /* 测试带有EX过期时间的键值对存取 */
         /**********************************/
         let set = Set::parse(
-            &mut ["key_expire", "value_expire", "ex", "1"].as_ref().into(),
+            ["key_expire", "value_expire", "ex", "1"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1078,11 +1079,7 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1094,11 +1091,7 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_secs(1));
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1108,7 +1101,7 @@ mod cmd_str_tests {
         /* 测试带有PX过期时间的键值对存取 */
         /**********************************/
         let set = Set::parse(
-            &mut ["key_expire", "value_expire", "PX", "500"].as_ref().into(),
+            ["key_expire", "value_expire", "PX", "500"].as_ref().into(),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1122,11 +1115,7 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1138,11 +1127,7 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_millis(500));
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1157,7 +1142,7 @@ mod cmd_str_tests {
             .unwrap()
             .as_secs();
         let set = Set::parse(
-            &mut [
+            [
                 "key_expire",
                 "value_expire",
                 "EXAT",
@@ -1178,11 +1163,7 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1194,11 +1175,7 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_millis(1000));
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1214,7 +1191,7 @@ mod cmd_str_tests {
             .as_millis();
 
         let set = Set::parse(
-            &mut [
+            [
                 "key_expire",
                 "value_expire",
                 "PXAT",
@@ -1235,11 +1212,7 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1251,11 +1224,7 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_millis(500));
-        let get = Get::parse(
-            &mut ["key_expire"].as_ref().into(),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1266,7 +1235,7 @@ mod cmd_str_tests {
         /***************/
         let now = Instant::now();
         let set = Set::parse(
-            &mut ["key_expire", "value_expire", "PX", "100000"]
+            ["key_expire", "value_expire", "PX", "100000"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),
@@ -1283,7 +1252,7 @@ mod cmd_str_tests {
         );
 
         let set = Set::parse(
-            &mut ["key_expire", "value_expire_modified", "KEEPTTL"]
+            ["key_expire", "value_expire_modified", "KEEPTTL"]
                 .as_ref()
                 .into(),
             &AccessControl::new_loose(),

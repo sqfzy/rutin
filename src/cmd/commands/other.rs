@@ -57,7 +57,7 @@ impl CmdExecutor for Ping {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() && args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -84,7 +84,7 @@ impl CmdExecutor for Echo {
         Ok(Some(Resp3::new_blob_string(self.msg)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -229,7 +229,7 @@ impl CmdExecutor for BgSave {
         )))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -271,7 +271,7 @@ impl CmdExecutor for Auth {
         }
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -330,7 +330,7 @@ impl CmdExecutor for ClientTracking {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() > 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -376,7 +376,7 @@ mod cmd_other_tests {
         let (mut handler, _) = Handler::new_fake_with(shared, None, None);
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from([TEST_AC_USERNAME, "1234567"].as_ref()),
+            CmdUnparsed::from([TEST_AC_USERNAME, "1234567"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -384,7 +384,7 @@ mod cmd_other_tests {
         assert_eq!(res.unwrap_err().to_string(), "ERR invalid password");
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from(["admin1", TEST_AC_PASSWORD].as_ref()),
+            CmdUnparsed::from(["admin1", TEST_AC_PASSWORD].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -392,7 +392,7 @@ mod cmd_other_tests {
         assert_eq!(res.unwrap_err().to_string(), "ERR invalid username");
 
         let auth = Auth::parse(
-            &mut CmdUnparsed::from([TEST_AC_USERNAME, TEST_AC_PASSWORD].as_ref()),
+            CmdUnparsed::from([TEST_AC_USERNAME, TEST_AC_PASSWORD].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -407,7 +407,7 @@ mod cmd_other_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let tracking = ClientTracking::parse(
-            &mut CmdUnparsed::from(["ON"].as_ref()),
+            CmdUnparsed::from(["ON"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -415,7 +415,7 @@ mod cmd_other_tests {
         assert!(handler.context.client_track.is_some());
 
         let tracking = ClientTracking::parse(
-            &mut CmdUnparsed::from(["OFF"].as_ref()),
+            CmdUnparsed::from(["OFF"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();

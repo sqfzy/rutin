@@ -95,7 +95,7 @@ impl CmdExecutor for BLMove {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 5 {
             return Err(RutinError::WrongArgNum);
         }
@@ -169,7 +169,7 @@ impl CmdExecutor for BLPop {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -282,7 +282,7 @@ impl CmdExecutor for LPos {
         Ok(Some(res))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if !(args.len() == 2 || args.len() == 4 || args.len() == 6 || args.len() == 8) {
             return Err(RutinError::WrongArgNum);
         }
@@ -356,7 +356,7 @@ impl CmdExecutor for LLen {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -425,7 +425,7 @@ impl CmdExecutor for LPop {
         Ok(res)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -483,7 +483,7 @@ impl CmdExecutor for LPush {
         Ok(Some(Resp3::new_integer(len as Int)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -573,7 +573,7 @@ impl CmdExecutor for NBLPop {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 3 {
             return Err(RutinError::WrongArgNum);
         }
@@ -762,7 +762,7 @@ mod cmd_list_tests {
         );
 
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["list", "key1"].as_ref()),
+            CmdUnparsed::from(["list", "key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -780,7 +780,7 @@ mod cmd_list_tests {
         );
 
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["list", "key2", "key3"].as_ref()),
+            CmdUnparsed::from(["list", "key2", "key3"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -804,7 +804,7 @@ mod cmd_list_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["list", "key1"].as_ref()),
+            CmdUnparsed::from(["list", "key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -815,7 +815,7 @@ mod cmd_list_tests {
         // key1
 
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["list", "key2", "key3"].as_ref()),
+            CmdUnparsed::from(["list", "key2", "key3"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -826,7 +826,7 @@ mod cmd_list_tests {
         // key3 key2 key1
 
         let lpop = LPop::parse(
-            &mut CmdUnparsed::from(["list"].as_ref()),
+            CmdUnparsed::from(["list"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -836,7 +836,7 @@ mod cmd_list_tests {
         );
 
         let lpop = LPop::parse(
-            &mut CmdUnparsed::from(["list", "2"].as_ref()),
+            CmdUnparsed::from(["list", "2"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -849,7 +849,7 @@ mod cmd_list_tests {
         );
 
         let lpop = LPop::parse(
-            &mut CmdUnparsed::from(["list"].as_ref()),
+            CmdUnparsed::from(["list"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -868,7 +868,7 @@ mod cmd_list_tests {
         /***************/
         let (mut handler, _) = Handler::new_fake();
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["l1", "key1a", "key1", "key1c"].as_ref()),
+            CmdUnparsed::from(["l1", "key1a", "key1", "key1c"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -879,7 +879,7 @@ mod cmd_list_tests {
         // l1: key1c key1b key1a
 
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["l2", "key2a", "key2", "key2c"].as_ref()),
+            CmdUnparsed::from(["l2", "key2a", "key2", "key2c"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -890,7 +890,7 @@ mod cmd_list_tests {
         // l2: key2c key2b key2a
 
         let blpop = BLPop::parse(
-            &mut CmdUnparsed::from(["l1", "l2", "1"].as_ref()),
+            CmdUnparsed::from(["l1", "l2", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -904,7 +904,7 @@ mod cmd_list_tests {
         // l1: key1b key1a
 
         let blpop = BLPop::parse(
-            &mut CmdUnparsed::from(["l2", "list1", "1"].as_ref()),
+            CmdUnparsed::from(["l2", "list1", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -923,7 +923,7 @@ mod cmd_list_tests {
         let (mut handler2, _) = Handler::new_fake();
         tokio::spawn(async move {
             let blpop = BLPop::parse(
-                &mut CmdUnparsed::from(["l3", "0"].as_ref()),
+                CmdUnparsed::from(["l3", "0"].as_ref()),
                 &AccessControl::new_loose(),
             )
             .unwrap();
@@ -938,7 +938,7 @@ mod cmd_list_tests {
 
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["l3", "key"].as_ref()),
+            CmdUnparsed::from(["l3", "key"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -953,7 +953,7 @@ mod cmd_list_tests {
         let (mut handler3, _) = Handler::new_fake();
         tokio::spawn(async move {
             let blpop = BLPop::parse(
-                &mut CmdUnparsed::from(["l4", "2"].as_ref()),
+                CmdUnparsed::from(["l4", "2"].as_ref()),
                 &AccessControl::new_loose(),
             )
             .unwrap();
@@ -968,7 +968,7 @@ mod cmd_list_tests {
 
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["l4", "key"].as_ref()),
+            CmdUnparsed::from(["l4", "key"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -981,7 +981,7 @@ mod cmd_list_tests {
         /* 有超时时间，超时测试 */
         /************************/
         let blpop = BLPop::parse(
-            &mut CmdUnparsed::from(["null", "1"].as_ref()),
+            CmdUnparsed::from(["null", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1001,7 +1001,7 @@ mod cmd_list_tests {
         /* 普通测试 */
         /************/
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["l1", "key1a", "key1", "key1c"].as_ref()),
+            CmdUnparsed::from(["l1", "key1a", "key1", "key1c"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1012,7 +1012,7 @@ mod cmd_list_tests {
         // l1: key1c key1b key1a
 
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["l2", "key2a", "key2", "key2c"].as_ref()),
+            CmdUnparsed::from(["l2", "key2a", "key2", "key2c"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1026,13 +1026,13 @@ mod cmd_list_tests {
         /* 有超时时间 */
         /**************/
         let nblpop = NBLPop::parse(
-            &mut CmdUnparsed::from(["list3", "2", "0"].as_ref()),
+            CmdUnparsed::from(["list3", "2", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         nblpop.execute(&mut handler).await.unwrap();
 
-        let ping = Ping::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+        let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             "PONG".to_string(),
             ping.execute(&mut handler)
@@ -1046,7 +1046,7 @@ mod cmd_list_tests {
 
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["list3", "key"].as_ref()),
+            CmdUnparsed::from(["list3", "key"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1067,7 +1067,7 @@ mod cmd_list_tests {
         /* 有超时时间，超时测试 */
         /************************/
         let nblpop = NBLPop::parse(
-            &mut CmdUnparsed::from(["whatever", "1", "0"].as_ref()),
+            CmdUnparsed::from(["whatever", "1", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1081,13 +1081,13 @@ mod cmd_list_tests {
         /* 无超时时间 */
         /**************/
         let nblpop = NBLPop::parse(
-            &mut CmdUnparsed::from(["list3", "0", "0"].as_ref()),
+            CmdUnparsed::from(["list3", "0", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         nblpop.execute(&mut handler).await.unwrap();
 
-        let ping = Ping::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+        let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
         assert_eq!(
             "PONG".to_string(),
             ping.execute(&mut handler)
@@ -1101,7 +1101,7 @@ mod cmd_list_tests {
 
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["list3", "key"].as_ref()),
+            CmdUnparsed::from(["list3", "key"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1125,14 +1125,14 @@ mod cmd_list_tests {
 
         let (mut handler, _) = Handler::new_fake();
         let lpush = LPush::parse(
-            &mut CmdUnparsed::from(["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"].as_ref()),
+            CmdUnparsed::from(["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         lpush.execute(&mut handler).await.unwrap().unwrap();
 
         let lpos = LPos::parse(
-            &mut CmdUnparsed::from(["list", "1"].as_ref()),
+            CmdUnparsed::from(["list", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1140,7 +1140,7 @@ mod cmd_list_tests {
         assert_eq!(res.try_integer().unwrap(), 1);
 
         let lpos = LPos::parse(
-            &mut CmdUnparsed::from(["list", "2", "count", "0"].as_ref()),
+            CmdUnparsed::from(["list", "2", "count", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1155,7 +1155,7 @@ mod cmd_list_tests {
         );
 
         let lpos = LPos::parse(
-            &mut CmdUnparsed::from(["list", "2", "rank", "2", "count", "2"].as_ref()),
+            CmdUnparsed::from(["list", "2", "rank", "2", "count", "2"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1166,9 +1166,7 @@ mod cmd_list_tests {
         );
 
         let lpos = LPos::parse(
-            &mut CmdUnparsed::from(
-                ["list", "2", "rank", "-1", "count", "3", "maxlen", "6"].as_ref(),
-            ),
+            CmdUnparsed::from(["list", "2", "rank", "-1", "count", "3", "maxlen", "6"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();

@@ -86,6 +86,7 @@ impl Str {
         }
     }
 
+    #[inline]
     pub fn to_bytes(&self) -> Bytes {
         match self {
             Self::Raw(b) => b.clone(),

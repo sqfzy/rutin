@@ -3,6 +3,7 @@
 #![feature(try_blocks)]
 #![warn(clippy::print_stdout)]
 #![feature(decl_macro)]
+#![feature(iter_advance_by)]
 
 use mimalloc::MiMalloc;
 

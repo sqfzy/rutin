@@ -49,7 +49,7 @@ impl CmdExecutor for AclCat {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -92,7 +92,7 @@ impl CmdExecutor for AclDelUser {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -151,7 +151,7 @@ impl CmdExecutor for AclSetUser {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty()
             && args.len() != 2
             && args.len() != 4
@@ -166,8 +166,6 @@ impl CmdExecutor for AclSetUser {
         let name = args.next().unwrap();
 
         let mut aci = AccessControlIntermedium::default();
-
-        let args = args.into_iter();
 
         // FIX: 键名无法包含','
         while let Some(b) = args.next() {
@@ -292,7 +290,7 @@ impl CmdExecutor for AclUsers {
         Ok(Some(Resp3::new_array(users)))
     }
 
-    fn parse(_args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(_args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         Ok(AclUsers)
     }
 }
@@ -313,7 +311,7 @@ impl CmdExecutor for AclWhoAmI {
         Ok(Some(Resp3::new_blob_string(handler.context.user.clone())))
     }
 
-    fn parse(_args: &mut CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(_args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         Ok(AclWhoAmI)
     }
 }
@@ -326,7 +324,7 @@ async fn cmd_acl_tests() {
     let mut handler = Handler::new_fake().0;
 
     let acl_set_user = AclSetUser::parse(
-        &mut CmdUnparsed::from(
+        CmdUnparsed::from(
             [
                 "default_ac",
                 "enable",
@@ -357,7 +355,7 @@ async fn cmd_acl_tests() {
     assert_eq!(resp.as_simple_string_uncheckd(), "OK");
 
     let acl_set_user = AclSetUser::parse(
-        &mut CmdUnparsed::from(
+        CmdUnparsed::from(
             [
                 "user",
                 "enable",
@@ -456,8 +454,7 @@ async fn cmd_acl_tests() {
         assert!(!ac.is_forbidden_channel(b"chan"));
     }
 
-    let acl_users =
-        AclUsers::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+    let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
     let res = resp.as_array_uncheckd();
@@ -465,15 +462,14 @@ async fn cmd_acl_tests() {
     assert!(res.contains(&Resp3::new_blob_string("user".into())));
     assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
 
-    let acl_whoami =
-        AclWhoAmI::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-    AclWhoAmI::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+    let acl_whoami = AclWhoAmI::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+    AclWhoAmI::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_whoami.execute(&mut handler).await.unwrap().unwrap();
     assert_eq!(resp.as_blob_string_uncheckd(), "default_ac");
 
     let acl_deluser = AclDelUser::parse(
-        &mut CmdUnparsed::from(["user"].as_ref()),
+        CmdUnparsed::from(["user"].as_ref()),
         &AccessControl::new_loose(),
     )
     .unwrap();
@@ -481,8 +477,7 @@ async fn cmd_acl_tests() {
     let resp = acl_deluser.execute(&mut handler).await.unwrap().unwrap();
     assert_eq!(resp.as_integer_uncheckd(), 1);
 
-    let acl_users =
-        AclUsers::parse(&mut CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+    let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
     let res = resp.as_array_uncheckd();

@@ -61,7 +61,7 @@ impl CmdExecutor for Publish {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -125,7 +125,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -201,7 +201,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    fn parse(args: &mut CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -232,7 +232,7 @@ mod cmd_pub_sub_tests {
 
         // 订阅channel1和channel2
         let subscribe = Subscribe::parse(
-            &mut CmdUnparsed::from(["channel1", "channel2"].as_ref()),
+            CmdUnparsed::from(["channel1", "channel2"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -256,7 +256,7 @@ mod cmd_pub_sub_tests {
 
         // 订阅channel3
         let subscribe = Subscribe::parse(
-            &mut CmdUnparsed::from(["channel3"].as_ref()),
+            CmdUnparsed::from(["channel3"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -275,7 +275,7 @@ mod cmd_pub_sub_tests {
 
         // 向channel1发布消息
         let publish = Publish::parse(
-            &mut CmdUnparsed::from(["channel1", "hello"].as_ref()),
+            CmdUnparsed::from(["channel1", "hello"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -308,7 +308,7 @@ mod cmd_pub_sub_tests {
 
         // 向channel2发布消息
         let publish = Publish::parse(
-            &mut CmdUnparsed::from(["channel2", "world"].as_ref()),
+            CmdUnparsed::from(["channel2", "world"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -341,7 +341,7 @@ mod cmd_pub_sub_tests {
 
         // 尝试向未订阅的频道发布消息
         let publish = Publish::parse(
-            &mut CmdUnparsed::from(["channel_not_exist", "hello"].as_ref()),
+            CmdUnparsed::from(["channel_not_exist", "hello"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -350,7 +350,7 @@ mod cmd_pub_sub_tests {
 
         // 取消订阅channel1
         let unsubscribe = Unsubscribe::parse(
-            &mut CmdUnparsed::from(["channel1"].as_ref()),
+            CmdUnparsed::from(["channel1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();

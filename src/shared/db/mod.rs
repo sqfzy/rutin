@@ -25,6 +25,7 @@ use tracing::instrument;
 pub static NEVER_EXPIRE: NeverExpire = NeverExpire(UnsafeCell::new(None));
 
 // 使用前必须在单线程中初始化
+// FIX: 调用Db::new()时会进行初始化。当多线程执行test时，可能出现数据竞争
 pub struct NeverExpire(UnsafeCell<Option<Instant>>);
 
 unsafe impl Send for NeverExpire {}
@@ -44,7 +45,7 @@ impl PartialEq<Instant> for NeverExpire {
     fn eq(&self, other: &Instant) -> bool {
         debug_assert!(unsafe { *self.0.get() }.is_some());
 
-        unsafe { *self.0.get() }.unwrap().eq(other)
+        unsafe { (*self.0.get()).as_ref().unwrap_unchecked() }.eq(other)
     }
 }
 

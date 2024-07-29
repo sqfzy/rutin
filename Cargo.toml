@@ -19,7 +19,7 @@ clap = { version = "4.5", features = ["derive"] }
 # config = "0.14.0"
 crc = "3.0.1"
 dashmap = { version = "6.0.1", features = [
-  "raw-api",
+  # "raw-api",
   "inline",
   "rayon",
   "serde",
@@ -106,7 +106,7 @@ harness = false
 opt-level = 3 # 最大优化
 # lto = "fat"   # 启用链接时优化（Link Time Optimization）
 lto = true
-debug = false      # 调试信息
+debug = true      # 调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 panic = "abort"
 # overflow-checks = false # 禁用整数溢出检查
