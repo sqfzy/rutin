@@ -12,7 +12,6 @@ use crate::{
 };
 use bytes::Bytes;
 use commands::*;
-use itertools::Itertools;
 use tracing::instrument;
 
 #[allow(async_fn_in_trait)]

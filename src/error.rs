@@ -137,6 +137,12 @@ impl From<&'static str> for RutinError {
     }
 }
 
+impl From<String> for RutinError {
+    fn from(value: String) -> Self {
+        RutinError::Other { msg: value.into() }
+    }
+}
+
 impl TryInto<Resp3> for RutinError {
     type Error = RutinError;
 

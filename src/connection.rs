@@ -148,6 +148,20 @@ impl<S: AsyncStream> Connection<S> {
 
         Ok(())
     }
+
+    #[instrument(level = "trace", skip(self), err)]
+    pub async fn write_frame_force<B, St>(&mut self, frame: &Resp3<B, St>) -> io::Result<()>
+    where
+        B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+        St: AsRef<str> + PartialEq + std::fmt::Debug,
+    {
+        frame.encode_buf(&mut self.writer_buf);
+
+        self.stream.write_buf(&mut self.writer_buf).await?;
+        self.flush().await?;
+
+        Ok(())
+    }
 }
 
 impl Connection<FakeStream> {

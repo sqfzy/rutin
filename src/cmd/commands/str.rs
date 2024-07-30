@@ -11,7 +11,6 @@ use crate::{
     Int, Key,
 };
 use bytes::Bytes;
-use bytestring::ByteString;
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::instrument;

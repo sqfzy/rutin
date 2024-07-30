@@ -138,8 +138,7 @@ impl Db {
 
     // 记录客户端ID和其对应的`BgTaskSender`，用于向客户端发送消息
     #[inline]
-    #[instrument(level = "debug", skip(self, id, bg_sender), ret)]
-    pub fn record_client_id(&self, mut id: Id, bg_sender: BgTaskSender) -> Id {
+    pub fn insert_client_record(&self, mut id: Id, bg_sender: BgTaskSender) -> Id {
         loop {
             match self.client_records.entry(id) {
                 // 如果id已经存在，则自增1
@@ -153,7 +152,10 @@ impl Db {
         }
     }
 
-    #[instrument(level = "debug", skip(self), ret)]
+    pub fn remove_client_record(&self, client_id: Id) {
+        self.client_records.remove(&client_id);
+    }
+
     pub fn get_client_bg_sender(&self, client_id: Id) -> Option<BgTaskSender> {
         self.client_records.get(&client_id).map(|e| e.clone())
     }

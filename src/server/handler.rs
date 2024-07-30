@@ -70,17 +70,13 @@ impl<S: AsyncStream> Handler<S> {
         ID.scope(self.context.client_id, dispatch(cmd_frame, self))
             .await
     }
+}
 
-    #[inline]
-    pub fn create_client_id(shared: &Shared, bg_task_channel: &BgTaskChannel) -> Id {
-        let id_may_occupied = CLIENT_ID_COUNT.fetch_add(1);
-        let client_id = shared
+impl<S: AsyncStream> Drop for Handler<S> {
+    fn drop(&mut self) {
+        self.shared
             .db()
-            .record_client_id(id_may_occupied, bg_task_channel.new_sender());
-        if id_may_occupied != client_id {
-            CLIENT_ID_COUNT.store(client_id);
-        }
-        client_id
+            .remove_client_record(self.context.client_id);
     }
 }
 
@@ -102,14 +98,7 @@ impl HandlerContext {
     pub fn new(shared: &Shared) -> Self {
         let bg_task_channel = BgTaskChannel::default();
 
-        // 生成新的client_id
-        let id_may_occupied = CLIENT_ID_COUNT.fetch_add(1);
-        let client_id = shared
-            .db()
-            .record_client_id(id_may_occupied, bg_task_channel.new_sender());
-        if id_may_occupied != client_id {
-            CLIENT_ID_COUNT.store(client_id);
-        }
+        let client_id = create_client_id(shared, &bg_task_channel);
 
         // 使用默认ac
         let ac = shared.conf().security.default_ac.load_full();
@@ -128,17 +117,7 @@ impl HandlerContext {
     pub fn new_by_reserve_id(shared: &Shared, ac: Arc<AccessControl>) -> Self {
         let bg_task_channel = BgTaskChannel::default();
 
-        let reserve_id = RESERVE_ID.fetch_add(1);
-
-        // ID必须在0到RESERVE_MAX_ID之间
-        debug_assert!(reserve_id <= RESERVE_MAX_ID);
-
-        let client_id = shared
-            .db()
-            .record_client_id(reserve_id, bg_task_channel.new_sender());
-
-        // ID必须没有被占用
-        debug_assert!(client_id == reserve_id);
+        let client_id = create_reserve_client_id(shared, &bg_task_channel);
 
         Self {
             client_id,
@@ -200,4 +179,47 @@ impl Handler<FakeStream> {
             Connection::new(FakeStream::new(client_tx, client_rx), max_batch),
         )
     }
+}
+
+#[inline]
+pub fn create_client_id(shared: &Shared, bg_task_channel: &BgTaskChannel) -> Id {
+    let id_may_occupied = CLIENT_ID_COUNT.load();
+
+    let new_id_count = id_may_occupied + 1;
+
+    // 如果new_id_count在保留范围内，则从保留范围后开始
+    if (0..=RESERVE_MAX_ID).contains(&new_id_count) {
+        CLIENT_ID_COUNT.store(RESERVE_MAX_ID + 1);
+    } else {
+        CLIENT_ID_COUNT.store(new_id_count);
+    };
+
+    let client_id = shared
+        .db()
+        .insert_client_record(id_may_occupied, bg_task_channel.new_sender());
+
+    if id_may_occupied != client_id {
+        CLIENT_ID_COUNT.store(client_id);
+    }
+    client_id
+}
+
+pub fn create_reserve_client_id(shared: &Shared, bg_task_channel: &BgTaskChannel) -> Id {
+    let reserve_id = RESERVE_ID.load();
+
+    let new_reserve_id = reserve_id + 1;
+
+    if new_reserve_id > RESERVE_MAX_ID {
+        // 保留ID已经用完，也许需要扩大保留ID的范围或者这是bug导致的，需要修复
+        panic!("reserve id is used up");
+    }
+
+    let client_id = shared
+        .db()
+        .insert_client_record(reserve_id, bg_task_channel.new_sender());
+
+    // id必须没有被占用
+    assert!(client_id == reserve_id);
+
+    client_id
 }
