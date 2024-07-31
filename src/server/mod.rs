@@ -10,6 +10,7 @@ use sysinfo::System;
 
 use crate::{
     conf::Conf,
+    frame::Resp3,
     shared::{db::Db, Shared},
     Id,
 };
@@ -34,7 +35,19 @@ task_local! { pub static ID: Id; }
 
 thread_local! {
     pub static SYSTEM: RefCell<System>  = RefCell::new(System::new_all());
-    pub static WCMD_BUF: RefCell<BytesMut>  = RefCell::new(BytesMut::with_capacity(4096));
+    pub static LOCAL_BUF: RefCell<BytesMut>  = RefCell::new(BytesMut::with_capacity(4096));
+}
+
+#[inline]
+pub fn using_local_buf(f: impl FnOnce(&mut BytesMut)) -> BytesMut {
+    LOCAL_BUF.with_borrow_mut(|buf| {
+        if buf.capacity() < 256 {
+            buf.reserve(4096);
+        }
+        f(buf);
+
+        buf.split()
+    })
 }
 
 #[inline]

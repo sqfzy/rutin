@@ -22,7 +22,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
     #[inline]
     async fn apply(
-        args: CmdUnparsed,
+        mut args: CmdUnparsed,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<Resp3>> {
         // 检查是否有权限执行该命令
@@ -30,13 +30,24 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
             return Err(RutinError::NoPermission);
         }
 
+        let may_wcmd = if handler.shared.wcmd_propagator().should_propagate()
+            && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG)
+        {
+            let resp3 = Resp3::from(args);
+            let wcmd = resp3.encode_local_buf();
+
+            args = resp3.try_into()?;
+            Some(wcmd)
+        } else {
+            None
+        };
+
         let cmd = Self::parse(args, &handler.context.ac)?;
 
         let res = cmd.execute(handler).await?;
 
-        if cmds_contains_cmd(Self::CATS_FLAG, Self::CMD_FLAG) {
-            // 也许存在replicate需要传播
-            // handler.shared.wcmd_propagator().may_propagate(args);
+        if let Some(wcmd) = may_wcmd {
+            handler.shared.wcmd_propagator().propagate(wcmd.freeze());
         }
 
         // TODO:
@@ -147,7 +158,7 @@ pub async fn dispatch(
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CmdUnparsed {
     inner: VecDeque<Resp3>,
 }
@@ -254,6 +265,13 @@ impl TryFrom<Resp3> for CmdUnparsed {
     }
 }
 
+impl From<CmdUnparsed> for Resp3 {
+    #[inline]
+    fn from(val: CmdUnparsed) -> Self {
+        Resp3::new_array(val.inner)
+    }
+}
+
 impl From<&[&str]> for CmdUnparsed {
     fn from(val: &[&str]) -> Self {
         Self {
@@ -262,12 +280,5 @@ impl From<&[&str]> for CmdUnparsed {
                 .map(|s| Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
                 .collect(),
         }
-    }
-}
-
-impl From<CmdUnparsed> for Resp3 {
-    #[inline]
-    fn from(val: CmdUnparsed) -> Self {
-        Resp3::new_array(val.inner)
     }
 }

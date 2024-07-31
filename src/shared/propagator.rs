@@ -1,14 +1,8 @@
+use crate::error::{RutinError, RutinResult};
 use arc_swap::ArcSwap;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use kanal::{AsyncReceiver, Sender};
 use std::sync::Arc;
-
-use crate::{
-    cmd::CmdUnparsed,
-    error::{RutinError, RutinResult},
-    frame::Resp3,
-    server::WCMD_BUF,
-};
 
 #[derive(Debug, Default)]
 pub struct Propagator {
@@ -31,6 +25,10 @@ impl Propagator {
             to_replicas: ArcSwap::new(Arc::new(Vec::new())),
             max_replica,
         }
+    }
+
+    pub fn should_propagate(&self) -> bool {
+        self.to_aof.is_some() || self.to_replicas.load().len() > 0
     }
 
     pub fn new_receiver(&self) -> RutinResult<AsyncReceiver<Bytes>> {
@@ -68,29 +66,14 @@ impl Propagator {
     }
 
     #[inline]
-    pub fn may_propagate(&self, cmd: CmdUnparsed) {
-        let to_replicas = self.to_replicas.load();
-
-        if to_replicas.len() == 0 && self.to_aof.is_none() {
-            return;
-        }
-
-        // PERF:
-        let wcmd = WCMD_BUF.with_borrow_mut(|buf| {
-            if buf.capacity() < 256 {
-                buf.reserve(4096);
-            }
-            Resp3::from(cmd).encode_buf(buf);
-            buf.split().freeze()
-        });
-
+    pub fn propagate(&self, wcmd: Bytes) {
         // 传播到aof
         if let Some((tx, _)) = &self.to_aof {
             tx.send(wcmd.clone()).unwrap();
         }
 
         // 传播到replica
-        for to_replica in to_replicas.as_ref() {
+        for to_replica in self.to_replicas.load().iter() {
             to_replica
                 .send(wcmd.clone())
                 .expect("must remove to_replica sender before remove replica");

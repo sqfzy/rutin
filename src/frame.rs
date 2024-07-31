@@ -2,6 +2,7 @@
 
 use crate::{
     error::{RutinError, RutinResult},
+    server::using_local_buf,
     util::{self, atof},
     Int,
 };
@@ -886,6 +887,11 @@ where
                 buf.put_slice(CRLF);
             }
         }
+    }
+
+    #[inline]
+    pub fn encode_local_buf(&self) -> BytesMut {
+        using_local_buf(|buf| self.encode_buf(buf))
     }
 }
 

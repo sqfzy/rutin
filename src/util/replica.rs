@@ -15,7 +15,7 @@ pub fn set_server_to_master(shared: &Shared) {
 pub fn set_server_to_replica(shared: &Shared, master_addr: (ByteString, u16)) {
     let conf = shared.conf();
 
-    conf.replica.master_addr.store(Some(Arc::new(master_addr)));
+    conf.replica.reset(master_addr);
 
     // 只允许读命令
     // 设置ac
