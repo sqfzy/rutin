@@ -80,4 +80,9 @@ impl Conf {
 
         Some(config)
     }
+
+    pub fn as_static(&self) -> &'static Self {
+        // Safty: Conf在整个程序运行期间都存在
+        unsafe { std::mem::transmute(self) }
+    }
 }
