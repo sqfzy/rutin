@@ -16,4 +16,15 @@ pub fn set_server_to_replica(shared: &Shared, master_addr: (ByteString, u16)) {
     let conf = shared.conf();
 
     conf.replica.master_addr.store(Some(Arc::new(master_addr)));
+
+    // 只允许读命令
+    // 设置ac
+
+    // 重置db
+    todo!()
+
+    //
+
+    // 断开所有连接
+    // clean ReplicationBacklog
 }

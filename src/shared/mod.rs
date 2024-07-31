@@ -17,11 +17,11 @@ pub struct Shared {
     conf: Arc<Conf>,
     script: Arc<Script>,
     wcmd_propagator: Arc<Propagator>,
-    shutdown: ShutdownManager<()>,
+    shutdown: ShutdownManager<i32>,
 }
 
 impl Shared {
-    pub fn new(db: Arc<Db>, conf: Arc<Conf>, shutdown: ShutdownManager<()>) -> Self {
+    pub fn new(db: Arc<Db>, conf: Arc<Conf>, shutdown: ShutdownManager<i32>) -> Self {
         let db = db;
         let conf = conf;
         let wcmd_propagator = Arc::new(Propagator::new(
@@ -43,7 +43,7 @@ impl Shared {
         conf: Arc<Conf>,
         script: Arc<Script>,
         wcmd_propagator: Arc<Propagator>,
-        shutdown: ShutdownManager<()>,
+        shutdown: ShutdownManager<i32>,
     ) -> Self {
         Self {
             db,
@@ -70,7 +70,7 @@ impl Shared {
         &self.wcmd_propagator
     }
 
-    pub fn shutdown(&self) -> &ShutdownManager<()> {
+    pub fn shutdown(&self) -> &ShutdownManager<i32> {
         &self.shutdown
     }
 }

@@ -3,7 +3,7 @@ use crate::{
     conf::Conf,
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
-    server::Handler,
+    server::{Handler, SHUTDOWN_SIGNAL},
     shared::Shared,
 };
 use anyhow::Result;
@@ -301,5 +301,5 @@ async fn aof_test() {
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    shared.shutdown().trigger_shutdown(()).unwrap();
+    shared.shutdown().trigger_shutdown(SHUTDOWN_SIGNAL).unwrap();
 }

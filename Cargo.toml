@@ -83,6 +83,7 @@ async-ringbuf = "0.2.1"
 futures-intrusive = "0.5.0"
 nohash = "0.2.0"
 figment = { version = "0.10.19", features = ["toml", "env"] }
+paste = "1.0.15"
 # futures-util = "0.3.30"
 # lru = "0.12.3"
 # neat-date-time = "0.2.0"

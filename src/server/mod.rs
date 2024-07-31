@@ -20,6 +20,10 @@ use tokio::{net::TcpListener, sync::Semaphore, task_local};
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error};
 
+pub const SHUTDOWN_SIGNAL: i32 = 1;
+// 重启服务。断开所有连接，重新开始监听；释放所有资源，重新初始化。仅保留conf
+pub const REBOOT_SIGNAL: i32 = 2;
+
 pub const RESERVE_MAX_ID: Id = 20;
 pub static RESERVE_ID: AtomicCell<Id> = AtomicCell::new(0);
 // 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
@@ -34,7 +38,7 @@ thread_local! {
 }
 
 #[inline]
-pub async fn run(listener: TcpListener, conf: Conf) {
+pub async fn run(listener: TcpListener, conf: Arc<Conf>) -> i32 {
     let shutdown_manager = ShutdownManager::new();
 
     tokio::spawn({
@@ -45,7 +49,7 @@ pub async fn run(listener: TcpListener, conf: Conf) {
                 std::process::exit(1);
             } else {
                 eprintln!("\nShutting down server...");
-                shutdown.trigger_shutdown(()).ok();
+                shutdown.trigger_shutdown(SHUTDOWN_SIGNAL).ok();
             }
         }
     });
@@ -59,8 +63,6 @@ pub async fn run(listener: TcpListener, conf: Conf) {
     };
 
     let limit_connections = Arc::new(Semaphore::new(conf.server.max_connections));
-    let conf = Arc::new(conf);
-    let local_set = tokio::task::LocalSet::new();
     let mut server = Listener {
         shared: Shared::new(
             Arc::new(Db::new(conf.clone())),
@@ -71,13 +73,12 @@ pub async fn run(listener: TcpListener, conf: Conf) {
         tls_acceptor,
         limit_connections,
         delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
-        local_set,
     };
 
     // 运行服务，阻塞主线程。当shutdown触发时，解除主线程的阻塞
     if let Ok(Err(err)) = shutdown_manager.wrap_cancel(server.run()).await {
         error!(cause = %err, "failed to accept");
-        shutdown_manager.trigger_shutdown(()).ok();
+        shutdown_manager.trigger_shutdown(SHUTDOWN_SIGNAL).ok();
     }
     debug!("shutdown complete");
 
@@ -86,5 +87,5 @@ pub async fn run(listener: TcpListener, conf: Conf) {
 
     // 等待所有DelayShutdownToken被释放
     debug!("waiting for shutdown complete");
-    shutdown_manager.wait_shutdown_complete().await;
+    shutdown_manager.wait_shutdown_complete().await
 }

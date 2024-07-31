@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdType, CmdUnparsed},
+    cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
     error::{RutinError, RutinResult},
@@ -20,8 +20,8 @@ pub struct Eval {
 
 impl CmdExecutor for Eval {
     const NAME: &'static str = "EVAL";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = EVAL_FLAG;
+    const CATS_FLAG: Flag = EVAL_CATS_FLAG;
+    const CMD_FLAG: Flag = EVAL_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -67,8 +67,8 @@ pub struct EvalName {
 
 impl CmdExecutor for EvalName {
     const NAME: &'static str = "EVALNAME";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = EVALNAME_FLAG;
+    const CATS_FLAG: Flag = EVALNAME_CATS_FLAG;
+    const CMD_FLAG: Flag = EVALNAME_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -112,8 +112,8 @@ pub struct ScriptExists {
 
 impl CmdExecutor for ScriptExists {
     const NAME: &'static str = "SCRIPTEXISTS";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = SCRIPT_EXISTS_FLAG;
+    const CATS_FLAG: Flag = SCRIPTEXISTS_CATS_FLAG;
+    const CMD_FLAG: Flag = SCRIPTEXISTS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -129,7 +129,7 @@ impl CmdExecutor for ScriptExists {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -145,8 +145,8 @@ pub struct ScriptFlush {}
 
 impl CmdExecutor for ScriptFlush {
     const NAME: &'static str = "SCRIPTFLUSH";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = SCRIPT_FLUSH_FLAG;
+    const CATS_FLAG: Flag = SCRIPTFLUSH_CATS_FLAG;
+    const CMD_FLAG: Flag = SCRIPTFLUSH_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -155,7 +155,7 @@ impl CmdExecutor for ScriptFlush {
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -172,8 +172,8 @@ pub struct ScriptRegister {
 
 impl CmdExecutor for ScriptRegister {
     const NAME: &'static str = "SCRIPTREGISTER";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = SCRIPT_REGISTER_FLAG;
+    const CATS_FLAG: Flag = SCRIPTREGISTER_CATS_FLAG;
+    const CMD_FLAG: Flag = SCRIPTREGISTER_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {

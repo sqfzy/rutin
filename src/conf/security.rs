@@ -1,7 +1,6 @@
 use crate::{
-    cmd::{cmd_name_to_flag, commands::*, CmdExecutor, CmdType},
-    error::{RutinError, RutinResult, UnknownCmdCategorySnafu},
-    CmdFlag,
+    cmd::commands::*,
+    error::{RutinError, RutinResult},
 };
 use arc_swap::ArcSwap;
 use bytes::Bytes;
@@ -12,117 +11,8 @@ use dashmap::{
 };
 use regex::bytes::RegexSet;
 use serde::Deserialize;
-use snafu::OptionExt;
 
 pub const DEFAULT_USER: Bytes = Bytes::from_static(b"default_ac");
-
-pub struct AclCategory {
-    pub name: &'static str,
-    pub flag: CmdFlag,
-}
-
-pub const ACL_CATEGORIES: [AclCategory; 10] = [
-    AclCategory {
-        name: "ADMIN",
-        flag: BgSave::FLAG,
-    },
-    AclCategory {
-        name: "READ",
-        flag: Get::FLAG
-            | GetRange::FLAG
-            | MGet::FLAG
-            | LLen::FLAG
-            | LPos::FLAG
-            | HGet::FLAG
-            | HDel::FLAG
-            | Exists::FLAG
-            | Keys::FLAG
-            | NBKeys::FLAG
-            | Pttl::FLAG
-            | Ttl::FLAG
-            | Type::FLAG,
-    },
-    AclCategory {
-        name: "WRITE",
-        flag: Set::FLAG
-            | SetEx::FLAG
-            | SetNx::FLAG
-            | Append::FLAG
-            | Incr::FLAG
-            | IncrBy::FLAG
-            | Decr::FLAG
-            | DecrBy::FLAG
-            | LPush::FLAG
-            | LPop::FLAG
-            | BLPop::FLAG
-            | HSet::FLAG
-            | HExists::FLAG
-            | Expire::FLAG
-            | ExpireAt::FLAG
-            | ExpireTime::FLAG
-            | Persist::FLAG
-            | Publish::FLAG,
-    },
-    AclCategory {
-        name: "CONNECTION",
-        flag: BgSave::FLAG | Ping::FLAG | Echo::FLAG | Auth::FLAG | ClientTracking::FLAG,
-    },
-    AclCategory {
-        name: "KEYSPACE",
-        flag: Del::FLAG
-            | Dump::FLAG
-            | Exists::FLAG
-            | Expire::FLAG
-            | ExpireAt::FLAG
-            | ExpireTime::FLAG
-            | Keys::FLAG
-            | NBKeys::FLAG
-            | Persist::FLAG
-            | Pttl::FLAG
-            | Ttl::FLAG
-            | Type::FLAG,
-    },
-    AclCategory {
-        name: "STRING",
-        flag: Append::FLAG
-            | Decr::FLAG
-            | DecrBy::FLAG
-            | Get::FLAG
-            | GetRange::FLAG
-            | GetSet::FLAG
-            | Incr::FLAG
-            | IncrBy::FLAG
-            | MGet::FLAG
-            | MSet::FLAG
-            | MSetNx::FLAG
-            | Set::FLAG
-            | SetEx::FLAG
-            | SetNx::FLAG
-            | StrLen::FLAG,
-    },
-    AclCategory {
-        name: "LIST",
-        flag: LLen::FLAG
-            | LPush::FLAG
-            | LPop::FLAG
-            | BLPop::FLAG
-            | LPos::FLAG
-            | NBLPop::FLAG
-            | BLMove::FLAG,
-    },
-    AclCategory {
-        name: "HASH",
-        flag: HDel::FLAG | HExists::FLAG | HGet::FLAG | HSet::FLAG,
-    },
-    AclCategory {
-        name: "PUBSUB",
-        flag: Publish::FLAG | Subscribe::FLAG | Unsubscribe::FLAG,
-    },
-    AclCategory {
-        name: "SCRIPTING",
-        flag: Eval::FLAG | EvalName::FLAG | ScriptExists::FLAG,
-    },
-];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename = "security")]
@@ -202,7 +92,7 @@ pub struct AccessControl {
     pub enable: bool,
     pub password: Bytes, // 空表示不需要密码
     // 用于记录客户端的命令权限，置0的位表示禁止的命令
-    pub cmd_flag: CmdFlag,
+    pub cmds_flag: Flag,
     // 读取key的限制模式
     pub deny_read_key_patterns: Option<RegexSet>,
     // 写入key的限制模式
@@ -216,7 +106,7 @@ impl AccessControl {
         Self {
             enable: true,
             password: Bytes::new(),
-            cmd_flag: NO_CMD_FLAG,
+            cmds_flag: NO_CMD_FLAG,
             deny_read_key_patterns: None,
             deny_write_key_patterns: None,
             deny_channel_patterns: None,
@@ -227,7 +117,7 @@ impl AccessControl {
         Self {
             enable: true,
             password: Bytes::new(),
-            cmd_flag: ALL_CMD_FLAG,
+            cmds_flag: ALL_CMD_FLAG,
             deny_read_key_patterns: None,
             deny_write_key_patterns: None,
             deny_channel_patterns: None,
@@ -246,35 +136,22 @@ impl AccessControl {
             }
         }
 
-        let cat_name_to_cat_flag = |cat_name: &Bytes| -> RutinResult<CmdFlag> {
-            let mut buf = [0; 32];
-            let cat_name = crate::util::get_uppercase(cat_name, &mut buf)?;
-
-            ACL_CATEGORIES
-                .iter()
-                .find(|cat| cat.name.as_bytes() == cat_name)
-                .map(|cat| cat.flag)
-                .with_context(|| UnknownCmdCategorySnafu {
-                    category: Bytes::copy_from_slice(cat_name),
-                })
-        };
-
         if let Some(allow_categories) = other.allow_categories {
             for category_name in &allow_categories {
-                let flag = cat_name_to_cat_flag(category_name)?;
+                let flag = cat_name_to_flag(category_name)?;
 
-                self.cmd_flag |= flag; // 允许某类命令执行
+                self.cmds_flag |= flag; // 允许某类命令执行
             }
         }
 
         if let Some(allow_cmds) = other.allow_commands {
             for cmd_name in &allow_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
-                    self.cmd_flag = ALL_CMD_FLAG; // 允许所有命令执行，后面的命令无效
+                    self.cmds_flag = ALL_CMD_FLAG; // 允许所有命令执行，后面的命令无效
                     break;
                 }
                 let flag = cmd_name_to_flag(cmd_name)?;
-                self.cmd_flag |= flag; // 允许命令执行
+                self.cmds_flag |= flag; // 允许命令执行
             }
         }
 
@@ -282,21 +159,21 @@ impl AccessControl {
 
         if let Some(deny_categories) = other.deny_categories {
             for category_name in &deny_categories {
-                let flag = cat_name_to_cat_flag(category_name)?;
+                let flag = cat_name_to_flag(category_name)?;
 
-                self.cmd_flag &= !flag; // 禁止某类命令执行
+                self.cmds_flag &= !flag; // 禁止某类命令执行
             }
         }
 
         if let Some(deny_cmds) = other.deny_commands {
             for cmd_name in &deny_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
-                    self.cmd_flag = NO_CMD_FLAG; // 禁止所有命令执行，后面的命令无效
+                    self.cmds_flag = NO_CMD_FLAG; // 禁止所有命令执行，后面的命令无效
                     break;
                 }
 
                 let flag = cmd_name_to_flag(cmd_name)?;
-                self.cmd_flag &= !flag; // 禁止命令执行
+                self.cmds_flag &= !flag; // 禁止命令执行
             }
         }
 
@@ -363,8 +240,8 @@ impl AccessControl {
         Ok(())
     }
 
-    pub const fn cmd_flag(&self) -> CmdFlag {
-        self.cmd_flag
+    pub const fn cmd_flag(&self) -> Flag {
+        self.cmds_flag
     }
 
     // 密码是否正确
@@ -376,35 +253,33 @@ impl AccessControl {
     }
 
     // 是否是禁用的命令
-    pub const fn is_forbidden_cmd(&self, check: CmdFlag) -> bool {
+    pub const fn is_forbidden_cmd(&self, check: Flag) -> bool {
         if !self.enable {
             return true;
         }
-        self.cmd_flag & check == 0
+        self.cmds_flag & check == 0
     }
 
     #[inline]
-    pub fn is_forbidden_key(&self, key: &dyn AsRef<[u8]>, cmd_type: CmdType) -> bool {
+    pub fn is_forbidden_key(&self, key: &dyn AsRef<[u8]>, cats_flag: Flag) -> bool {
         if !self.enable {
             return true;
         }
 
-        match cmd_type {
-            CmdType::Read => {
-                if let Some(patterns) = &self.deny_read_key_patterns {
-                    patterns.is_match(key.as_ref())
-                } else {
-                    false
-                }
+        if cmds_contains_cmds(cats_flag, READ_CAT_FLAG) {
+            if let Some(patterns) = &self.deny_read_key_patterns {
+                patterns.is_match(key.as_ref())
+            } else {
+                false
             }
-            CmdType::Write => {
-                if let Some(patterns) = &self.deny_write_key_patterns {
-                    patterns.is_match(key.as_ref())
-                } else {
-                    false
-                }
+        } else if cmds_contains_cmds(cats_flag, WRITE_CAT_FLAG) {
+            if let Some(patterns) = &self.deny_write_key_patterns {
+                patterns.is_match(key.as_ref())
+            } else {
+                false
             }
-            _ => false,
+        } else {
+            unreachable!()
         }
     }
 

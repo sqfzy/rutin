@@ -24,4 +24,3 @@ pub mod util;
 pub type Key = shared::db::Str;
 pub type Int = i128;
 pub type Id = u64;
-pub type CmdFlag = u128;

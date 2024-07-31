@@ -8,7 +8,7 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
-    util, CmdFlag,
+    util,
 };
 use bytes::Bytes;
 use commands::*;
@@ -17,8 +17,8 @@ use tracing::instrument;
 #[allow(async_fn_in_trait)]
 pub trait CmdExecutor: Sized + std::fmt::Debug {
     const NAME: &'static str;
-    const TYPE: CmdType;
-    const FLAG: CmdFlag;
+    const CATS_FLAG: Flag;
+    const CMD_FLAG: Flag;
 
     #[inline]
     async fn apply(
@@ -26,7 +26,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<Resp3>> {
         // 检查是否有权限执行该命令
-        if handler.context.ac.is_forbidden_cmd(Self::FLAG) {
+        if handler.context.ac.is_forbidden_cmd(Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -34,7 +34,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
         let res = cmd.execute(handler).await?;
 
-        if Self::TYPE == CmdType::Write {
+        if cmds_contains_cmd(Self::CATS_FLAG, Self::CMD_FLAG) {
             // 也许存在replicate需要传播
             // handler.shared.wcmd_propagator().may_propagate(args);
         }
@@ -53,13 +53,6 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
     // 需要检查是否有权限操作对应的键
     fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self>;
-}
-
-#[derive(PartialEq)]
-pub enum CmdType {
-    Read,
-    Write,
-    Other,
 }
 
 #[inline]
@@ -152,168 +145,6 @@ pub async fn dispatch(
             Ok(Some(frame))
         }
     }
-}
-
-pub fn cmd_name_to_flag(cmd_name: &[u8]) -> RutinResult<CmdFlag> {
-    macro_rules! cmd_name_to_flag {
-        ( $cmd_name:expr,  $( $cmd_type:ident ),*) => {
-            match $cmd_name {
-                $(
-                    $cmd_type::NAME => Ok($cmd_type::FLAG),
-                )*
-                _ => Err(RutinError::UnknownCmd),
-            }
-        };
-    }
-
-    let mut buf = [0; 32];
-    let cmd_name = util::get_uppercase(cmd_name, &mut buf)?;
-    let cmd_name = std::str::from_utf8(cmd_name)?;
-
-    cmd_name_to_flag!(
-        cmd_name,
-        // commands::other
-        BgSave,
-        Ping,
-        Echo,
-        Auth,
-        // commands::key
-        Del,
-        Dump,
-        Exists,
-        Expire,
-        ExpireAt,
-        ExpireTime,
-        Keys,
-        NBKeys,
-        Persist,
-        Pttl,
-        Ttl,
-        Type,
-        // commands::str
-        Append,
-        Decr,
-        DecrBy,
-        Get,
-        GetRange,
-        GetSet,
-        Incr,
-        IncrBy,
-        MGet,
-        MSet,
-        MSetNx,
-        Set,
-        SetEx,
-        SetNx,
-        StrLen,
-        // commands::list
-        LLen,
-        LPush,
-        LPop,
-        BLPop,
-        LPos,
-        NBLPop,
-        BLMove,
-        // commands::hash
-        HDel,
-        HExists,
-        HGet,
-        HSet,
-        // commands::pub_sub
-        Publish,
-        Subscribe,
-        Unsubscribe,
-        // commands::script
-        Eval,
-        EvalName,
-        //
-        ClientTracking,
-        //
-        ScriptExists,
-        ScriptFlush,
-        ScriptRegister
-    )
-}
-
-pub fn flag_to_cmd_names(flag: CmdFlag) -> RutinResult<Vec<&'static str>> {
-    let mut names = Vec::new();
-
-    macro_rules! flag_to_cmd_names {
-        ( $flag:expr,  $( $cmd_type:ident ),* ) => {
-            match $flag {
-                $(
-                    $cmd_type::FLAG => names.push($cmd_type::NAME),
-                )*
-                _ => return Err(RutinError::UnknownCmd),
-            }
-        };
-    }
-
-    flag_to_cmd_names!(
-        flag,
-        // commands::other
-        BgSave,
-        Ping,
-        Echo,
-        Auth,
-        // commands::key
-        Del,
-        Dump,
-        Exists,
-        Expire,
-        ExpireAt,
-        ExpireTime,
-        Keys,
-        NBKeys,
-        Persist,
-        Pttl,
-        Ttl,
-        Type,
-        // commands::str
-        Append,
-        Decr,
-        DecrBy,
-        Get,
-        GetRange,
-        GetSet,
-        Incr,
-        IncrBy,
-        MGet,
-        MSet,
-        MSetNx,
-        Set,
-        SetEx,
-        SetNx,
-        StrLen,
-        // commands::list
-        LLen,
-        LPush,
-        LPop,
-        BLPop,
-        LPos,
-        NBLPop,
-        BLMove,
-        // commands::hash
-        HDel,
-        HExists,
-        HGet,
-        HSet,
-        // commands::pub_sub
-        Publish,
-        Subscribe,
-        Unsubscribe,
-        // commands::script
-        Eval,
-        EvalName,
-        //
-        ClientTracking,
-        //
-        ScriptExists,
-        ScriptFlush,
-        ScriptRegister
-    );
-
-    Ok(names)
 }
 
 #[derive(Debug, Default)]

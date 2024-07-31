@@ -38,8 +38,7 @@ pub struct Listener {
     pub listener: TcpListener,
     pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
-    pub delay_token: DelayShutdownToken<()>,
-    pub local_set: LocalSet,
+    pub delay_token: DelayShutdownToken<i32>,
 }
 
 impl Listener {

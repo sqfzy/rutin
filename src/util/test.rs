@@ -1,6 +1,7 @@
 use std::sync::{Arc, Once};
 
 use crate::{
+    cmd::commands::{Flag, EXISTS_CMD_FLAG},
     conf::{
         AccessControl, Acl, AofConf, Conf, MemoryConf, RdbConf, ReplicaConf, SecurityConf,
         ServerConf,
@@ -18,7 +19,7 @@ use tracing::Level;
 
 pub const TEST_AC_USERNAME: &str = "test_ac";
 pub const TEST_AC_PASSWORD: &str = "test_pwd";
-pub const TEST_AC_CMD_FLAG: u128 = 0x010;
+pub const TEST_AC_CMDS_FLAG: Flag = EXISTS_CMD_FLAG;
 
 pub fn test_init() {
     static INIT: Once = Once::new();
@@ -44,7 +45,7 @@ pub fn get_test_config() -> Arc<Conf> {
         TEST_AC_USERNAME.into(),
         AccessControl {
             password: TEST_AC_PASSWORD.into(),
-            cmd_flag: TEST_AC_CMD_FLAG,
+            cmds_flag: TEST_AC_CMDS_FLAG,
             ..Default::default()
         },
     );

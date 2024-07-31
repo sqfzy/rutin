@@ -1,16 +1,23 @@
+use std::sync::Arc;
+
 use super::*;
 use crate::{
-    cmd::{flag_to_cmd_names, CmdExecutor, CmdType, CmdUnparsed},
-    conf::{AccessControl, AccessControlIntermedium, ACL_CATEGORIES, DEFAULT_USER},
+    cmd::{CmdExecutor, CmdUnparsed},
+    conf::{AccessControl, AccessControlIntermedium, DEFAULT_USER},
     connection::AsyncStream,
-    error::{RutinError, RutinResult, UnknownCmdCategorySnafu},
     frame::Resp3,
     server::Handler,
-    CmdFlag,
+    util::{set_server_to_master, set_server_to_replica},
 };
+use crate::{
+    error::{RutinError, RutinResult},
+    persist::rdb::Rdb,
+};
+use backon::Retryable;
 use bytes::Bytes;
 use bytestring::ByteString;
-use snafu::OptionExt;
+use itertools::Itertools;
+use tokio::net::TcpStream;
 use tracing::instrument;
 
 /// # Reply:
@@ -24,26 +31,23 @@ pub struct AclCat {
 
 impl CmdExecutor for AclCat {
     const NAME: &'static str = "ACLCAT";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = ACLCAT_FLAG;
+    const CATS_FLAG: Flag = ACLCAT_CATS_FLAG;
+    const CMD_FLAG: Flag = ACLCAT_CMD_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        let res: Vec<Resp3<Bytes, ByteString>> = if let Some(cate) = self.category {
-            let cat = ACL_CATEGORIES
-                .iter()
-                .find(|&c| c.name.as_bytes() == cate.as_ref())
-                .with_context(|| UnknownCmdCategorySnafu { category: cate })?;
+        let res: Vec<Resp3<Bytes, ByteString>> = if let Some(cat) = self.category {
+            let cat = cat_name_to_flag(cat.as_ref())?;
 
-            flag_to_cmd_names(cat.flag)?
-                .into_iter()
-                .map(|s| Resp3::new_blob_string(s.into()))
-                .collect()
+            cmds_flag_to_names(cat)
+                .iter_mut()
+                .map(|s| Resp3::new_blob_string(s.as_bytes().into()))
+                .collect_vec()
         } else {
-            ACL_CATEGORIES
-                .iter()
-                .map(|cat| Resp3::new_blob_string(cat.name.into()))
-                .collect()
+            cmds_flag_to_names(ALL_CMD_FLAG)
+                .iter_mut()
+                .map(|s| Resp3::new_blob_string(s.as_bytes().into()))
+                .collect_vec()
         };
 
         Ok(Some(Resp3::new_array(res)))
@@ -74,8 +78,8 @@ pub struct AclDelUser {
 
 impl CmdExecutor for AclDelUser {
     const NAME: &'static str = "ACLDELUSER";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = ACLDELUSER_FLAG;
+    const CATS_FLAG: Flag = ACLDELUSER_CATS_FLAG;
+    const CMD_FLAG: Flag = ACLDELUSER_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -92,7 +96,7 @@ impl CmdExecutor for AclDelUser {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -124,8 +128,8 @@ pub struct AclSetUser {
 
 impl CmdExecutor for AclSetUser {
     const NAME: &'static str = "ACLSETUSER";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = ACLSETUSER_FLAG;
+    const CATS_FLAG: Flag = ACLSETUSER_CATS_FLAG;
+    const CMD_FLAG: Flag = ACLSETUSER_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -277,8 +281,8 @@ pub struct AclUsers;
 
 impl CmdExecutor for AclUsers {
     const NAME: &'static str = "ACLUSERS";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = ACLUSERS_FLAG;
+    const CATS_FLAG: Flag = ACLUSERS_CATS_FLAG;
+    const CMD_FLAG: Flag = ACLUSERS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -303,8 +307,8 @@ pub struct AclWhoAmI;
 
 impl CmdExecutor for AclWhoAmI {
     const NAME: &'static str = "ACLWHOAMI";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = ACLWHOAMI_FLAG;
+    const CATS_FLAG: Flag = ACLWHOAMI_CATS_FLAG;
+    const CMD_FLAG: Flag = ACLWHOAMI_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -313,6 +317,233 @@ impl CmdExecutor for AclWhoAmI {
 
     fn parse(_args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
         Ok(AclWhoAmI)
+    }
+}
+
+// 该命令用于在后台异步保存当前数据库的数据到磁盘
+/// # Reply:
+///
+/// **Simple string reply:** Background saving started.
+/// **Simple string reply:** Background saving scheduled.
+#[derive(Debug)]
+pub struct BgSave;
+
+impl CmdExecutor for BgSave {
+    const NAME: &'static str = "BGSAVE";
+    const CATS_FLAG: Flag = BGSAVE_CATS_FLAG;
+    const CMD_FLAG: Flag = BGSAVE_CMD_FLAG;
+
+    #[instrument(level = "debug", skip(handler), ret, err)]
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+        let rdb_conf = &handler.shared.conf().rdb;
+        let shared = &handler.shared;
+
+        let mut rdb = if let Some(rdb) = rdb_conf {
+            Rdb::new(shared, rdb.file_path.clone(), rdb.enable_checksum)
+        } else {
+            Rdb::new(shared, "./dump.rdb".into(), false)
+        };
+        // let mut rdb = RDB::new(shared, rdb_conf.unwrap_or("").file_path.clone(), rdb_conf.enable_checksum);
+        tokio::spawn(async move {
+            if let Err(e) = rdb.save().await {
+                tracing::error!("save rdb error: {:?}", e);
+            } else {
+                tracing::info!("save rdb success");
+            }
+        });
+
+        Ok(Some(Resp3::new_simple_string(
+            "Background saving started".into(),
+        )))
+    }
+
+    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+        if !args.is_empty() {
+            return Err(RutinError::WrongArgNum);
+        }
+
+        Ok(BgSave)
+    }
+}
+
+/// # Reply:
+///
+/// **Simple string reply**: OK.
+#[derive(Debug)]
+pub struct PSync {
+    pub replication_id: Bytes,
+    pub offset: u64,
+}
+
+impl CmdExecutor for PSync {
+    const NAME: &'static str = "PSYNC";
+    const CATS_FLAG: Flag = PSYNC_CATS_FLAG;
+    const CMD_FLAG: Flag = PSYNC_CMD_FLAG;
+
+    async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+        todo!()
+    }
+
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+        if args.len() != 2 {
+            return Err(RutinError::WrongArgNum);
+        }
+
+        Ok(PSync {
+            replication_id: args.next().unwrap(),
+            offset: util::atoi(&args.next().unwrap())?,
+        })
+    }
+}
+
+/// # Reply:
+///
+/// **Simple string reply**: OK.
+#[derive(Debug)]
+pub struct ReplicaOf {
+    should_set_to_master: bool,
+    master_host: ByteString,
+    master_port: u16,
+}
+
+impl CmdExecutor for ReplicaOf {
+    const NAME: &'static str = "REPLICAOF";
+    const CATS_FLAG: Flag = REPLICAOF_CATS_FLAG;
+    const CMD_FLAG: Flag = REPLICAOF_CMD_FLAG;
+
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+        let replica_conf = &handler.shared.conf().replica;
+
+        if self.should_set_to_master {
+            set_server_to_master(&handler.shared);
+
+            return Ok(Some(Resp3::new_simple_string("OK".into())));
+        }
+
+        set_server_to_replica(
+            &handler.shared,
+            (self.master_host.clone(), self.master_port),
+        );
+
+        /* step1: 设置主节点地址 */
+
+        replica_conf
+            .master_addr
+            .store(Some(Arc::new((self.master_host.clone(), self.master_port))));
+
+        // 向客户端返回 OK
+        handler
+            .conn
+            .write_frame(&Resp3::<Bytes, ByteString>::new_simple_string("OK".into()))
+            .await?;
+
+        (|| async {
+            /* step2: 连接主节点 */
+
+            let to_master =
+                TcpStream::connect((self.master_host.as_ref(), self.master_port)).await?;
+            let mut to_master_handler = Handler::new(handler.shared.clone(), to_master);
+
+            to_master_handler
+                .conn
+                .write_frame_force(&Resp3::<_, String>::new_blob_string(b"PING"))
+                .await?;
+
+            if !to_master_handler
+                .conn
+                .read_frame()
+                .await?
+                .is_some_and(|frame| {
+                    frame
+                        .try_simple_string()
+                        .is_some_and(|frame| frame == "PONG")
+                })
+            {
+                return Err(RutinError::new_server_error(format!(
+                    "ERR master {}:{} is unreachable or busy",
+                    self.master_host, self.master_port
+                )));
+            };
+
+            /* step3: 身份验证(可选) */
+
+            if let Some(password) = handler.shared.conf().replica.master_auth.as_ref() {
+                to_master_handler
+                    .conn
+                    .write_frame_force(&Resp3::<_, String>::new_array(vec![
+                        Resp3::new_blob_string(b"AUTH".to_vec()),
+                        Resp3::new_blob_string(password.clone().into_bytes()),
+                    ]))
+                    .await?;
+
+                if to_master_handler
+                    .conn
+                    .read_frame()
+                    .await?
+                    .is_some_and(|frame| frame.is_simple_error())
+                {
+                    return Err(RutinError::new_server_error(
+                        "ERR master authentication failed",
+                    ));
+                }
+            }
+
+            /* step4: 发送端口信息 */
+
+            to_master_handler
+                .conn
+                .write_frame_force(&Resp3::<_, String>::new_array(vec![
+                    Resp3::new_blob_string(b"REPLCONF".to_vec()),
+                    Resp3::new_blob_string(b"listening-port".to_vec()),
+                    Resp3::new_blob_string(
+                        handler.shared.conf().server.port.to_string().into_bytes(),
+                    ),
+                ]))
+                .await?;
+
+            /* step5: 发送PSYNC命令 */
+            to_master_handler
+                .conn
+                .write_frame_force(&Resp3::<_, String>::new_array(vec![
+                    Resp3::new_blob_string(b"PSYNC".as_ref()),
+                    Resp3::new_blob_string(b"?".as_ref()),
+                    Resp3::new_blob_string(b"0".as_ref()),
+                ]))
+                .await?;
+
+            Ok(())
+        })
+        .retry(&backon::ExponentialBuilder::default())
+        .await?;
+
+        todo!()
+    }
+
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+        if args.len() != 2 {
+            return Err(RutinError::WrongArgNum);
+        };
+
+        let arg1 = args.next().unwrap();
+        let arg2 = args.next().unwrap();
+
+        if arg1 == "NO" && arg2 == "ONE" {
+            return Ok(ReplicaOf {
+                should_set_to_master: true,
+                master_host: Default::default(),
+                master_port: 0,
+            });
+        }
+
+        Ok(ReplicaOf {
+            should_set_to_master: false,
+            master_host: args
+                .next()
+                .unwrap()
+                .try_into()
+                .map_err(|_| RutinError::from("ERR value is not a valid hostname or ip address"))?,
+            master_port: util::atoi(&args.next().unwrap())?,
+        })
     }
 }
 
@@ -440,15 +671,15 @@ async fn cmd_acl_tests() {
         assert!(ac.enable);
         assert_eq!(ac.password.as_ref(), b"password");
 
-        assert!(!ac.is_forbidden_cmd(Get::FLAG));
-        assert!(ac.is_forbidden_cmd(Set::FLAG));
-        assert!(ac.is_forbidden_cmd(HDel::FLAG));
-        assert!(!ac.is_forbidden_cmd(MSet::FLAG));
+        assert!(!ac.is_forbidden_cmd(Get::CMD_FLAG));
+        assert!(ac.is_forbidden_cmd(Set::CMD_FLAG));
+        assert!(ac.is_forbidden_cmd(HDel::CMD_FLAG));
+        assert!(!ac.is_forbidden_cmd(MSet::CMD_FLAG));
 
-        assert!(ac.is_forbidden_key(b"foo1", CmdType::Read));
-        assert!(!ac.is_forbidden_key(b"foo", CmdType::Read));
-        assert!(ac.is_forbidden_key(b"bar1", CmdType::Write));
-        assert!(!ac.is_forbidden_key(b"bar", CmdType::Write));
+        assert!(ac.is_forbidden_key(b"foo1", READ_CAT_FLAG));
+        assert!(!ac.is_forbidden_key(b"foo", READ_CAT_FLAG));
+        assert!(ac.is_forbidden_key(b"bar1", WRITE_CAT_FLAG));
+        assert!(!ac.is_forbidden_key(b"bar", WRITE_CAT_FLAG));
 
         assert!(ac.is_forbidden_channel(b"channel"));
         assert!(!ac.is_forbidden_channel(b"chan"));

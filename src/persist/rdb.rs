@@ -65,7 +65,7 @@ pub struct Rdb {
     db: Arc<Db>,
     path: String,
     enable_checksum: bool,
-    shutdown: ShutdownManager<()>,
+    shutdown: ShutdownManager<i32>,
 }
 
 impl Rdb {

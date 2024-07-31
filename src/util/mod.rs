@@ -152,6 +152,20 @@ pub fn get_uppercase<'a>(src: &[u8], buf: &'a mut [u8]) -> RutinResult<&'a [u8]>
     Ok(&buf[..len])
 }
 
+pub fn get_lowercase<'a>(src: &[u8], buf: &'a mut [u8]) -> RutinResult<&'a [u8]> {
+    let len = src.len();
+    if len > buf.len() {
+        return Err(RutinError::ServerErr {
+            msg: "buffer is too small".into(),
+        });
+    }
+
+    buf[..len].copy_from_slice(src);
+    buf[..len].make_ascii_lowercase();
+
+    Ok(&buf[..len])
+}
+
 pub fn to_valid_range(start: Int, end: Int, len: usize) -> Option<(usize, usize)> {
     if start == 0 || end == 0 {
         return None;

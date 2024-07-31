@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdType, CmdUnparsed},
+    cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
     error::{RutinError, RutinResult},
@@ -27,8 +27,8 @@ pub struct Append {
 
 impl CmdExecutor for Append {
     const NAME: &'static str = "APPEND";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = APPEND_FLAG;
+    const CATS_FLAG: Flag = APPEND_CATS_FLAG;
+    const CMD_FLAG: Flag = APPEND_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -55,7 +55,7 @@ impl CmdExecutor for Append {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -77,8 +77,8 @@ pub struct Decr {
 
 impl CmdExecutor for Decr {
     const NAME: &'static str = "DECR";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = DECR_FLAG;
+    const CATS_FLAG: Flag = DECR_CATS_FLAG;
+    const CMD_FLAG: Flag = DECR_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -102,7 +102,7 @@ impl CmdExecutor for Decr {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -122,8 +122,8 @@ pub struct DecrBy {
 
 impl CmdExecutor for DecrBy {
     const NAME: &'static str = "DECYBY";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = DECRBY_FLAG;
+    const CATS_FLAG: Flag = DECRBY_CATS_FLAG;
+    const CMD_FLAG: Flag = DECRBY_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -147,7 +147,7 @@ impl CmdExecutor for DecrBy {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -170,8 +170,8 @@ pub struct Get {
 
 impl CmdExecutor for Get {
     const NAME: &'static str = "GET";
-    const TYPE: crate::cmd::CmdType = CmdType::Read;
-    const FLAG: CmdFlag = GET_FLAG;
+    const CATS_FLAG: Flag = GET_CATS_FLAG;
+    const CMD_FLAG: Flag = GET_CMD_FLAG;
 
     #[inline]
     #[instrument(level = "debug", skip(handler), ret, err)]
@@ -197,7 +197,7 @@ impl CmdExecutor for Get {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -218,8 +218,8 @@ pub struct GetRange {
 
 impl CmdExecutor for GetRange {
     const NAME: &'static str = "GETRANGE";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = GETRANGE_FLAG;
+    const CATS_FLAG: Flag = GETRANGE_CATS_FLAG;
+    const CMD_FLAG: Flag = GETRANGE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -246,7 +246,7 @@ impl CmdExecutor for GetRange {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -278,8 +278,8 @@ pub struct GetSet {
 
 impl CmdExecutor for GetSet {
     const NAME: &'static str = "GETSET";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = GETSET_FLAG;
+    const CATS_FLAG: Flag = GETSET_CATS_FLAG;
+    const CMD_FLAG: Flag = GETSET_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -304,7 +304,7 @@ impl CmdExecutor for GetSet {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -326,8 +326,8 @@ pub struct Incr {
 
 impl CmdExecutor for Incr {
     const NAME: &'static str = "INCR";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = INCR_FLAG;
+    const CATS_FLAG: Flag = INCR_CATS_FLAG;
+    const CMD_FLAG: Flag = INCR_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -352,7 +352,7 @@ impl CmdExecutor for Incr {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -372,8 +372,8 @@ pub struct IncrBy {
 
 impl CmdExecutor for IncrBy {
     const NAME: &'static str = "INCRBY";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = INCRBY_FLAG;
+    const CATS_FLAG: Flag = INCRBY_CATS_FLAG;
+    const CMD_FLAG: Flag = INCRBY_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -397,7 +397,7 @@ impl CmdExecutor for IncrBy {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -420,8 +420,8 @@ pub struct MGet {
 
 impl CmdExecutor for MGet {
     const NAME: &'static str = "MGET";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = MGET_FLAG;
+    const CATS_FLAG: Flag = MGET_CATS_FLAG;
+    const CMD_FLAG: Flag = MGET_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -444,14 +444,14 @@ impl CmdExecutor for MGet {
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
 
         let keys = args
             .map(|k| {
-                if ac.is_forbidden_key(&k, Self::TYPE) {
+                if ac.is_forbidden_key(&k, Self::CATS_FLAG) {
                     return Err(RutinError::NoPermission);
                 }
                 Ok(k.into())
@@ -473,8 +473,8 @@ pub struct MSet {
 
 impl CmdExecutor for MSet {
     const NAME: &'static str = "MSET";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = MSET_FLAG;
+    const CATS_FLAG: Flag = MSET_CATS_FLAG;
+    const CMD_FLAG: Flag = MSET_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -497,7 +497,7 @@ impl CmdExecutor for MSet {
         let mut pairs = Vec::with_capacity((args.len() - 1) / 2);
 
         while let (Some(key), Some(value)) = (args.next(), args.next()) {
-            if ac.is_forbidden_key(&key, Self::TYPE) {
+            if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
                 return Err(RutinError::NoPermission);
             }
 
@@ -520,8 +520,8 @@ pub struct MSetNx {
 
 impl CmdExecutor for MSetNx {
     const NAME: &'static str = "MSETNX";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = MSETNX_FLAG;
+    const CATS_FLAG: Flag = MSETNX_CATS_FLAG;
+    const CMD_FLAG: Flag = MSETNX_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -550,7 +550,7 @@ impl CmdExecutor for MSetNx {
         let mut pairs = Vec::with_capacity((args.len() - 1) / 2);
 
         while let (Some(key), Some(value)) = (args.next(), args.next()) {
-            if ac.is_forbidden_key(&key, Self::TYPE) {
+            if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
                 return Err(RutinError::NoPermission);
             }
 
@@ -586,8 +586,8 @@ enum SetOpt {
 
 impl CmdExecutor for Set {
     const NAME: &'static str = "SET";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = SET_FLAG;
+    const CATS_FLAG: Flag = SET_CATS_FLAG;
+    const CMD_FLAG: Flag = SET_CMD_FLAG;
 
     #[inline]
     #[instrument(level = "debug", skip(handler), ret, err)]
@@ -648,7 +648,7 @@ impl CmdExecutor for Set {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
         let key = key.into();
@@ -776,8 +776,8 @@ pub struct SetEx {
 
 impl CmdExecutor for SetEx {
     const NAME: &'static str = "SETEX";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = SETEX_FLAG;
+    const CATS_FLAG: Flag = SETEX_CATS_FLAG;
+    const CMD_FLAG: Flag = SETEX_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -799,7 +799,7 @@ impl CmdExecutor for SetEx {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -827,8 +827,8 @@ pub struct SetNx {
 
 impl CmdExecutor for SetNx {
     const NAME: &'static str = "SETNX";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = SETNX_FLAG;
+    const CATS_FLAG: Flag = SETNX_CATS_FLAG;
+    const CMD_FLAG: Flag = SETNX_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -851,7 +851,7 @@ impl CmdExecutor for SetNx {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -873,8 +873,8 @@ pub struct StrLen {
 
 impl CmdExecutor for StrLen {
     const NAME: &'static str = "STRLEN";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = STRLEN_FLAG;
+    const CATS_FLAG: Flag = STRLEN_CATS_FLAG;
+    const CMD_FLAG: Flag = STRLEN_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -897,7 +897,7 @@ impl CmdExecutor for StrLen {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 

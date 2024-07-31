@@ -1,13 +1,12 @@
 use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdType, CmdUnparsed},
+    cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    persist::rdb::Rdb,
     server::Handler,
-    util, CmdFlag, Id,
+    util, Id,
 };
 use bytes::Bytes;
 use tracing::instrument;
@@ -44,8 +43,8 @@ pub struct Ping {
 
 impl CmdExecutor for Ping {
     const NAME: &'static str = "PING";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = PING_FLAG;
+    const CATS_FLAG: Flag = PING_CATS_FLAG;
+    const CMD_FLAG: Flag = PING_CMD_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -76,8 +75,8 @@ pub struct Echo {
 
 impl CmdExecutor for Echo {
     const NAME: &'static str = "ECHO";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = ECHO_FLAG;
+    const CATS_FLAG: Flag = ECHO_CATS_FLAG;
+    const CMD_FLAG: Flag = ECHO_CMD_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -94,151 +93,6 @@ impl CmdExecutor for Echo {
         })
     }
 }
-//
-// 该命令用于获取Redis服务器的各种信息和统计数值
-// *1\r\n$4\r\ninfo\r\n
-// *2\r\n$4\r\ninfo\r\n$11\r\nreplication\r\n
-// pub struct Info {
-//     pub sections: Section,
-// }
-//
-// #[allow(dead_code)]
-// pub enum Section {
-//     Array(Vec<Section>),
-//     // all: Return all sections (excluding module generated ones)
-//     All,
-//     // default: Return only the default set of sections
-//     Default,
-//     // everything: Includes all and modules
-//     Everything,
-//     // server: General information about the Redis server
-//     Server,
-//     // clients: Client connections section
-//     Clients,
-//     // memory: Memory consumption related information
-//     Memory,
-//     // persistence: RDB and AOF related information
-//     Persistence,
-//     // stats: General statistics
-//     Stats,
-//     // replication: Master/replica replication information
-//     Replication,
-//     // cpu: CPU consumption statistics
-//     Cpu,
-//     // commandstats: Redis command statistics
-//     CommandStats,
-//     // latencystats: Redis command latency percentile distribution statistics
-//     LatencyStats,
-//     // sentinel: Redis Sentinel section (only applicable to Sentinel instances)
-//     Sentinel,
-//     // cluster: Redis Cluster section
-//     Cluster,
-//     // modules: Modules section
-//     Modules,
-//     // keyspace: Database related statistics
-//     Keyspace,
-//     // errorstats: Redis error statistics
-//     ErrorStats,
-// }
-// impl TryFrom<Bytes> for Section {
-//     type Error = Error;
-//
-//     fn try_from(bulk: Bytes) -> RutinResult<Self, Self::Error> {
-//         let value = bulk.to_ascii_uppercase();
-//         match value.as_slice() {
-//             b"REPLICATION" => Ok(Section::Replication),
-//             // TODO:
-//             _ => Err(anyhow!("Incomplete")),
-//         }
-//     }
-// }
-// impl TryFrom<Vec<Bytes>> for Section {
-//     type Error = Error;
-//
-//     fn try_from(bulks: Vec<Bytes>) -> RutinResult<Self, Self::Error> {
-//         let mut sections = Vec::with_capacity(cmd_frame.array_len()?);
-//         for section in bulks {
-//             sections.push(section.try_into()?);
-//         }
-//         Ok(Section::Array(sections))
-//     }
-// }
-
-// impl Info {
-// #[instrument(level = "debug", skip(handler), ret, err)]
-//     pub async fn execute(&self, _db: &Db) -> RutinResult
-//         debug!("executing command 'INFO'");
-//
-//         match self.sections {
-//             Section::Replication => {
-//                 let res = if CONFIG.replication.replicaof.is_none() {
-//                     format!(
-//                         "role:master\r\nmaster_replid:{}\r\nmaster_repl_offset:{}\r\n",
-//                         CONFIG.server.run_id,
-//                         OFFSET.load(std::sync::atomic::Ordering::SeqCst)
-//                     )
-//                 } else {
-//                     format!(
-//                         "role:slave\r\nmaster_replid:{}\r\nmaster_repl_offset:{}\r\n",
-//                         CONFIG.server.run_id,
-//                         OFFSET.load(std::sync::atomic::Ordering::SeqCst)
-//                     )
-//                 };
-//                 Ok(Some(RESP3::Bulk(res.into())))
-//             }
-//             // TODO:
-//             _ => Err(anyhow!("Incomplete")),
-//         }
-//     }
-// }
-
-// 该命令用于在后台异步保存当前数据库的数据到磁盘
-/// # Reply:
-///
-/// **Simple string reply:** Background saving started.
-/// **Simple string reply:** Background saving scheduled.
-#[derive(Debug)]
-pub struct BgSave;
-
-impl CmdExecutor for BgSave {
-    const NAME: &'static str = "BGSAVE";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = BGSAVE_FLAG;
-
-    #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        let rdb_conf = &handler.shared.conf().rdb;
-        let shared = &handler.shared;
-
-        let mut rdb = if let Some(rdb) = rdb_conf {
-            Rdb::new(shared, rdb.file_path.clone(), rdb.enable_checksum)
-        } else {
-            Rdb::new(shared, "./dump.rdb".into(), false)
-        };
-        // let mut rdb = RDB::new(shared, rdb_conf.unwrap_or("").file_path.clone(), rdb_conf.enable_checksum);
-        tokio::spawn(async move {
-            if let Err(e) = rdb.save().await {
-                tracing::error!("save rdb error: {:?}", e);
-            } else {
-                tracing::info!("save rdb success");
-            }
-        });
-
-        Ok(Some(Resp3::new_simple_string(
-            "Background saving started".into(),
-        )))
-    }
-
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
-        if !args.is_empty() {
-            return Err(RutinError::WrongArgNum);
-        }
-
-        Ok(BgSave)
-    }
-}
-
-// pub struct BgRewriteAof;
 
 #[derive(Debug)]
 pub struct Auth {
@@ -248,8 +102,8 @@ pub struct Auth {
 
 impl CmdExecutor for Auth {
     const NAME: &'static str = "AUTH";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = AUTH_FLAG;
+    const CATS_FLAG: Flag = AUTH_CATS_FLAG;
+    const CMD_FLAG: Flag = AUTH_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -305,8 +159,8 @@ pub struct ClientTracking {
 
 impl CmdExecutor for ClientTracking {
     const NAME: &'static str = "TRACKING";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = CLIENT_TRACKING_FLAG;
+    const CATS_FLAG: Flag = CLIENTTRACKING_CATS_FLAG;
+    const CMD_FLAG: Flag = CLIENTTRACKING_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -365,7 +219,7 @@ mod cmd_other_tests {
     use super::*;
     use crate::{
         conf::AccessControl,
-        util::{get_test_shared, test_init, TEST_AC_CMD_FLAG, TEST_AC_PASSWORD, TEST_AC_USERNAME},
+        util::{get_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD, TEST_AC_USERNAME},
     };
 
     #[tokio::test]
@@ -397,7 +251,7 @@ mod cmd_other_tests {
         )
         .unwrap();
         auth.execute(&mut handler).await.unwrap();
-        assert_eq!(handler.context.ac.cmd_flag(), TEST_AC_CMD_FLAG);
+        assert_eq!(handler.context.ac.cmd_flag(), TEST_AC_CMDS_FLAG);
     }
 
     #[tokio::test]

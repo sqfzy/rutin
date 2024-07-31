@@ -5,14 +5,14 @@
 
 use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdType, CmdUnparsed},
+    cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
     shared::db::ObjValueType::Hash,
-    CmdFlag, Key,
+    Key,
 };
 use bytes::Bytes;
 use tracing::instrument;
@@ -26,8 +26,8 @@ pub struct HDel {
 
 impl CmdExecutor for HDel {
     const NAME: &'static str = "HDEL";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = HDEL_FLAG;
+    const CATS_FLAG: Flag = HDEL_CATS_FLAG;
+    const CMD_FLAG: Flag = HDEL_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -57,7 +57,7 @@ impl CmdExecutor for HDel {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -78,8 +78,8 @@ pub struct HExists {
 
 impl CmdExecutor for HExists {
     const NAME: &'static str = "HEXISTS";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = HEXISTS_FLAG;
+    const CATS_FLAG: Flag = HEXISTS_CATS_FLAG;
+    const CMD_FLAG: Flag = HEXISTS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -105,7 +105,7 @@ impl CmdExecutor for HExists {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -126,8 +126,8 @@ pub struct HGet {
 
 impl CmdExecutor for HGet {
     const NAME: &'static str = "HGET";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = HGET_FLAG;
+    const CATS_FLAG: Flag = HGET_CATS_FLAG;
+    const CMD_FLAG: Flag = HGET_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -153,7 +153,7 @@ impl CmdExecutor for HGet {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -173,8 +173,8 @@ pub struct HSet {
 
 impl CmdExecutor for HSet {
     const NAME: &'static str = "HSET";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = HSET_FLAG;
+    const CATS_FLAG: Flag = HSET_CATS_FLAG;
+    const CMD_FLAG: Flag = HSET_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -203,7 +203,7 @@ impl CmdExecutor for HSet {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 

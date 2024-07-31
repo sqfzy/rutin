@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdType, CmdUnparsed},
+    cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
     error::{RutinError, RutinResult},
@@ -11,7 +11,7 @@ use crate::{
     server::Handler,
     shared::db::{as_bytes, ObjValueType, NEVER_EXPIRE},
     util::{atoi, UNIX_EPOCH},
-    CmdFlag, Id, Int, Key,
+    Id, Int, Key,
 };
 use bytes::{Bytes, BytesMut};
 use rayon::prelude::*;
@@ -52,8 +52,8 @@ pub struct Del {
 
 impl CmdExecutor for Del {
     const NAME: &'static str = "DEL";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = DEL_FLAG;
+    const CATS_FLAG: Flag = DEL_CATS_FLAG;
+    const CMD_FLAG: Flag = DEL_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -67,14 +67,14 @@ impl CmdExecutor for Del {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
 
         let keys = args
             .map(|k| {
-                if ac.is_forbidden_key(&k, Self::TYPE) {
+                if ac.is_forbidden_key(&k, Self::CATS_FLAG) {
                     return Err(RutinError::NoPermission);
                 }
                 Ok(k.into())
@@ -97,8 +97,8 @@ pub struct Dump {
 
 impl CmdExecutor for Dump {
     const NAME: &'static str = "DUMP";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = DUMP_FLAG;
+    const CATS_FLAG: Flag = DUMP_CATS_FLAG;
+    const CMD_FLAG: Flag = DUMP_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -128,7 +128,7 @@ impl CmdExecutor for Dump {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -147,8 +147,8 @@ pub struct Exists {
 
 impl CmdExecutor for Exists {
     const NAME: &'static str = "EXISTS";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = EXISTS_FLAG;
+    const CATS_FLAG: Flag = EXISTS_CATS_FLAG;
+    const CMD_FLAG: Flag = EXISTS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -161,14 +161,14 @@ impl CmdExecutor for Exists {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
 
         let keys = args
             .map(|k| {
-                if ac.is_forbidden_key(&k, Self::TYPE) {
+                if ac.is_forbidden_key(&k, Self::CATS_FLAG) {
                     return Err(RutinError::NoPermission);
                 }
                 Ok(k.into())
@@ -193,8 +193,8 @@ pub struct Expire {
 
 impl CmdExecutor for Expire {
     const NAME: &'static str = "EXPIRE";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = EXPIRE_FLAG;
+    const CATS_FLAG: Flag = EXPIRE_CATS_FLAG;
+    const CMD_FLAG: Flag = EXPIRE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -262,7 +262,7 @@ impl CmdExecutor for Expire {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -293,8 +293,8 @@ pub struct ExpireAt {
 
 impl CmdExecutor for ExpireAt {
     const NAME: &'static str = "EXPIREAT";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = EXPIREAT_FLAG;
+    const CATS_FLAG: Flag = EXPIREAT_CATS_FLAG;
+    const CMD_FLAG: Flag = EXPIREAT_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -357,7 +357,7 @@ impl CmdExecutor for ExpireAt {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -392,8 +392,8 @@ pub struct ExpireTime {
 
 impl CmdExecutor for ExpireTime {
     const NAME: &'static str = "EXPIRETIME";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = EXPIRETIME_FLAG;
+    const CATS_FLAG: Flag = EXPIRETIME_CATS_FLAG;
+    const CMD_FLAG: Flag = EXPIRETIME_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -424,7 +424,7 @@ impl CmdExecutor for ExpireTime {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -443,8 +443,8 @@ pub struct Keys {
 // TODO: 提供非阻塞操作
 impl CmdExecutor for Keys {
     const NAME: &'static str = "KEYS";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = KEYS_FLAG;
+    const CATS_FLAG: Flag = KEYS_CATS_FLAG;
+    const CMD_FLAG: Flag = KEYS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -482,7 +482,7 @@ impl CmdExecutor for Keys {
         }
 
         let pattern = args.next().unwrap();
-        if ac.is_forbidden_key(&pattern, Self::TYPE) {
+        if ac.is_forbidden_key(&pattern, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -502,8 +502,8 @@ pub struct NBKeys {
 
 impl CmdExecutor for NBKeys {
     const NAME: &'static str = "NBKEYS";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = NBKEYS_FLAG;
+    const CATS_FLAG: Flag = NBKEYS_CATS_FLAG;
+    const CMD_FLAG: Flag = NBKEYS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -561,7 +561,7 @@ impl CmdExecutor for NBKeys {
         }
 
         let pattern = args.next().unwrap();
-        if ac.is_forbidden_key(&pattern, Self::TYPE) {
+        if ac.is_forbidden_key(&pattern, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -584,8 +584,8 @@ pub struct Persist {
 
 impl CmdExecutor for Persist {
     const NAME: &'static str = "PERSIST";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = PERSIST_FLAG;
+    const CATS_FLAG: Flag = PERSIST_CATS_FLAG;
+    const CMD_FLAG: Flag = PERSIST_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -612,7 +612,7 @@ impl CmdExecutor for Persist {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -633,8 +633,8 @@ pub struct Pttl {
 
 impl CmdExecutor for Pttl {
     const NAME: &'static str = "PTTL";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = PTTL_FLAG;
+    const CATS_FLAG: Flag = PTTL_CATS_FLAG;
+    const CMD_FLAG: Flag = PTTL_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -664,7 +664,7 @@ impl CmdExecutor for Pttl {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -685,8 +685,8 @@ pub struct Ttl {
 
 impl CmdExecutor for Ttl {
     const NAME: &'static str = "TTL";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = TTL_FLAG;
+    const CATS_FLAG: Flag = TTL_CATS_FLAG;
+    const CMD_FLAG: Flag = TTL_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -716,7 +716,7 @@ impl CmdExecutor for Ttl {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -735,8 +735,8 @@ pub struct Type {
 
 impl CmdExecutor for Type {
     const NAME: &'static str = "TYPE";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = TYPE_FLAG;
+    const CATS_FLAG: Flag = TYPE_CATS_FLAG;
+    const CMD_FLAG: Flag = TYPE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -760,7 +760,7 @@ impl CmdExecutor for Type {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::TYPE) {
+        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 

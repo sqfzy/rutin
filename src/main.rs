@@ -1,5 +1,8 @@
-use rutin::conf;
-use std::str::FromStr;
+use rutin::{
+    conf,
+    server::{REBOOT_SIGNAL, SHUTDOWN_SIGNAL},
+};
+use std::{str::FromStr, sync::Arc};
 
 #[tokio::main]
 async fn main() {
@@ -15,7 +18,7 @@ async fn main() {
         return;
     }
 
-    let conf = conf::Conf::new().unwrap();
+    let conf = Arc::new(conf::Conf::new().unwrap());
 
     if let Ok(level) = tracing::Level::from_str(conf.server.log_level.as_str()) {
         tracing_subscriber::fmt()
@@ -24,10 +27,16 @@ async fn main() {
             .init();
     }
 
-    let listener =
-        tokio::net::TcpListener::bind(format!("{}:{}", conf.server.addr, conf.server.port))
-            .await
-            .unwrap();
+    loop {
+        let listener =
+            tokio::net::TcpListener::bind(format!("{}:{}", conf.server.addr, conf.server.port))
+                .await
+                .unwrap();
 
-    rutin::server::run(listener, conf).await;
+        match rutin::server::run(listener, conf.clone()).await {
+            SHUTDOWN_SIGNAL => break,
+            REBOOT_SIGNAL => continue,
+            _ => unreachable!(),
+        }
+    }
 }

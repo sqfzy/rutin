@@ -1,12 +1,13 @@
 use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdType, CmdUnparsed},
+    cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
-    CmdFlag, Int, Key,
+    shared::db::Str,
+    Int,
 };
 use bytes::Bytes;
 use tracing::instrument;
@@ -18,14 +19,14 @@ use tracing::instrument;
 /// to the same node as the publishing client are included in the count.
 #[derive(Debug)]
 pub struct Publish {
-    topic: Key,
+    topic: Str,
     msg: Bytes,
 }
 
 impl CmdExecutor for Publish {
     const NAME: &'static str = "PUBLISH";
-    const TYPE: CmdType = CmdType::Write;
-    const FLAG: CmdFlag = PUBLISH_FLAG;
+    const CATS_FLAG: Flag = PUBLISH_CATS_FLAG;
+    const CMD_FLAG: Flag = PUBLISH_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -80,13 +81,13 @@ impl CmdExecutor for Publish {
 
 #[derive(Debug)]
 pub struct Subscribe {
-    topics: Vec<Key>,
+    topics: Vec<Str>,
 }
 
 impl CmdExecutor for Subscribe {
     const NAME: &'static str = "SUBSCRIBE";
-    const TYPE: CmdType = CmdType::Read;
-    const FLAG: CmdFlag = SUBSCRIBE_FLAG;
+    const CATS_FLAG: Flag = SUBSCRIBE_CATS_FLAG;
+    const CMD_FLAG: Flag = SUBSCRIBE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -125,19 +126,19 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
 
         let topics = args
             .map(|k| {
-                if ac.is_forbidden_key(&k, Self::TYPE) {
+                if ac.is_forbidden_channel(&k) {
                     return Err(RutinError::NoPermission);
                 }
                 Ok(k.into())
             })
-            .collect::<RutinResult<Vec<Key>>>()?;
+            .collect::<RutinResult<Vec<Str>>>()?;
 
         Ok(Subscribe { topics })
     }
@@ -150,13 +151,13 @@ impl CmdExecutor for Subscribe {
 /// confirmation that the command succeeded.
 #[derive(Debug)]
 pub struct Unsubscribe {
-    topics: Vec<Key>,
+    topics: Vec<Str>,
 }
 
 impl CmdExecutor for Unsubscribe {
     const NAME: &'static str = "UNSUBSCRIBE";
-    const TYPE: CmdType = CmdType::Other;
-    const FLAG: CmdFlag = UNSUBSCRIBE_FLAG;
+    const CATS_FLAG: Flag = UNSUBSCRIBE_CATS_FLAG;
+    const CMD_FLAG: Flag = UNSUBSCRIBE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -201,19 +202,19 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
 
         let topics = args
             .map(|k| {
-                if ac.is_forbidden_key(&k, Self::TYPE) {
+                if ac.is_forbidden_channel(&k) {
                     return Err(RutinError::NoPermission);
                 }
                 Ok(k.into())
             })
-            .collect::<RutinResult<Vec<Key>>>()?;
+            .collect::<RutinResult<Vec<Str>>>()?;
 
         Ok(Unsubscribe { topics })
     }
