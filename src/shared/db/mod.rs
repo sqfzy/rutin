@@ -18,7 +18,7 @@ use dashmap::{
     DashMap, DashSet,
 };
 use flume::Sender;
-use std::{cell::UnsafeCell, ops::Deref, sync::Arc, time::Duration};
+use std::{cell::UnsafeCell, ops::Deref, time::Duration};
 use tokio::time::Instant;
 use tracing::instrument;
 
@@ -95,11 +95,11 @@ pub struct Db {
     // 消息
     client_records: DashMap<Id, BgTaskSender, nohash::BuildNoHashHasher<u64>>,
 
-    pub conf: Arc<Conf>,
+    pub conf: &'static Conf,
 }
 
 impl Db {
-    pub fn new(conf: Arc<Conf>) -> Self {
+    pub fn new(conf: &'static Conf) -> Self {
         // 初始化NEVER_EXPIRE
         NEVER_EXPIRE.init();
 
@@ -111,6 +111,7 @@ impl Db {
                 1024,
                 nohash::BuildNoHashHasher::default(),
             ),
+            // Safety: conf在整个程序运行期间都是有效的
             conf,
         }
     }
@@ -125,6 +126,13 @@ impl Db {
 
     pub fn entries_size(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn clear(&self) {
+        self.entries.clear();
+        self.entry_expire_records.clear();
+        self.pub_sub.clear();
+        self.client_records.clear();
     }
 
     #[inline]

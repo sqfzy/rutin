@@ -91,9 +91,9 @@ fn bench_decode(c: &mut Criterion) {
     });
 }
 
-// bench_create_handler    time:   [109.51 ns 111.18 ns 112.79 ns]
-fn bench_create_handler(c: &mut Criterion) {
-    c.bench_function("bench_create_handler", |b| {
+// bench_create_handler_cx    time:   [109.51 ns 111.18 ns 112.79 ns]
+fn bench_create_handler_cx(c: &mut Criterion) {
+    c.bench_function("bench_create_handler_cx", |b| {
         b.iter_custom(|iters| {
             let shared = get_test_shared();
 
@@ -101,6 +101,21 @@ fn bench_create_handler(c: &mut Criterion) {
             for _ in 0..iters {
                 let mut cx = HandlerContext::new(&shared);
                 cx.client_id = 1;
+            }
+            start.elapsed()
+        })
+    });
+}
+
+// bench_create_handler    time:   [323.06 ns 324.46 ns 325.89 ns]
+fn bench_create_handler(c: &mut Criterion) {
+    c.bench_function("bench_create_handler", |b| {
+        b.iter_custom(|iters| {
+            let shared = get_test_shared();
+
+            let start = Instant::now();
+            for _ in 0..iters {
+                Handler::new_fake_with(shared.clone(), None, None);
             }
             start.elapsed()
         })
@@ -155,6 +170,7 @@ criterion_group!(
     benches,
     bench_encode,
     bench_decode,
+    bench_create_handler_cx,
     bench_create_handler,
     bench_get_cmd,
     bench_set_cmd,

@@ -779,7 +779,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn del_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),
@@ -797,7 +797,7 @@ mod cmd_key_tests {
         .unwrap();
         let result = del.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
-        assert!(!db.contains_object(&"key1".into()).await);
+        assert!(!handler.shared.db().contains_object(&"key1".into()).await);
 
         // case: 键不存在
         let del = Del::parse(
@@ -812,7 +812,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn exists_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),
@@ -844,7 +844,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn expire_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),
@@ -868,7 +868,9 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
-        assert!(db
+        assert!(handler
+            .shared
+            .db()
             .get(&"key1".into())
             .await
             .unwrap()
@@ -884,6 +886,8 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire.execute(&mut handler).await.unwrap_err();
         matches!(result, RutinError::ErrCode { code } if code == 0);
+
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key_with_ex"),
@@ -913,6 +917,8 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
+
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key_with_ex"),
@@ -944,6 +950,8 @@ mod cmd_key_tests {
         let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
+        let db = handler.shared.db();
+
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str("value_with_ex", Instant::now() + Duration::from_secs(10)),
@@ -973,6 +981,8 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
+
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key_with_ex"),
@@ -1008,7 +1018,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn expire_at_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),
@@ -1038,7 +1048,9 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
-        assert!(db
+        assert!(handler
+            .shared
+            .db()
             .get(&"key1".into())
             .await
             .unwrap()
@@ -1054,6 +1066,8 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire_at.execute(&mut handler).await.unwrap_err();
         matches!(result, RutinError::ErrCode { code } if code == 0);
+
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key_with_ex"),
@@ -1088,6 +1102,8 @@ mod cmd_key_tests {
         let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
+        let db = handler.shared.db();
+
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
@@ -1121,6 +1137,8 @@ mod cmd_key_tests {
         let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
 
+        let db = handler.shared.db();
+
         db.insert_object(
             Key::from("key_with_ex"),
             ObjectInner::new_str(
@@ -1153,6 +1171,8 @@ mod cmd_key_tests {
         .unwrap();
         let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
+
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key_with_ex"),
@@ -1191,7 +1211,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn expire_time_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),
@@ -1248,7 +1268,7 @@ mod cmd_key_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn keys_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),
@@ -1334,7 +1354,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn persist_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key_with_ex"),
@@ -1357,7 +1377,9 @@ mod cmd_key_tests {
         .unwrap();
         let result = persist.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(result, Resp3::new_integer(1));
-        assert!(db
+        assert!(handler
+            .shared
+            .db()
             .get(&"key_with_ex".into())
             .await
             .unwrap()
@@ -1387,7 +1409,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn pttl_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),
@@ -1509,7 +1531,7 @@ mod cmd_key_tests {
     #[tokio::test]
     async fn type_test() {
         let (mut handler, _) = Handler::new_fake();
-        let db = handler.shared.db().clone();
+        let db = handler.shared.db();
 
         db.insert_object(
             Key::from("key1"),

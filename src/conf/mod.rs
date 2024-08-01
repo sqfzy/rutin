@@ -59,6 +59,10 @@ impl Conf {
         Ok(conf)
     }
 
+    // pub fn as_static(&self) -> &'static Self {
+    //     unsafe { transmute(self) }
+    // }
+
     pub fn get_tls_config(&self) -> Option<rustls::ServerConfig> {
         let tls = self.tls.as_ref()?;
 
@@ -79,10 +83,5 @@ impl Conf {
             .unwrap();
 
         Some(config)
-    }
-
-    pub fn as_static(&self) -> &'static Self {
-        // Safty: Conf在整个程序运行期间都存在
-        unsafe { std::mem::transmute(self) }
     }
 }

@@ -1,15 +1,14 @@
 use crate::{
     cmd::dispatch,
-    conf::Conf,
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
-    server::{Handler, SHUTDOWN_SIGNAL},
+    server::Handler,
     shared::Shared,
 };
 use anyhow::Result;
 use bytes::BytesMut;
 use serde::Deserialize;
-use std::{os::unix::fs::MetadataExt, path::Path, sync::Arc, time::Duration};
+use std::{os::unix::fs::MetadataExt, path::Path, time::Duration};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -19,11 +18,10 @@ use tokio_util::codec::Decoder;
 pub struct Aof {
     file: File,
     shared: Shared,
-    conf: Arc<Conf>,
 }
 
 impl Aof {
-    pub async fn new(shared: Shared, conf: Arc<Conf>, file_path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn new(shared: Shared, file_path: impl AsRef<Path>) -> Result<Self> {
         Ok(Aof {
             file: tokio::fs::OpenOptions::new()
                 .read(true)
@@ -32,7 +30,6 @@ impl Aof {
                 .open(file_path)
                 .await?,
             shared,
-            conf,
         })
     }
 
@@ -43,7 +40,7 @@ impl Aof {
     }
 
     async fn rewrite(&mut self) -> anyhow::Result<()> {
-        let path = self.conf.aof.as_ref().unwrap().file_path.clone();
+        let path = self.shared.conf().aof.as_ref().unwrap().file_path.clone();
         let temp_path = format!("{}.tmp", path);
         let bak_path = format!("{}.bak", path);
         // 创建临时文件，先使用RDB格式保存数据
@@ -71,10 +68,10 @@ impl Aof {
 
 impl Aof {
     pub async fn save(&mut self) -> anyhow::Result<()> {
-        let aof_conf = self.conf.aof.as_ref().unwrap();
+        let aof_conf = self.shared.conf().aof.as_ref().unwrap();
 
         // 为了避免在shutdown的时候，还有数据没有写入到文件中，shutdown时必须等待该函数执行完毕
-        let shutdown = self.shared.shutdown().clone();
+        let shutdown = self.shared.signal_manager().clone();
         let _delay_token = shutdown.delay_shutdown_token()?;
 
         let mut curr_aof_size = 0_u128; // 单位为byte
@@ -196,7 +193,7 @@ async fn aof_test() {
     use crate::{
         cmd::dispatch,
         frame::Resp3,
-        server::Handler,
+        server::{Handler, SHUTDOWN_SIGNAL},
         util::{get_test_shared, test_init},
     };
     use std::io::Write;
@@ -224,9 +221,7 @@ async fn aof_test() {
 
     let shared = get_test_shared();
 
-    let mut aof = Aof::new(shared.clone(), shared.conf().clone(), test_file_path)
-        .await
-        .unwrap();
+    let mut aof = Aof::new(shared.clone(), test_file_path).await.unwrap();
 
     aof.load().await.unwrap();
 
@@ -301,5 +296,8 @@ async fn aof_test() {
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    shared.shutdown().trigger_shutdown(SHUTDOWN_SIGNAL).unwrap();
+    shared
+        .signal_manager()
+        .trigger_shutdown(SHUTDOWN_SIGNAL)
+        .unwrap();
 }

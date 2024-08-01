@@ -8,22 +8,19 @@ pub use handler::*;
 pub use listener::*;
 use sysinfo::System;
 
-use crate::{
-    conf::Conf,
-    frame::Resp3,
-    shared::{db::Db, Shared},
-    Id,
-};
+use crate::{conf::Conf, Id};
 use async_shutdown::ShutdownManager;
 use crossbeam::atomic::AtomicCell;
-use std::{cell::RefCell, sync::Arc};
-use tokio::{net::TcpListener, sync::Semaphore, task_local};
-use tokio_rustls::TlsAcceptor;
+use std::{cell::RefCell, str::FromStr};
+use tokio::task_local;
 use tracing::{debug, error};
 
-pub const SHUTDOWN_SIGNAL: i32 = 1;
-// 重启服务。断开所有连接，重新开始监听；释放所有资源，重新初始化。仅保留conf
-pub const REBOOT_SIGNAL: i32 = 2;
+/* 使用保留ID作为特殊信号，其它ID用于指定关闭该ID的连接 */
+// 关闭服务。
+pub const SHUTDOWN_SIGNAL: Id = 1;
+// 重启服务。断开所有连接，释放所有资源，重新初始化。
+pub const REBOOT_SIGNAL: Id = 2;
+pub const REBOOT_RESERVE_CONF_SIGNAL: Id = 3;
 
 pub const RESERVE_MAX_ID: Id = 20;
 pub static RESERVE_ID: AtomicCell<Id> = AtomicCell::new(0);
@@ -51,11 +48,11 @@ pub fn using_local_buf(f: impl FnOnce(&mut BytesMut)) -> BytesMut {
 }
 
 #[inline]
-pub async fn run(listener: TcpListener, conf: Arc<Conf>) -> i32 {
-    let shutdown_manager = ShutdownManager::new();
+pub async fn run() {
+    let signal_manager = ShutdownManager::new();
 
     tokio::spawn({
-        let shutdown = shutdown_manager.clone();
+        let shutdown = signal_manager.clone();
         async move {
             if let Err(e) = tokio::signal::ctrl_c().await {
                 eprintln!("Failed to wait for CTRL+C: {}", e);
@@ -67,38 +64,55 @@ pub async fn run(listener: TcpListener, conf: Arc<Conf>) -> i32 {
         }
     });
 
-    // 如果配置文件中开启了TLS，则创建TlsAcceptor
-    let tls_acceptor = if let Some(tls_conf) = conf.get_tls_config() {
-        let tls_acceptor = TlsAcceptor::from(Arc::new(tls_conf));
-        Some(tls_acceptor)
-    } else {
-        None
-    };
+    'reboot: loop {
+        // 读取配置
+        let conf = Box::leak(Box::new(Conf::new().unwrap()));
 
-    let limit_connections = Arc::new(Semaphore::new(conf.server.max_connections));
-    let mut server = Listener {
-        shared: Shared::new(
-            Arc::new(Db::new(conf.clone())),
-            conf,
-            shutdown_manager.clone(),
-        ),
-        listener,
-        tls_acceptor,
-        limit_connections,
-        delay_token: shutdown_manager.delay_shutdown_token().unwrap(),
-    };
+        if let Ok(level) = tracing::Level::from_str(conf.server.log_level.as_str()) {
+            tracing_subscriber::fmt()
+                .pretty()
+                .with_max_level(level)
+                .init();
+        }
 
-    // 运行服务，阻塞主线程。当shutdown触发时，解除主线程的阻塞
-    if let Ok(Err(err)) = shutdown_manager.wrap_cancel(server.run()).await {
-        error!(cause = %err, "failed to accept");
-        shutdown_manager.trigger_shutdown(SHUTDOWN_SIGNAL).ok();
+        let mut server = Server::new(conf, signal_manager.clone()).await;
+
+        loop {
+            // 运行服务，阻塞主线程。当shutdown触发时，解除主线程的阻塞
+            match signal_manager.wrap_cancel(server.run()).await {
+                // 服务初始化出错，关闭服务
+                Ok(Err(err)) => {
+                    error!(cause = %err, "failed to accept");
+                    signal_manager.trigger_shutdown(SHUTDOWN_SIGNAL).ok();
+                }
+                // 如果是特殊信号，则退出循环，否则继续运行服务
+                Err(signal) => match signal {
+                    SHUTDOWN_SIGNAL => {
+                        debug!("shutdown signal received");
+                        break 'reboot;
+                    }
+                    REBOOT_SIGNAL => {
+                        debug!("reboot signal received");
+                        break;
+                    }
+                    REBOOT_RESERVE_CONF_SIGNAL => {
+                        debug!("set to replica signal received");
+                        // 重置Server，保留配置
+                        server = Server::new(conf, signal_manager.clone()).await;
+                    }
+                    // 忽略其它信号
+                    _ => {}
+                },
+                // 服务正常运行时，永不返回
+                _ => unreachable!(),
+            }
+        }
+
+        server.clean().await;
+        drop(server.delay_token);
+
+        // 等待所有DelayShutdownToken被释放
+        debug!("waiting for shutdown complete");
+        signal_manager.wait_shutdown_complete().await;
     }
-    debug!("shutdown complete");
-
-    server.clean().await;
-    drop(server.delay_token);
-
-    // 等待所有DelayShutdownToken被释放
-    debug!("waiting for shutdown complete");
-    shutdown_manager.wait_shutdown_complete().await
 }

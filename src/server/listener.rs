@@ -1,10 +1,11 @@
 use super::Handler;
 use crate::{
+    conf::Conf,
     persist::{aof::Aof, rdb::Rdb},
     shared::{db::Lru, Shared},
-    util::get_test_shared,
+    Id,
 };
-use async_shutdown::DelayShutdownToken;
+use async_shutdown::{DelayShutdownToken, ShutdownManager};
 use backon::Retryable;
 use rand::seq::IteratorRandom;
 use std::{
@@ -15,7 +16,7 @@ use std::{
     time::Duration,
 };
 use sysinfo::ProcessRefreshKind;
-use tokio::{io, net::TcpListener, sync::Semaphore, task::LocalSet, time::Instant};
+use tokio::{io, net::TcpListener, sync::Semaphore, time::Instant};
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info};
 
@@ -33,16 +34,46 @@ pub fn get_lru_clock() -> u32 {
     LRU_CLOCK.load(Ordering::Relaxed) % Lru::LRU_CLOCK_MAX
 }
 
-pub struct Listener {
+pub struct Server {
     pub shared: Shared,
     pub listener: TcpListener,
     pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
-    pub delay_token: DelayShutdownToken<i32>,
+    pub delay_token: DelayShutdownToken<Id>,
 }
 
-impl Listener {
-    #[inline]
+impl Server {
+    pub async fn new(conf: &'static Conf, signal_manager: ShutdownManager<Id>) -> Self {
+        // 开始监听
+        let listener =
+            tokio::net::TcpListener::bind(format!("{}:{}", conf.server.addr, conf.server.port))
+                .await
+                .unwrap();
+
+        // 如果配置文件中开启了TLS，则创建TlsAcceptor
+        let tls_acceptor = if let Some(tls_conf) = conf.get_tls_config() {
+            let tls_acceptor = TlsAcceptor::from(Arc::new(tls_conf));
+            Some(tls_acceptor)
+        } else {
+            None
+        };
+
+        let limit_connections = Arc::new(Semaphore::new(conf.server.max_connections));
+
+        let delay_token = signal_manager.delay_shutdown_token().unwrap();
+
+        // 构建共享数据(包括Db, Conf等)
+        let shared = Shared::new(conf, signal_manager);
+
+        Server {
+            shared,
+            listener,
+            tls_acceptor,
+            limit_connections,
+            delay_token,
+        }
+    }
+
     pub async fn run(&mut self) -> Result<(), io::Error> {
         tracing::info!(
             "server is running on {}:{}...",
@@ -118,7 +149,7 @@ impl Listener {
     }
 }
 
-pub async fn init(listener: &mut Listener) -> anyhow::Result<()> {
+pub async fn init(listener: &mut Server) -> anyhow::Result<()> {
     let shared = &listener.shared;
     let conf = shared.conf();
 
@@ -141,7 +172,7 @@ pub async fn init(listener: &mut Listener) -> anyhow::Result<()> {
     /* 是否开启AOF持久化 */
     /*********************/
     if let Some(aof) = conf.aof.as_ref() {
-        let mut aof = Aof::new(shared.clone(), conf.clone(), aof.file_path.clone()).await?;
+        let mut aof = Aof::new(shared.clone(), aof.file_path.clone()).await?;
 
         let start = std::time::Instant::now();
         info!("Loading AOF file...");

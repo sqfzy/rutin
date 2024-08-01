@@ -1,14 +1,17 @@
 #![allow(dead_code)]
-use crate::shared::{
-    db::{Db, Hash, List, ObjValue, Set, Str, ZSet},
-    Shared,
+use crate::{
+    shared::{
+        db::{Db, Hash, List, ObjValue, Set, Str, ZSet},
+        Shared,
+    },
+    Id,
 };
 use ahash::{AHashMap, AHashSet};
 use anyhow::bail;
 use async_shutdown::ShutdownManager;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use skiplist::OrderedSkipList;
-use std::{collections::VecDeque, sync::Arc};
+use std::collections::VecDeque;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     time::Duration,
@@ -62,19 +65,19 @@ const RDB_ENC_LZF: u8 = 3;
 
 #[derive(Clone)]
 pub struct Rdb {
-    db: Arc<Db>,
+    shared: Shared,
     path: String,
     enable_checksum: bool,
-    shutdown: ShutdownManager<i32>,
+    shutdown: ShutdownManager<Id>,
 }
 
 impl Rdb {
     pub fn new(shared: &Shared, path: String, enable_checksum: bool) -> Self {
         Self {
-            db: shared.db().clone(),
+            shared: shared.clone(),
             path,
             enable_checksum,
-            shutdown: shared.shutdown().clone(),
+            shutdown: shared.signal_manager().clone(),
         }
     }
 }
@@ -85,7 +88,7 @@ impl Rdb {
 
         if let Ok(fut) = self.shutdown.wrap_delay_shutdown(rdb_save::rdb_save(
             &mut file,
-            &self.db,
+            self.shared.db(),
             self.enable_checksum,
         )) {
             fut.await?;
@@ -102,7 +105,7 @@ impl Rdb {
         let mut rdb = BytesMut::with_capacity(1024 * 32);
         while file.read_buf(&mut rdb).await? != 0 {}
 
-        rdb_load::rdb_load(&mut rdb, &self.db, self.enable_checksum).await?;
+        rdb_load::rdb_load(&mut rdb, self.shared.db(), self.enable_checksum).await?;
 
         Ok(())
     }

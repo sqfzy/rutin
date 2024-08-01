@@ -7,80 +7,88 @@ pub use script::*;
 use crate::{
     conf::Conf,
     shared::{db::Db, propagator::Propagator},
+    Id,
 };
 use async_shutdown::ShutdownManager;
-use std::sync::Arc;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Shared {
-    db: Arc<Db>,
-    conf: Arc<Conf>,
-    script: Arc<Script>,
-    wcmd_propagator: Arc<Propagator>,
-    shutdown: ShutdownManager<i32>,
+    inner: &'static SharedInner,
+}
+
+pub struct SharedInner {
+    db: Db,
+    conf: &'static Conf,
+    script: Script,
+    wcmd_propagator: Propagator,
+    signal_manager: ShutdownManager<Id>,
 }
 
 impl Shared {
-    pub fn new(db: Arc<Db>, conf: Arc<Conf>, shutdown: ShutdownManager<i32>) -> Self {
-        let db = db;
-        let conf = conf;
-        let wcmd_propagator = Arc::new(Propagator::new(
-            conf.aof.is_some(),
-            conf.replica.max_replica,
-        ));
-        let script = Arc::new(Script::new());
+    pub fn new(conf: &'static Conf, shutdown: ShutdownManager<Id>) -> Self {
+        let db = Db::new(conf);
+        let wcmd_propagator = Propagator::new(conf.aof.is_some(), conf.replica.max_replica);
+        let script = Script::new();
         Self {
-            db,
-            conf,
-            script,
-            wcmd_propagator,
-            shutdown,
+            inner: Box::leak(Box::new(SharedInner {
+                db,
+                conf,
+                script,
+                wcmd_propagator,
+                signal_manager: shutdown,
+            })),
         }
     }
 
     pub fn new_with(
-        db: Arc<Db>,
-        conf: Arc<Conf>,
-        script: Arc<Script>,
-        wcmd_propagator: Arc<Propagator>,
-        shutdown: ShutdownManager<i32>,
+        db: Db,
+        conf: &'static Conf,
+        script: Script,
+        wcmd_propagator: Propagator,
+        shutdown: ShutdownManager<Id>,
     ) -> Self {
         Self {
-            db,
-            conf,
-            script,
-            wcmd_propagator,
-            shutdown,
+            inner: Box::leak(Box::new(SharedInner {
+                db,
+                conf,
+                script,
+                wcmd_propagator,
+                signal_manager: shutdown,
+            })),
         }
     }
 
-    pub fn db(&self) -> &Arc<Db> {
-        &self.db
+    #[inline]
+    pub fn db(&self) -> &'static Db {
+        &self.inner.db
     }
 
-    pub fn script(&self) -> &Arc<Script> {
-        &self.script
+    #[inline]
+    pub fn script(&self) -> &'static Script {
+        &self.inner.script
     }
 
-    pub fn conf(&self) -> &Arc<Conf> {
-        &self.conf
+    #[inline]
+    pub fn conf(&self) -> &'static Conf {
+        self.inner.conf
     }
 
-    pub fn wcmd_propagator(&self) -> &Arc<Propagator> {
-        &self.wcmd_propagator
+    #[inline]
+    pub fn wcmd_propagator(&self) -> &'static Propagator {
+        &self.inner.wcmd_propagator
     }
 
-    pub fn shutdown(&self) -> &ShutdownManager<i32> {
-        &self.shutdown
+    #[inline]
+    pub fn signal_manager(&self) -> &'static ShutdownManager<Id> {
+        &self.inner.signal_manager
     }
 }
 
-impl std::fmt::Debug for Shared {
+impl std::fmt::Debug for SharedInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SharedInner")
             .field("db", &self.db)
             .field("script", &self.script)
-            .field("conf", &self.conf)
             .field("wcmd_propagator", &self.wcmd_propagator)
             .finish()
     }

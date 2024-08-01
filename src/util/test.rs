@@ -1,5 +1,3 @@
-use std::sync::{Arc, Once};
-
 use crate::{
     cmd::commands::{Flag, EXISTS_CMD_FLAG},
     conf::{
@@ -15,6 +13,7 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use crossbeam::atomic::AtomicCell;
 use rand::Rng;
+use std::sync::Once;
 use tracing::Level;
 
 pub const TEST_AC_USERNAME: &str = "test_ac";
@@ -33,7 +32,7 @@ pub fn test_init() {
     });
 }
 
-pub fn get_test_config() -> Arc<Conf> {
+pub fn get_test_config() -> Conf {
     let run_id: String = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(40)
@@ -50,7 +49,7 @@ pub fn get_test_config() -> Arc<Conf> {
         },
     );
 
-    let conf = Conf {
+    Conf {
         server: ServerConf {
             addr: "127.0.0.1".to_string(),
             port: 6379,
@@ -69,7 +68,6 @@ pub fn get_test_config() -> Arc<Conf> {
         replica: ReplicaConf {
             master_addr: ArcSwapOption::new(None),
             max_replica: 6,
-            offset: AtomicCell::new(0),
             master_auth: None,
         },
         rdb: Some(RdbConf {
@@ -90,15 +88,13 @@ pub fn get_test_config() -> Arc<Conf> {
             maxmemory_samples: 5,
         }),
         tls: None,
-    };
-
-    Arc::new(conf)
+    }
 }
 
-pub fn get_test_db() -> Arc<Db> {
-    Arc::new(Db::new(get_test_config()))
+pub fn get_test_db() -> Db {
+    Db::new(Box::leak(Box::new(get_test_config())))
 }
 
 pub fn get_test_shared() -> Shared {
-    Shared::new(get_test_db(), get_test_config(), Default::default())
+    Shared::new(Box::leak(Box::new(get_test_config())), Default::default())
 }

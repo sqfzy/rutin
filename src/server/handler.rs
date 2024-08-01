@@ -37,9 +37,14 @@ impl<S: AsyncStream> Handler<S> {
             loop {
                 tokio::select! {
                     // 等待shutdown信号
-                    _signal = self.shared.shutdown().wait_shutdown_triggered() => {
-                        debug!("handler received shutdown signal");
-                        return Ok(());
+                    signal = self.shared.signal_manager().wait_shutdown_triggered() => {
+                        // 如果信号是保留ID或者当前连接的ID，则关闭连接
+                        if (0..=RESERVE_MAX_ID).contains(&signal)  {
+                            return Ok(());
+                        } else if signal == self.context.client_id {
+                            debug!("client {} is closed by signal", self.context.client_id);
+                            return Ok(());
+                        }
                     }
                     // 等待客户端请求
                     frames =  self.conn.read_frames() => {

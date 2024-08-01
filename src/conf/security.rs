@@ -4,11 +4,12 @@ use crate::{
 };
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use dashmap::DashMap;
 use dashmap::{
     iter::Iter,
     mapref::one::{Ref, RefMut},
 };
+use dashmap::{iter::IterMut, DashMap};
+use derive_builder::Builder;
 use regex::bytes::RegexSet;
 use serde::Deserialize;
 
@@ -85,9 +86,18 @@ impl Acl {
     pub fn iter(&self) -> Iter<'_, Bytes, AccessControl> {
         self.0.iter()
     }
+
+    pub fn iter_mut(&self) -> IterMut<'_, Bytes, AccessControl> {
+        self.0.iter_mut()
+    }
+
+    pub fn clear(&self) {
+        self.0.clear();
+    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Builder)]
+#[builder(setter(into))]
 pub struct AccessControl {
     pub enable: bool,
     pub password: Bytes, // 空表示不需要密码
@@ -122,6 +132,14 @@ impl AccessControl {
             deny_write_key_patterns: None,
             deny_channel_patterns: None,
         }
+    }
+
+    pub fn set_only_read(&mut self) {
+        self.cmds_flag = READ_CAT_FLAG;
+    }
+
+    pub fn set_only_write(&mut self) {
+        self.cmds_flag = WRITE_CAT_FLAG;
     }
 
     pub fn merge(&mut self, mut other: AccessControlIntermedium) -> RutinResult<()> {
