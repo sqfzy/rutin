@@ -13,6 +13,7 @@ use crate::{
     conf::Conf,
     persist::{aof::Aof, rdb::Rdb},
     shared::Shared,
+    util::propagate_wcmd_to_replicas,
     Id,
 };
 use async_shutdown::ShutdownManager;
@@ -158,9 +159,30 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
             info!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
         }
 
+        let wcmd_rx = shared
+            .wcmd_rx()
+            .expect("wcmd_receiver should be `Some` when aof is enabled");
+
         tokio::spawn(async move {
-            if let Err(e) = aof.save().await {
-                error!("Failed to save AOF file: {:?}", e);
+            if let Err(e) = aof
+                .save_and_propagate_wcmd_to_replicas(wcmd_rx.clone())
+                .await
+            {
+                error!("Failed to save AOF file: {}", e);
+            }
+        });
+    } else if !conf.server.standalone {
+        // 如果是集群模式，但没有开启AOF
+
+        let wcmd_rx = shared
+            .wcmd_rx()
+            .expect("wcmd_receiver should be `Some` when standalone is false");
+
+        let signal_manager = shared.signal_manager().clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = propagate_wcmd_to_replicas(wcmd_rx.clone(), signal_manager).await {
+                error!("{}", e);
             }
         });
     }

@@ -8,6 +8,7 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::Handler,
+    shared::Message,
     util,
 };
 use bytes::Bytes;
@@ -30,14 +31,14 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
             return Err(RutinError::NoPermission);
         }
 
-        let may_wcmd = if handler.shared.wcmd_propagator().should_propagate()
+        let wcmd_and_tx = if let Some(wcmd_tx) = handler.shared.wcmd_tx()
             && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG)
         {
             let resp3 = Resp3::from(args);
             let wcmd = resp3.encode_local_buf();
 
             args = resp3.try_into()?;
-            Some(wcmd)
+            Some((wcmd_tx, wcmd))
         } else {
             None
         };
@@ -46,8 +47,19 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
         let res = cmd.execute(handler).await?;
 
-        if let Some(wcmd) = may_wcmd {
-            handler.shared.wcmd_propagator().propagate(wcmd.freeze());
+        if let Some((tx, wcmd)) = wcmd_and_tx {
+            let wcmd_buf = &mut handler.context.wcmd_buf;
+
+            if handler.conn.unhandled_count() == 1 {
+                if wcmd_buf.is_empty() {
+                    tx.send(Message::Wcmd(wcmd)).unwrap();
+                } else {
+                    wcmd_buf.unsplit(wcmd);
+                    tx.send(Message::Wcmd(wcmd_buf.split())).unwrap();
+                }
+            } else {
+                wcmd_buf.unsplit(wcmd);
+            }
         }
 
         // TODO:

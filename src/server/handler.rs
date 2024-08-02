@@ -6,7 +6,7 @@ use crate::{
     error::RutinResult,
     frame::Resp3,
     server::{RESERVE_ID, RESERVE_MAX_ID},
-    shared::Shared,
+    shared::{Shared, SignalManager},
     util::get_test_shared,
     Id, Key,
 };
@@ -37,7 +37,7 @@ impl<S: AsyncStream> Handler<S> {
             loop {
                 tokio::select! {
                     // 等待shutdown信号
-                    signal = self.shared.signal_manager().wait_shutdown_triggered() => {
+                    signal = self.shared.signal_manager().wait_all_signal() => {
                         // 如果信号是保留ID或者当前连接的ID，则关闭连接
                         if (0..=RESERVE_MAX_ID).contains(&signal)  {
                             return Ok(());

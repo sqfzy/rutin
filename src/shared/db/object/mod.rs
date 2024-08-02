@@ -527,6 +527,7 @@ pub const MAY_UPDATE_FLAG: u8 = 1 << 2;
 
 #[derive(Debug, Default)]
 struct Events {
+    // TODO: tinyvec
     inner: Vec<Event>,
     // 事件类型标志位，用于快速判断是否包含某种事件
     flags: u8,
@@ -629,8 +630,10 @@ impl ObjectInner {
         // PERF:
         let new_atc = (get_lru_clock() << Lru::LFU_BITS) | new_count;
 
-        // 如果更新失败，则放弃更新
-        let _ = self.lru.compare_exchange(atc, new_atc, Relaxed, Relaxed);
+        // PERF:
+        // WARN: 有可能有多个线程在同时更新lru，这会覆盖掉其他线程的更新
+        // 或许这是可以接受的？
+        self.lru.store(new_atc, Relaxed);
     }
 
     #[inline]

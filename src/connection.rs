@@ -76,8 +76,8 @@ impl<S: AsyncStream> Connection<S> {
     }
 
     #[inline]
-    pub async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.stream.write_all(buf).await
+    pub async fn write_all(&mut self, src: &[u8]) -> io::Result<()> {
+        self.stream.write_all(src).await
     }
 
     #[inline]

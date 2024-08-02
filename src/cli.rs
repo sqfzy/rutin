@@ -1,8 +1,6 @@
 use crate::conf::MasterInfo;
-use arc_swap::ArcSwapOption;
 use bytestring::ByteString;
 use clap::Parser;
-use std::sync::Arc;
 use std::sync::Mutex;
 
 #[derive(Parser)]

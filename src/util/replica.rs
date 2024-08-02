@@ -5,11 +5,14 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::{Handler, RESET_SIGNAL},
-    shared::Shared,
+    shared::{Message, Shared, SignalManager},
+    Id,
 };
+use async_shutdown::ShutdownManager;
 use bytes::Bytes;
 use bytestring::ByteString;
 use crossbeam::queue::ArrayQueue;
+use flume::Receiver;
 use tokio::{net::TcpStream, sync::Semaphore};
 
 pub fn set_server_to_master(shared: &Shared) {
@@ -121,11 +124,11 @@ pub async fn set_server_to_replica(
     } else {
         to_master_handler
             .conn
-            .write_frame_force(&vec![
-                Resp3::new_blob_string("PSYNC".into()),
-                Resp3::new_blob_string("?".into()),
-                Resp3::new_blob_string("-1".into()),
-            ])
+            .write_frame_force(&Resp3::<_, String>::new_array(vec![
+                Resp3::new_blob_string(b"PSYNC".as_ref()),
+                Resp3::new_blob_string(b"?".as_ref()),
+                Resp3::new_blob_string(b"-1".as_ref()),
+            ]))
             .await?;
 
         // TODO: 全量同步
@@ -162,4 +165,31 @@ pub async fn set_server_to_replica(
 
 fn full_sync(shared: &Shared) -> RutinResult<()> {
     todo!()
+}
+
+pub async fn propagate_wcmd_to_replicas(
+    wcmd_rx: Receiver<Message>,
+    signal_manager: ShutdownManager<Id>,
+) -> RutinResult<()> {
+    let mut handlers: Vec<Handler<TcpStream>> = Vec::new();
+
+    loop {
+        tokio::select! {
+            _ = signal_manager.wait_special_signal() => break,
+            msg = wcmd_rx.recv_async() => match msg.expect("wcmd_propagator should never close") {
+                Message::Wcmd(wcmd) => {
+                    if !handlers.is_empty() {
+                        for handler in handlers.iter_mut() {
+                            handler.conn.write_all(&wcmd).await?;
+                        }
+                    }
+                }
+                Message::AddReplica(handler) => {
+                    handlers.push(handler);
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

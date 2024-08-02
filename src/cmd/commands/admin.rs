@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
@@ -13,12 +11,9 @@ use crate::{
     error::{RutinError, RutinResult},
     persist::rdb::Rdb,
 };
-use backon::Retryable;
 use bytes::Bytes;
 use bytestring::ByteString;
 use itertools::Itertools;
-use tokio::net::TcpStream;
-use tracing::{error, instrument};
 
 /// # Reply:
 ///

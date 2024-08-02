@@ -10,7 +10,7 @@ use crate::{
         Shared,
     },
 };
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
 use bytestring::ByteString;
 use rand::Rng;
 use std::sync::{Mutex, Once};
@@ -59,6 +59,7 @@ pub fn get_test_config() -> Conf {
             log_level: "info".into(),
             max_connections: 1024,
             max_batch: 1024,
+            standalone: false,
         },
         security: SecurityConf {
             requirepass: None,

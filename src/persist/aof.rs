@@ -3,15 +3,17 @@ use crate::{
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
     server::Handler,
-    shared::Shared,
+    shared::{Message, Shared, SignalManager},
 };
 use anyhow::Result;
 use bytes::BytesMut;
+use flume::Receiver;
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, path::Path, time::Duration};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
 };
 use tokio_util::codec::Decoder;
 
@@ -67,39 +69,47 @@ impl Aof {
 }
 
 impl Aof {
-    pub async fn save(&mut self) -> anyhow::Result<()> {
+    pub async fn save_and_propagate_wcmd_to_replicas(
+        &mut self,
+        wcmd_receiver: Receiver<Message>,
+    ) -> anyhow::Result<()> {
         let aof_conf = self.shared.conf().aof.as_ref().unwrap();
 
         // 为了避免在shutdown的时候，还有数据没有写入到文件中，shutdown时必须等待该函数执行完毕
-        let shutdown = self.shared.signal_manager().clone();
-        let _delay_token = shutdown.delay_shutdown_token()?;
+        let signal_manager = self.shared.signal_manager().clone();
+        let _delay_token = signal_manager.delay_shutdown_token()?;
 
         let mut curr_aof_size = 0_u128; // 单位为byte
         let auto_aof_rewrite_min_size = (aof_conf.auto_aof_rewrite_min_size as u128) << 20;
-        let wcmd_receiver = self
-            .shared
-            .wcmd_propagator()
-            .to_aof
-            .as_ref()
-            .unwrap()
-            .1
-            .clone();
+
+        let mut replica_handlers: Vec<Handler<TcpStream>> = Vec::new();
 
         match aof_conf.append_fsync {
             AppendFSync::Always => loop {
                 tokio::select! {
-                    _ = shutdown.wait_shutdown_triggered() => break,
-                    wcmd = wcmd_receiver.recv() => {
-                        let wcmd = wcmd?;
+                    _ = signal_manager.wait_special_signal() => break,
+                    msg = wcmd_receiver.recv_async() => match msg.expect("wcmd_propagator should never close") {
+                        Message::Wcmd(wcmd) => {
+                            curr_aof_size += wcmd.len() as u128;
 
-                        curr_aof_size += wcmd.len() as u128;
-                        if curr_aof_size >= auto_aof_rewrite_min_size {
-                            self.rewrite().await?;
-                            curr_aof_size = 0;
+                            self.file.write_all(&wcmd).await?;
+                            self.file.sync_data().await?;
+
+                            if !replica_handlers.is_empty() {
+                                for handler in replica_handlers.iter_mut() {
+                                    handler.conn.write_all(&wcmd).await?;
+                                }
+                            }
+
+                            if curr_aof_size >= auto_aof_rewrite_min_size {
+                                self.rewrite().await?;
+                                curr_aof_size = 0;
+                            }
+
                         }
-
-                        self.file.write_all(&wcmd).await?;
-                        self.file.sync_data().await?;
+                        Message::AddReplica(handler) => {
+                            replica_handlers.push(handler);
+                        }
                     }
                 }
             },
@@ -108,52 +118,72 @@ impl Aof {
 
                 loop {
                     tokio::select! {
-                        _ = shutdown.wait_shutdown_triggered() => {
+                        _ = signal_manager.wait_special_signal() => {
                             break
                         },
                         // 每隔一秒，同步文件
                         _ = interval.tick() => {
                             self.file.sync_data().await?;
                         }
-                        wcmd = wcmd_receiver.recv() => {
-                            let wcmd = wcmd?;
+                        msg = wcmd_receiver.recv_async() =>match msg.expect("wcmd_propagator should never close") {
+                            Message::Wcmd(wcmd) => {
+                                curr_aof_size += wcmd.len() as u128;
 
-                            curr_aof_size += wcmd.len() as u128;
-                            if curr_aof_size >= auto_aof_rewrite_min_size {
-                                self.rewrite().await?;
-                                curr_aof_size = 0;
+                                self.file.write_all(& wcmd).await?;
+
+                                if !replica_handlers.is_empty() {
+                                    for handler in replica_handlers.iter_mut() {
+                                        handler.conn.write_all(&wcmd).await?;
+                                    }
+                                }
+
+                                if curr_aof_size >= auto_aof_rewrite_min_size {
+                                    self.rewrite().await?;
+                                    curr_aof_size = 0;
+                                }
+
                             }
-
-                            self.file.write_all(& wcmd).await?;
-
+                            Message::AddReplica(handler) => {
+                                replica_handlers.push(handler);
+                            }
                         }
                     }
                 }
             }
             AppendFSync::No => loop {
                 tokio::select! {
-                    _ = shutdown.wait_shutdown_triggered() => break,
-                    wcmd = wcmd_receiver.recv() => {
-                        let wcmd = wcmd?;
+                    _ = signal_manager.wait_special_signal() => break,
+                    msg = wcmd_receiver.recv_async() => match msg.expect("wcmd_propagator should never close") {
+                        Message::Wcmd(wcmd) => {
+                            curr_aof_size += wcmd.len() as u128;
 
-                        curr_aof_size += wcmd.len() as u128;
-                        if curr_aof_size >= auto_aof_rewrite_min_size {
-                            self.rewrite().await?;
-                            curr_aof_size = 0;
+                            self.file.write_all(&wcmd).await?;
+
+                            if !replica_handlers.is_empty() {
+                                for handler in replica_handlers.iter_mut() {
+                                    handler.conn.write_all(&wcmd).await?;
+                                }
+                            }
+
+                            if curr_aof_size >= auto_aof_rewrite_min_size {
+                                self.rewrite().await?;
+                                curr_aof_size = 0;
+                            }
                         }
-
-                        self.file.write_all(&wcmd).await?;
+                        Message::AddReplica(handler) => {
+                            replica_handlers.push(handler);
+                        }
                     }
                 }
             },
         }
 
-        while let Ok(Some(wcmd)) = wcmd_receiver.try_recv() {
+        while let Ok(Message::Wcmd(wcmd)) = wcmd_receiver.try_recv() {
             self.file.write_all(&wcmd).await?;
         }
 
         self.file.sync_data().await?;
-        self.rewrite().await?; // 最后再重写一次，确保数据完整
+        self.rewrite().await?; // 最后再重写一次
         tracing::info!("AOF file rewrited.");
         Ok(())
     }
@@ -180,7 +210,7 @@ impl Aof {
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
-#[serde(rename = "append_fsync")]
+#[serde(rename_all = "lowercase", rename = "append_fsync")]
 pub enum AppendFSync {
     Always,
     #[default]
@@ -225,8 +255,11 @@ async fn aof_test() {
 
     aof.load().await.unwrap();
 
+    let wcmd_receiver = shared.wcmd_rx().cloned().unwrap();
     tokio::spawn(async move {
-        aof.save().await.unwrap();
+        aof.save_and_propagate_wcmd_to_replicas(wcmd_receiver)
+            .await
+            .unwrap();
     });
 
     let db = shared.db();

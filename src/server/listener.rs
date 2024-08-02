@@ -75,7 +75,7 @@ impl Server {
         );
 
         #[cfg(feature = "debug")]
-        println!("debug mode is enabled");
+        println!("debug mode is enabled.\n{:?}", self.shared.conf());
 
         loop {
             #[cfg(not(feature = "debug"))]

@@ -101,7 +101,6 @@ impl ObjectEntry<'_> {
     /// 返回一个旧对象和[`ObjectEntryMut`]以便重复操作。
     #[instrument(level = "debug", skip(self))]
     pub fn insert_object(mut self, object: ObjectInner) -> (Self, Option<ObjectInner>) {
-        let key = self.entry.key().clone();
         let new_ex = object.expire_unchecked();
 
         let db = self.db;
@@ -113,24 +112,25 @@ impl ObjectEntry<'_> {
                         .store(inner.lru.load(Ordering::Relaxed), Ordering::Relaxed);
                 }
                 let mut old_obj = e.insert(object.into());
+                let key = e.key();
 
-                old_obj.trigger_may_update_event(&key);
-                old_obj.trigger_track_event(&key);
+                old_obj.trigger_may_update_event(key);
+                old_obj.trigger_track_event(key);
 
                 if let Some(old_obj_inner) = old_obj.inner() {
                     // 旧对象为有效对象
-                    db.update_expire_records(&key, new_ex, old_obj_inner.expire_unchecked());
+                    db.update_expire_records(key, new_ex, old_obj_inner.expire_unchecked());
                 } else {
-                    // 旧对象中为空对象，则old_expire为None
-                    db.update_expire_records(&key, new_ex, *NEVER_EXPIRE);
+                    // 旧对象中为空对象，则old_expire为NEVER_EXPIRE
+                    db.update_expire_records(key, new_ex, *NEVER_EXPIRE);
                 }
                 (self, old_obj.into_inner())
             }
             Entry::Vacant(e) => {
-                let new_entry = e.insert_entry(object.into());
+                // 不存在旧对象，则old_expire为NEVER_EXPIRE
+                db.update_expire_records(e.key(), new_ex, *NEVER_EXPIRE);
 
-                // 不存在旧对象，则old_expire为None
-                db.update_expire_records(&key, new_ex, *NEVER_EXPIRE);
+                let new_entry = e.insert_entry(object.into());
 
                 (
                     Self {

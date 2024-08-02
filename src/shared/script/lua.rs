@@ -12,7 +12,7 @@ use bytestring::ByteString;
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures_intrusive::sync::LocalMutex;
 use mlua::{prelude::*, StdLib};
-use std::{rc::Rc, sync::Arc, thread::LocalKey};
+use std::{rc::Rc, sync::Arc};
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
