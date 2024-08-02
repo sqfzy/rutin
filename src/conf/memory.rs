@@ -9,7 +9,6 @@ use std::sync::atomic::Ordering;
 use tracing::error;
 
 #[derive(Debug, Deserialize)]
-#[serde(rename = "memory")]
 pub struct MemoryConf {
     pub maxmemory: u64,
     pub maxmemory_policy: Policy,

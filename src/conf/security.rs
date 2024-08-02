@@ -16,7 +16,6 @@ use serde::Deserialize;
 pub const DEFAULT_USER: Bytes = Bytes::from_static(b"default_ac");
 
 #[derive(Debug, Deserialize)]
-#[serde(rename = "security")]
 pub struct SecurityConf {
     pub requirepass: Option<String>, // 访问密码
     // TODO:

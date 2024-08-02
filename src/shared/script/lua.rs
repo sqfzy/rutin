@@ -12,7 +12,7 @@ use bytestring::ByteString;
 use dashmap::{mapref::entry::Entry, DashMap};
 use futures_intrusive::sync::LocalMutex;
 use mlua::{prelude::*, StdLib};
-use std::{rc::Rc, sync::Arc};
+use std::{rc::Rc, sync::Arc, thread::LocalKey};
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
@@ -265,6 +265,10 @@ impl Default for LuaScript {
 }
 
 impl LuaScript {
+    pub fn clear(&self) {
+        self.lua_scripts.clear();
+    }
+
     pub async fn eval(
         &self,
         handler: &Handler<impl AsyncStream>,

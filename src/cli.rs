@@ -1,7 +1,9 @@
+use crate::conf::MasterInfo;
 use arc_swap::ArcSwapOption;
 use bytestring::ByteString;
 use clap::Parser;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 #[derive(Parser)]
 pub struct Cli {
@@ -18,12 +20,12 @@ pub fn merge_cli(conf: &mut crate::conf::Conf, cli: Cli) {
         conf.server.port = port;
     }
 
-    if let Some(addr) = cli.replicaof {
-        conf.replica.master_addr = ArcSwapOption::new(Some(Arc::new(addr)));
+    if let Some((host, port)) = cli.replicaof {
+        conf.replica.master_info = Mutex::new(Some(MasterInfo::new(host, port)));
     }
 
     if let Some(log_level) = cli.log_level {
-        conf.server.log_level = log_level;
+        conf.server.log_level = log_level.into();
     }
 }
 

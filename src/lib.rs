@@ -4,6 +4,7 @@
 #![warn(clippy::print_stdout)]
 #![feature(decl_macro)]
 #![feature(iter_advance_by)]
+#![feature(let_chains)]
 
 use mimalloc::MiMalloc;
 

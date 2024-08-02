@@ -15,4 +15,8 @@ impl Script {
             lua_script: LuaScript::default(),
         }
     }
+
+    pub fn clear(&self) {
+        self.lua_script.clear();
+    }
 }

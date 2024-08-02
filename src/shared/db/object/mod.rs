@@ -626,6 +626,7 @@ impl ObjectInner {
             }
         };
 
+        // PERF:
         let new_atc = (get_lru_clock() << Lru::LFU_BITS) | new_count;
 
         // 如果更新失败，则放弃更新

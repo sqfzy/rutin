@@ -24,7 +24,7 @@ use tracing::instrument;
 
 pub static NEVER_EXPIRE: NeverExpire = NeverExpire(UnsafeCell::new(None));
 
-// 使用前必须在单线程中初始化
+// 必须在进入多线程之前初始化
 // FIX: 调用Db::new()时会进行初始化。当多线程执行test时，可能出现数据竞争
 pub struct NeverExpire(UnsafeCell<Option<Instant>>);
 

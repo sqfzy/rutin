@@ -11,9 +11,9 @@ use crate::{
     },
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
-use crossbeam::atomic::AtomicCell;
+use bytestring::ByteString;
 use rand::Rng;
-use std::sync::Once;
+use std::sync::{Mutex, Once};
 use tracing::Level;
 
 pub const TEST_AC_USERNAME: &str = "test_ac";
@@ -33,11 +33,12 @@ pub fn test_init() {
 }
 
 pub fn get_test_config() -> Conf {
-    let run_id: String = rand::thread_rng()
+    let run_id: ByteString = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(40)
         .map(char::from)
-        .collect();
+        .collect::<String>()
+        .into();
 
     let acl = Acl::new();
     acl.insert(
@@ -51,11 +52,11 @@ pub fn get_test_config() -> Conf {
 
     Conf {
         server: ServerConf {
-            addr: "127.0.0.1".to_string(),
+            addr: "127.0.0.1".into(),
             port: 6379,
             run_id,
             expire_check_interval_secs: 1,
-            log_level: "info".to_string(),
+            log_level: "info".into(),
             max_connections: 1024,
             max_batch: 1024,
         },
@@ -66,7 +67,7 @@ pub fn get_test_config() -> Conf {
             acl: Some(acl),
         },
         replica: ReplicaConf {
-            master_addr: ArcSwapOption::new(None),
+            master_info: Mutex::new(None),
             max_replica: 6,
             master_auth: None,
         },

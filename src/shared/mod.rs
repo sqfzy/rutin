@@ -10,6 +10,7 @@ use crate::{
     Id,
 };
 use async_shutdown::ShutdownManager;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone)]
 pub struct Shared {
@@ -21,10 +22,13 @@ pub struct SharedInner {
     conf: &'static Conf,
     script: Script,
     wcmd_propagator: Propagator,
+    // back_log:
+    offset: AtomicU64,
     signal_manager: ShutdownManager<Id>,
 }
 
 impl Shared {
+    // 整个程序运行期间只会创建一次
     pub fn new(conf: &'static Conf, shutdown: ShutdownManager<Id>) -> Self {
         let db = Db::new(conf);
         let wcmd_propagator = Propagator::new(conf.aof.is_some(), conf.replica.max_replica);
@@ -35,6 +39,7 @@ impl Shared {
                 conf,
                 script,
                 wcmd_propagator,
+                offset: AtomicU64::new(0),
                 signal_manager: shutdown,
             })),
         }
@@ -53,6 +58,7 @@ impl Shared {
                 conf,
                 script,
                 wcmd_propagator,
+                offset: AtomicU64::new(0),
                 signal_manager: shutdown,
             })),
         }
@@ -81,6 +87,22 @@ impl Shared {
     #[inline]
     pub fn signal_manager(&self) -> &'static ShutdownManager<Id> {
         &self.inner.signal_manager
+    }
+
+    #[inline]
+    pub fn offset(&self) -> u64 {
+        self.inner.offset.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn add_offset(&self, offset: u64) {
+        self.inner.offset.fetch_add(offset, Ordering::Relaxed);
+    }
+
+    pub fn reset(&self) {
+        self.inner.db.clear();
+        self.inner.script.clear();
+        self.inner.offset.store(0, Ordering::Relaxed);
     }
 }
 

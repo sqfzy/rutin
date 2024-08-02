@@ -18,7 +18,7 @@ use bytes::Bytes;
 use bytestring::ByteString;
 use itertools::Itertools;
 use tokio::net::TcpStream;
-use tracing::instrument;
+use tracing::{error, instrument};
 
 /// # Reply:
 ///
@@ -412,111 +412,15 @@ impl CmdExecutor for ReplicaOf {
     const CMD_FLAG: Flag = REPLICAOF_CMD_FLAG;
 
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        let replica_conf = &handler.shared.conf().replica;
-
         if self.should_set_to_master {
             set_server_to_master(&handler.shared);
 
             return Ok(Some(Resp3::new_simple_string("OK".into())));
         }
 
-        set_server_to_replica(
-            &handler.shared,
-            (self.master_host.clone(), self.master_port),
-        );
+        set_server_to_replica(&handler.shared, self.master_host, self.master_port).await?;
 
-        /* step1: 设置主节点地址 */
-
-        replica_conf
-            .master_addr
-            .store(Some(Arc::new((self.master_host.clone(), self.master_port))));
-
-        // 向客户端返回 OK
-        handler
-            .conn
-            .write_frame(&Resp3::<Bytes, ByteString>::new_simple_string("OK".into()))
-            .await?;
-
-        (|| async {
-            /* step2: 连接主节点 */
-
-            let to_master =
-                TcpStream::connect((self.master_host.as_ref(), self.master_port)).await?;
-            let mut to_master_handler = Handler::new(handler.shared.clone(), to_master);
-
-            to_master_handler
-                .conn
-                .write_frame_force(&Resp3::<_, String>::new_blob_string(b"PING"))
-                .await?;
-
-            if !to_master_handler
-                .conn
-                .read_frame()
-                .await?
-                .is_some_and(|frame| {
-                    frame
-                        .try_simple_string()
-                        .is_some_and(|frame| frame == "PONG")
-                })
-            {
-                return Err(RutinError::new_server_error(format!(
-                    "ERR master {}:{} is unreachable or busy",
-                    self.master_host, self.master_port
-                )));
-            };
-
-            /* step3: 身份验证(可选) */
-
-            if let Some(password) = handler.shared.conf().replica.master_auth.as_ref() {
-                to_master_handler
-                    .conn
-                    .write_frame_force(&Resp3::<_, String>::new_array(vec![
-                        Resp3::new_blob_string(b"AUTH".to_vec()),
-                        Resp3::new_blob_string(password.clone().into_bytes()),
-                    ]))
-                    .await?;
-
-                if to_master_handler
-                    .conn
-                    .read_frame()
-                    .await?
-                    .is_some_and(|frame| frame.is_simple_error())
-                {
-                    return Err(RutinError::new_server_error(
-                        "ERR master authentication failed",
-                    ));
-                }
-            }
-
-            /* step4: 发送端口信息 */
-
-            to_master_handler
-                .conn
-                .write_frame_force(&Resp3::<_, String>::new_array(vec![
-                    Resp3::new_blob_string(b"REPLCONF".to_vec()),
-                    Resp3::new_blob_string(b"listening-port".to_vec()),
-                    Resp3::new_blob_string(
-                        handler.shared.conf().server.port.to_string().into_bytes(),
-                    ),
-                ]))
-                .await?;
-
-            /* step5: 发送PSYNC命令 */
-            to_master_handler
-                .conn
-                .write_frame_force(&Resp3::<_, String>::new_array(vec![
-                    Resp3::new_blob_string(b"PSYNC".as_ref()),
-                    Resp3::new_blob_string(b"?".as_ref()),
-                    Resp3::new_blob_string(b"0".as_ref()),
-                ]))
-                .await?;
-
-            Ok(())
-        })
-        .retry(&backon::ExponentialBuilder::default())
-        .await?;
-
-        todo!()
+        Ok(Some(Resp3::new_simple_string("OK".into())))
     }
 
     fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {

@@ -1,13 +1,11 @@
-use arc_swap::ArcSwapOption;
+use crate::conf::gen_run_id;
 use bytestring::ByteString;
-use crossbeam::atomic::AtomicCell;
-use serde::Deserialize;
-use std::sync::Arc;
+use serde::{Deserialize, Deserializer};
+use std::sync::Mutex;
 
-#[derive(Debug, Deserialize)]
-#[serde(rename = "replication")]
+#[derive(Debug)]
 pub struct ReplicaConf {
-    pub master_addr: ArcSwapOption<(ByteString, u16)>, // 主服务器的地址
+    pub master_info: Mutex<Option<MasterInfo>>,
     /// 最多允许多少个从服务器连接到当前服务器
     pub max_replica: usize,
     /// 用于记录当前服务器的复制偏移量。当从服务器发送 PSYNC
@@ -20,8 +18,33 @@ pub struct ReplicaConf {
     pub master_auth: Option<String>, // 主服务器密码，设置该值之后，当从服务器连接到主服务器时会发送该值
 }
 
-impl ReplicaConf {
-    pub fn reset(&self, master_addr: (ByteString, u16)) {
-        self.master_addr.store(Some(Arc::new(master_addr)));
+impl<'de> Deserialize<'de> for ReplicaConf {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let master_info = Option::<MasterInfo>::deserialize(deserializer)?;
+        Ok(ReplicaConf {
+            master_info: Mutex::new(master_info),
+            max_replica: 0,
+            master_auth: None,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MasterInfo {
+    pub host: ByteString,
+    pub port: u16,
+    pub run_id: ByteString,
+}
+
+impl MasterInfo {
+    pub fn new(host: ByteString, port: u16) -> Self {
+        Self {
+            host,
+            port,
+            run_id: gen_run_id(),
+        }
     }
 }
