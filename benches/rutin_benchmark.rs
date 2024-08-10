@@ -100,7 +100,7 @@ fn bench_create_handler_cx(c: &mut Criterion) {
             let start = Instant::now();
             for _ in 0..iters {
                 let mut cx = HandlerContext::new(&shared);
-                cx.client_id = 1;
+                cx.id = 1;
             }
             start.elapsed()
         })

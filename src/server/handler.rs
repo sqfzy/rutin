@@ -1,23 +1,24 @@
-use super::{BgTaskChannel, BgTaskSender, CLIENT_ID_COUNT, ID};
+use super::ID;
 use crate::{
     cmd::dispatch,
     conf::{AccessControl, DEFAULT_USER},
-    connection::{AsyncStream, Connection, FakeStream},
     error::RutinResult,
     frame::Resp3,
-    server::{RESERVE_ID, RESERVE_MAX_ID},
-    shared::{Shared, SignalManager},
-    util::get_test_shared,
+    server::{AsyncStream, Connection, FakeStream},
+    shared::{Inbox, Letter, OutBox, Shared},
+    util::{get_test_shared, BackLog},
     Id, Key,
 };
 use bytes::BytesMut;
-use std::sync::Arc;
-use tracing::{debug, instrument};
+use event_listener::listener;
+use std::{sync::Arc, time::Duration};
+use tracing::instrument;
 
 pub struct Handler<S: AsyncStream> {
     pub shared: Shared,
     pub conn: Connection<S>,
     pub context: HandlerContext,
+    pub back_log: Option<BackLog>,
 }
 
 impl<S: AsyncStream> Handler<S> {
@@ -27,42 +28,108 @@ impl<S: AsyncStream> Handler<S> {
             context: HandlerContext::new(&shared),
             conn: Connection::new(stream, shared.conf().server.max_batch),
             shared,
+            back_log: None,
+        }
+    }
+
+    pub fn with_cx(shared: Shared, stream: S, context: HandlerContext) -> Self {
+        Self {
+            context,
+            conn: Connection::new(stream, shared.conf().server.max_batch),
+            shared,
+            back_log: None,
         }
     }
 
     #[inline]
     #[instrument(level = "debug", skip(self), fields(client_id), err)]
     pub async fn run(&mut self) -> RutinResult<()> {
-        ID.scope(self.context.client_id, async {
+        ID.scope(self.context.id, async {
             loop {
                 tokio::select! {
-                    // 等待shutdown信号
-                    signal = self.shared.signal_manager().wait_all_signal() => {
-                        // 如果信号是保留ID或者当前连接的ID，则关闭连接
-                        if (0..=RESERVE_MAX_ID).contains(&signal)  {
-                            return Ok(());
-                        } else if signal == self.context.client_id {
-                            debug!("client {} is closed by signal", self.context.client_id);
+                    biased; // 有序轮询
+
+                    letter = self.context.inbox.recv_async() => match letter {
+                        Letter::ShutdownClient | Letter::ShutdownServer | Letter::BlockServer { .. }  => {
                             return Ok(());
                         }
-                    }
+                        Letter::Resp3(resp) => {
+                            self.conn.write_frame(&resp).await?;
+                        }
+                        Letter::BlockAll { event } => {
+                            listener!(event => listener);
+                            listener.await;
+                        }
+                        Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownReplicas => { }
+                    },
                     // 等待客户端请求
-                    frames =  self.conn.read_frames() => {
+                    frames = self.conn.read_frames() => {
                         if let Some(frames) = frames? {
                             for f in frames.into_iter() {
                                 if let Some(resp) = dispatch(f, self).await? {
-                                    self.conn.write_frame(&resp).await?;
+                                    self.conn.write_frames(&resp).await?;
                                 }
                             }
                         } else {
                             return Ok(());
                         }
                     },
-                    // 从后台任务接收数据，并发送给客户端。只要拥有对应的BgTaskSender，
-                    // 任何其它连接 都可以向当前连接的客户端发送消息
-                    frame = self.context.bg_task_channel.recv_from_bg_task() => {
-                        debug!("handler received from background task: {:?}", frame);
-                        self.conn.write_frame(&frame).await?;
+                };
+            }
+        })
+        .await
+    }
+
+    pub async fn run_replica(
+        &mut self,
+        mut offset: tokio::sync::MutexGuard<'_, u64>,
+    ) -> RutinResult<()> {
+        ID.scope(self.context.id, async {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+            let mut resp3: Resp3<&[u8], String> = Resp3::new_array(vec![
+                Resp3::new_blob_string(b"REPLCONF".as_ref()),
+                Resp3::new_blob_string(b"ACK".as_ref()),
+                Resp3::new_integer(*offset as i128),
+            ]);
+
+            loop {
+                tokio::select! {
+                    biased;
+
+                    letter = self.context.inbox.recv_async() => match letter {
+                        Letter::ShutdownClient | Letter::ShutdownServer | Letter::BlockServer { .. }  => {
+                            return Ok(());
+                        }
+                        Letter::BlockAll { event } => {
+                            listener!(event => listener);
+                            listener.await;
+                        }
+                        Letter::Resp3(resp) => {
+                            self.conn.write_frame(&resp).await?;
+                        }
+                        Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownReplicas => { }
+                    },
+                    // 等待master请求(一般为master传播的写命令)
+                    frames = self.conn.read_frames() => {
+                        if let Some(frames) = frames? {
+                            for f in frames.into_iter() {
+                                // 更新偏移量
+                                *offset += f.size() as u64;
+                                // 不返回响应
+                                dispatch(f, self).await?;
+                            }
+                        } else {
+                            return Ok(());
+                        }
+                    },
+                    // 每秒向master发送REPLCONF ACK <offset>，以便master知道当前同步进度。
+                    // 如果offset小于master offset，则主节点会补发相差的数据
+                    _ = interval.tick() => {
+                        // 更新offset frame
+                        resp3.try_array_mut().unwrap()[2] = Resp3::new_integer(*offset as i128);
+
+                        self.conn.write_frame(&resp3).await?;
                     },
                 };
             }
@@ -72,27 +139,19 @@ impl<S: AsyncStream> Handler<S> {
 
     #[inline]
     pub async fn dispatch(&mut self, cmd_frame: Resp3) -> RutinResult<Option<Resp3>> {
-        ID.scope(self.context.client_id, dispatch(cmd_frame, self))
-            .await
-    }
-}
-
-impl<S: AsyncStream> Drop for Handler<S> {
-    fn drop(&mut self) {
-        self.shared
-            .db()
-            .remove_client_record(self.context.client_id);
+        ID.scope(self.context.id, dispatch(cmd_frame, self)).await
     }
 }
 
 #[derive(Debug)]
 pub struct HandlerContext {
-    pub client_id: Id,
-    pub bg_task_channel: BgTaskChannel,
+    pub id: Id,
+    pub inbox: Inbox,
+    pub outbox: OutBox,
     // 客户端订阅的频道
     pub subscribed_channels: Option<Vec<Key>>,
     // 是否开启缓存追踪
-    pub client_track: Option<BgTaskSender>,
+    pub client_track: Option<OutBox>,
     // 用于缓存需要传播的写命令
     pub wcmd_buf: BytesMut,
     pub user: bytes::Bytes,
@@ -101,36 +160,23 @@ pub struct HandlerContext {
 
 impl HandlerContext {
     pub fn new(shared: &Shared) -> Self {
-        let bg_task_channel = BgTaskChannel::default();
-
-        let client_id = create_client_id(shared, &bg_task_channel);
-
         // 使用默认ac
         let ac = shared.conf().security.default_ac.load_full();
 
-        Self {
-            client_id,
-            bg_task_channel,
-            subscribed_channels: None,
-            client_track: None,
-            wcmd_buf: BytesMut::new(),
-            user: DEFAULT_USER,
-            ac,
-        }
+        Self::with_ac(shared, ac, DEFAULT_USER)
     }
 
-    pub fn new_by_reserve_id(shared: &Shared, ac: Arc<AccessControl>) -> Self {
-        let bg_task_channel = BgTaskChannel::default();
-
-        let client_id = create_reserve_client_id(shared, &bg_task_channel);
+    pub fn with_ac(shared: &Shared, ac: Arc<AccessControl>, user: bytes::Bytes) -> Self {
+        let (client_id, outbox, inbox) = shared.post_office().new_mailbox();
 
         Self {
-            client_id,
-            bg_task_channel,
+            id: client_id,
+            inbox,
+            outbox,
             subscribed_channels: None,
             client_track: None,
             wcmd_buf: BytesMut::new(),
-            user: DEFAULT_USER,
+            user,
             ac,
         }
     }
@@ -180,51 +226,9 @@ impl Handler<FakeStream> {
                 shared,
                 conn: Connection::new(FakeStream::new(server_tx, server_rx), max_batch),
                 context,
+                back_log: None,
             },
             Connection::new(FakeStream::new(client_tx, client_rx), max_batch),
         )
     }
-}
-
-#[inline]
-pub fn create_client_id(shared: &Shared, bg_task_channel: &BgTaskChannel) -> Id {
-    let id_may_occupied = CLIENT_ID_COUNT.load();
-
-    let new_id_count = id_may_occupied + 1;
-
-    // 如果new_id_count在保留范围内，则从保留范围后开始
-    if (0..=RESERVE_MAX_ID).contains(&new_id_count) {
-        CLIENT_ID_COUNT.store(RESERVE_MAX_ID + 1);
-    } else {
-        CLIENT_ID_COUNT.store(new_id_count);
-    };
-
-    let client_id = shared
-        .db()
-        .insert_client_record(id_may_occupied, bg_task_channel.new_sender());
-
-    if id_may_occupied != client_id {
-        CLIENT_ID_COUNT.store(client_id);
-    }
-    client_id
-}
-
-pub fn create_reserve_client_id(shared: &Shared, bg_task_channel: &BgTaskChannel) -> Id {
-    let reserve_id = RESERVE_ID.load();
-
-    let new_reserve_id = reserve_id + 1;
-
-    if new_reserve_id > RESERVE_MAX_ID {
-        // 保留ID已经用完，也许需要扩大保留ID的范围或者这是bug导致的，需要修复
-        panic!("reserve id is used up");
-    }
-
-    let client_id = shared
-        .db()
-        .insert_client_record(reserve_id, bg_task_channel.new_sender());
-
-    // id必须没有被占用
-    assert!(client_id == reserve_id);
-
-    client_id
 }

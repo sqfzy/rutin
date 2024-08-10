@@ -2,12 +2,14 @@ use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
-    connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::Handler,
-    shared::db::{ObjValueType, ObjectInner, NEVER_EXPIRE},
-    util::{atoi, UNIX_EPOCH},
+    server::{AsyncStream, Handler},
+    shared::{
+        db::{ObjValueType, ObjectInner, NEVER_EXPIRE},
+        UNIX_EPOCH,
+    },
+    util::atoi,
     Int, Key,
 };
 use bytes::Bytes;
@@ -948,7 +950,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             b"value_never_expire".as_ref()
         );
@@ -977,7 +979,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             b"value_nx".as_ref()
         );
@@ -1023,7 +1025,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             "value_xx".as_bytes()
         );
@@ -1043,7 +1045,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             "value_never_expire".as_bytes()
         );
@@ -1084,7 +1086,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             "value_expire".as_bytes()
         );
@@ -1120,7 +1122,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             "value_expire".as_bytes()
         );
@@ -1168,7 +1170,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             "value_expire".as_bytes()
         );
@@ -1217,7 +1219,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob()
+                .try_blob_string()
                 .unwrap(),
             "value_expire".as_bytes()
         );

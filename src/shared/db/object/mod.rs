@@ -615,17 +615,20 @@ impl ObjectInner {
 
         let count = atc & Lru::LFU_MASK;
 
-        let new_count = if count == Lru::LFU_FREQUENCY_MAX {
-            count
-        } else {
-            // 每次有1 / (count / 2)的概率更新count
-            let prob = rand::thread_rng().gen_range(0..=count / 2);
-            if prob == 0 {
-                count + 1
-            } else {
-                count
-            }
-        };
+        // TODO:
+        let new_count = count.wrapping_add(1);
+        // if count == Lru::LFU_FREQUENCY_MAX {
+        //     count
+        // } else {
+        //     // 每次有1 / (count / 2)的概率更新count
+        //     // let prob = rand::thread_rng().gen_range(0..=count / 2);
+        //     // if prob == 0 {
+        //     //     count + 1
+        //     // } else {
+        //     //     count
+        //     // }
+        //
+        // };
 
         // PERF:
         let new_atc = (get_lru_clock() << Lru::LFU_BITS) | new_count;

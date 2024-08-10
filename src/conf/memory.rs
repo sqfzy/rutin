@@ -8,7 +8,8 @@ use serde::Deserialize;
 use std::sync::atomic::Ordering;
 use tracing::error;
 
-#[derive(Debug, Deserialize)]
+// 不可变配置，因为Db持有其副本，应当保持一致
+#[derive(Debug, Clone, Deserialize)]
 pub struct MemoryConf {
     pub maxmemory: u64,
     pub maxmemory_policy: Policy,

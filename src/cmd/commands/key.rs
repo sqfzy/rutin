@@ -2,15 +2,17 @@ use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
-    connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
     persist::rdb::{
         encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
     },
-    server::Handler,
-    shared::db::{as_bytes, ObjValueType, NEVER_EXPIRE},
-    util::{atoi, UNIX_EPOCH},
+    server::{AsyncStream, Handler},
+    shared::{
+        db::{as_bytes, ObjValueType, NEVER_EXPIRE},
+        Letter, UNIX_EPOCH,
+    },
+    util::atoi,
     Id, Int, Key,
 };
 use bytes::{Bytes, BytesMut};
@@ -510,16 +512,17 @@ impl CmdExecutor for NBKeys {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))?;
 
         let shared = handler.shared.clone();
-        let bg_sender = if self.redirect != 0 {
-            shared
-                .db()
-                .get_client_bg_sender(self.redirect)
+        let outbox = if self.redirect != 0 {
+            &handler
+                .shared
+                .post_office()
+                .get_outbox(self.redirect)
                 .ok_or(RutinError::from("ERR The client ID does not exist"))?
         } else {
-            handler.context.bg_task_channel.new_sender()
+            &handler.context.outbox
         };
 
-        tokio::task::block_in_place(move || {
+        tokio::task::block_in_place(|| {
             let db = shared.db();
 
             let matched_keys = if db.entries_size() > (1024 << 32) {
@@ -549,7 +552,7 @@ impl CmdExecutor for NBKeys {
                     .collect::<Vec<Resp3>>()
             };
 
-            let _ = bg_sender.send(Resp3::new_array(matched_keys));
+            let _ = outbox.send(Letter::Resp3(Resp3::new_array(matched_keys)));
         });
 
         Ok(None)
@@ -771,7 +774,10 @@ impl CmdExecutor for Type {
 #[cfg(test)]
 mod cmd_key_tests {
     use super::*;
-    use crate::shared::db::{Hash, List, ObjectInner, Set, Str, ZSet};
+    use crate::shared::{
+        db::{Hash, List, ObjectInner, Set, Str, ZSet},
+        UNIX_EPOCH,
+    };
 
     // 允许的时间误差
     const ALLOWED_DELTA: u64 = 3;

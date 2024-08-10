@@ -2,14 +2,11 @@ use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::{AccessControl, AccessControlIntermedium, DEFAULT_USER},
-    connection::AsyncStream,
-    frame::Resp3,
-    server::Handler,
-    util::{set_server_to_master, set_server_to_replica},
-};
-use crate::{
     error::{RutinError, RutinResult},
+    frame::Resp3,
     persist::rdb::Rdb,
+    server::{AsyncStream, Handler},
+    util::{set_server_to_master, set_server_to_replica},
 };
 use bytes::Bytes;
 use bytestring::ByteString;
@@ -408,7 +405,7 @@ impl CmdExecutor for ReplicaOf {
 
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         if self.should_set_to_master {
-            set_server_to_master(&handler.shared);
+            set_server_to_master(&handler.shared).await;
 
             return Ok(Some(Resp3::new_simple_string("OK".into())));
         }

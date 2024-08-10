@@ -1,10 +1,13 @@
-use crate::{error::RutinResult, frame::Resp3};
+use crate::{
+    error::{RutinError, RutinResult},
+    frame::{decode, Resp3},
+};
 use bytes::{Buf, BufMut, BytesMut};
 use flume::{
     r#async::{RecvFut, SendFut},
     Receiver, Sender,
 };
-use futures::{pin_mut, task::noop_waker_ref, Future};
+use futures::{future::poll_immediate, io, Future};
 use pin_project::{pin_project, pinned_drop};
 use smallvec::SmallVec;
 use std::{
@@ -12,7 +15,7 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::{
-    io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::TcpStream,
 };
 use tracing::{error, instrument, trace};
@@ -28,9 +31,9 @@ pub struct Connection<S = TcpStream>
 where
     S: AsyncStream,
 {
-    stream: S,
-    reader_buf: BytesMut,
-    writer_buf: BytesMut,
+    pub stream: S,
+    pub reader_buf: BytesMut,
+    pub writer_buf: BytesMut,
     /// 支持批处理
     batch: usize,
     pub max_batch: usize,
@@ -71,6 +74,21 @@ impl<S: AsyncStream> Connection<S> {
     }
 
     #[inline]
+    pub async fn read_inner_buf(&mut self) -> io::Result<usize> {
+        self.stream.read_buf(&mut self.reader_buf).await
+    }
+
+    #[inline]
+    pub async fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stream.read_exact(buf).await
+    }
+
+    #[inline]
+    pub async fn read_inner_exact(&mut self) -> io::Result<usize> {
+        self.stream.read_exact(&mut self.reader_buf).await
+    }
+
+    #[inline]
     pub async fn write_buf<B: Buf>(&mut self, buf: &mut B) -> io::Result<usize> {
         self.stream.write_buf(buf).await
     }
@@ -86,8 +104,21 @@ impl<S: AsyncStream> Connection<S> {
         Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await
     }
 
-    // 尝试读取多个frame，直到buffer和stream都为空
+    pub async fn try_read_frame(&mut self) -> RutinResult<Option<Resp3>> {
+        while poll_immediate(self.read_inner_buf()).await.is_some() {}
+
+        decode(&mut self.reader_buf)
+    }
+
+    // 返回RutinError::Other而不是RutinError::Server
     #[inline]
+    #[instrument(level = "trace", skip(self), ret, err)]
+    pub async fn read_frame_force(&mut self) -> RutinResult<Resp3> {
+        self.read_frame()
+            .await?
+            .ok_or_else(|| RutinError::from("ERR connection closed"))
+    }
+
     #[instrument(level = "trace", skip(self), ret, err)]
     pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 32]>>> {
         let mut frames = SmallVec::new();
@@ -114,12 +145,8 @@ impl<S: AsyncStream> Connection<S> {
             // 解析(服务端总是假定客户端会发送完整的RESP3 frame，如果出现半包情
             // 况，则需要等待该frame的完整数据，其它frame请求的处理也会被阻塞)。
             if self.reader_buf.is_empty() {
-                let fut = self.stream.read_buf(&mut self.reader_buf);
-                pin_mut!(fut);
-
-                let mut cx = Context::from_waker(noop_waker_ref());
-                match fut.poll(&mut cx) {
-                    Poll::Ready(Ok(n)) if n != 0 => {}
+                match poll_immediate(self.stream.read_buf(&mut self.reader_buf)).await {
+                    Some(Ok(n)) if n != 0 => {}
                     _ => return Ok(Some(frames)),
                 }
 
@@ -130,7 +157,7 @@ impl<S: AsyncStream> Connection<S> {
 
     #[inline]
     #[instrument(level = "trace", skip(self), err)]
-    pub async fn write_frame<B, St>(&mut self, frame: &Resp3<B, St>) -> io::Result<()>
+    pub async fn write_frames<B, St>(&mut self, frame: &Resp3<B, St>) -> io::Result<()>
     where
         B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
         St: AsRef<str> + PartialEq + std::fmt::Debug,
@@ -149,8 +176,9 @@ impl<S: AsyncStream> Connection<S> {
         Ok(())
     }
 
+    // TODO: write_resp3
     #[instrument(level = "trace", skip(self), err)]
-    pub async fn write_frame_force<B, St>(&mut self, frame: &Resp3<B, St>) -> io::Result<()>
+    pub async fn write_frame<B, St>(&mut self, frame: &Resp3<B, St>) -> io::Result<()>
     where
         B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
         St: AsRef<str> + PartialEq + std::fmt::Debug,
@@ -384,31 +412,31 @@ mod fake_cs_tests {
 
             // 测试简单字符串
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_simple_string("OK".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_simple_string("OK".into()))
                 .await;
             // 测试错误消息
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_simple_error("Error message".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_simple_error("Error message".into()))
                 .await;
             // 测试整数
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_integer(1000))
+                .write_frames::<Bytes, String>(&Resp3::new_integer(1000))
                 .await;
             // 测试大容量字符串
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_blob_string("foobar".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_blob_string("foobar".into()))
                 .await;
             // 测试空字符串
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_blob_string("".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_blob_string("".into()))
                 .await;
             // 测试空值
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_null())
+                .write_frames::<Bytes, String>(&Resp3::new_null())
                 .await;
             // 测试数组
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_array(vec![
+                .write_frames::<Bytes, String>(&Resp3::new_array(vec![
                     Resp3::new_simple_string("simple".into()),
                     Resp3::new_simple_error("error".into()),
                     Resp3::new_integer(1000),
@@ -422,7 +450,7 @@ mod fake_cs_tests {
                 .await;
             // 测试空数组
             let _ = server_conn
-                .write_frame::<Bytes, String>(&Resp3::new_array(vec![]))
+                .write_frames::<Bytes, String>(&Resp3::new_array(vec![]))
                 .await;
 
             tx.send(()).unwrap();
@@ -513,31 +541,31 @@ mod fake_cs_tests {
         tokio::spawn(async move {
             // 测试简单字符串
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_simple_string("OK".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_simple_string("OK".into()))
                 .await;
             // 测试错误消息
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_simple_error("Error message".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_simple_error("Error message".into()))
                 .await;
             // 测试整数
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_integer(1000))
+                .write_frames::<Bytes, String>(&Resp3::new_integer(1000))
                 .await;
             // 测试大容量字符串
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_blob_string("foobar".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_blob_string("foobar".into()))
                 .await;
             // 测试空字符串
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_blob_string("".into()))
+                .write_frames::<Bytes, String>(&Resp3::new_blob_string("".into()))
                 .await;
             // 测试空值
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_null())
+                .write_frames::<Bytes, String>(&Resp3::new_null())
                 .await;
             // 测试数组
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_array(vec![
+                .write_frames::<Bytes, String>(&Resp3::new_array(vec![
                     Resp3::new_simple_string("simple".into()),
                     Resp3::new_simple_error("error".into()),
                     Resp3::new_integer(1000),
@@ -551,7 +579,7 @@ mod fake_cs_tests {
                 .await;
             // 测试空数组
             let _ = client
-                .write_frame::<Bytes, String>(&Resp3::new_array(vec![]))
+                .write_frames::<Bytes, String>(&Resp3::new_array(vec![]))
                 .await;
         });
 

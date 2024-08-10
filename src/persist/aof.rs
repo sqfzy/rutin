@@ -3,23 +3,19 @@ use crate::{
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
     server::Handler,
-    shared::{Message, Shared, SignalManager},
+    shared::{Inbox, Shared},
+    util::save_and_propagate_wcmd_to_replicas,
 };
 use anyhow::Result;
 use bytes::BytesMut;
-use flume::Receiver;
 use serde::Deserialize;
-use std::{os::unix::fs::MetadataExt, path::Path, time::Duration};
-use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
+use std::{os::unix::fs::MetadataExt, path::Path};
+use tokio::{fs::File, io::AsyncReadExt};
 use tokio_util::codec::Decoder;
 
 pub struct Aof {
-    file: File,
-    shared: Shared,
+    pub file: File,
+    pub shared: Shared,
 }
 
 impl Aof {
@@ -41,7 +37,7 @@ impl Aof {
         Ok(())
     }
 
-    async fn rewrite(&mut self) -> anyhow::Result<()> {
+    pub async fn rewrite(&mut self) -> anyhow::Result<()> {
         let path = self.shared.conf().aof.as_ref().unwrap().file_path.clone();
         let temp_path = format!("{}.tmp", path);
         let bak_path = format!("{}.bak", path);
@@ -71,121 +67,9 @@ impl Aof {
 impl Aof {
     pub async fn save_and_propagate_wcmd_to_replicas(
         &mut self,
-        wcmd_receiver: Receiver<Message>,
+        wcmd_inbox: Inbox,
     ) -> anyhow::Result<()> {
-        let aof_conf = self.shared.conf().aof.as_ref().unwrap();
-
-        // 为了避免在shutdown的时候，还有数据没有写入到文件中，shutdown时必须等待该函数执行完毕
-        let signal_manager = self.shared.signal_manager().clone();
-        let _delay_token = signal_manager.delay_shutdown_token()?;
-
-        let mut curr_aof_size = 0_u128; // 单位为byte
-        let auto_aof_rewrite_min_size = (aof_conf.auto_aof_rewrite_min_size as u128) << 20;
-
-        let mut replica_handlers: Vec<Handler<TcpStream>> = Vec::new();
-
-        match aof_conf.append_fsync {
-            AppendFSync::Always => loop {
-                tokio::select! {
-                    _ = signal_manager.wait_special_signal() => break,
-                    msg = wcmd_receiver.recv_async() => match msg.expect("wcmd_propagator should never close") {
-                        Message::Wcmd(wcmd) => {
-                            curr_aof_size += wcmd.len() as u128;
-
-                            self.file.write_all(&wcmd).await?;
-                            self.file.sync_data().await?;
-
-                            if !replica_handlers.is_empty() {
-                                for handler in replica_handlers.iter_mut() {
-                                    handler.conn.write_all(&wcmd).await?;
-                                }
-                            }
-
-                            if curr_aof_size >= auto_aof_rewrite_min_size {
-                                self.rewrite().await?;
-                                curr_aof_size = 0;
-                            }
-
-                        }
-                        Message::AddReplica(handler) => {
-                            replica_handlers.push(handler);
-                        }
-                    }
-                }
-            },
-            AppendFSync::EverySec => {
-                let mut interval = tokio::time::interval(Duration::from_secs(1));
-
-                loop {
-                    tokio::select! {
-                        _ = signal_manager.wait_special_signal() => {
-                            break
-                        },
-                        // 每隔一秒，同步文件
-                        _ = interval.tick() => {
-                            self.file.sync_data().await?;
-                        }
-                        msg = wcmd_receiver.recv_async() =>match msg.expect("wcmd_propagator should never close") {
-                            Message::Wcmd(wcmd) => {
-                                curr_aof_size += wcmd.len() as u128;
-
-                                self.file.write_all(& wcmd).await?;
-
-                                if !replica_handlers.is_empty() {
-                                    for handler in replica_handlers.iter_mut() {
-                                        handler.conn.write_all(&wcmd).await?;
-                                    }
-                                }
-
-                                if curr_aof_size >= auto_aof_rewrite_min_size {
-                                    self.rewrite().await?;
-                                    curr_aof_size = 0;
-                                }
-
-                            }
-                            Message::AddReplica(handler) => {
-                                replica_handlers.push(handler);
-                            }
-                        }
-                    }
-                }
-            }
-            AppendFSync::No => loop {
-                tokio::select! {
-                    _ = signal_manager.wait_special_signal() => break,
-                    msg = wcmd_receiver.recv_async() => match msg.expect("wcmd_propagator should never close") {
-                        Message::Wcmd(wcmd) => {
-                            curr_aof_size += wcmd.len() as u128;
-
-                            self.file.write_all(&wcmd).await?;
-
-                            if !replica_handlers.is_empty() {
-                                for handler in replica_handlers.iter_mut() {
-                                    handler.conn.write_all(&wcmd).await?;
-                                }
-                            }
-
-                            if curr_aof_size >= auto_aof_rewrite_min_size {
-                                self.rewrite().await?;
-                                curr_aof_size = 0;
-                            }
-                        }
-                        Message::AddReplica(handler) => {
-                            replica_handlers.push(handler);
-                        }
-                    }
-                }
-            },
-        }
-
-        while let Ok(Message::Wcmd(wcmd)) = wcmd_receiver.try_recv() {
-            self.file.write_all(&wcmd).await?;
-        }
-
-        self.file.sync_data().await?;
-        self.rewrite().await?; // 最后再重写一次
-        tracing::info!("AOF file rewrited.");
-        Ok(())
+        save_and_propagate_wcmd_to_replicas(self, wcmd_inbox).await
     }
 
     pub async fn load(&mut self) -> anyhow::Result<()> {
@@ -223,10 +107,12 @@ async fn aof_test() {
     use crate::{
         cmd::dispatch,
         frame::Resp3,
-        server::{Handler, SHUTDOWN_SIGNAL},
+        server::Handler,
+        shared::{Letter, WCMD_PROPAGATE_ID},
         util::{get_test_shared, test_init},
     };
     use std::io::Write;
+    use std::time::Duration;
 
     test_init();
 
@@ -255,7 +141,7 @@ async fn aof_test() {
 
     aof.load().await.unwrap();
 
-    let wcmd_receiver = shared.wcmd_rx().cloned().unwrap();
+    let wcmd_receiver = shared.post_office().get_inbox(WCMD_PROPAGATE_ID).unwrap();
     tokio::spawn(async move {
         aof.save_and_propagate_wcmd_to_replicas(wcmd_receiver)
             .await
@@ -329,8 +215,5 @@ async fn aof_test() {
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    shared
-        .signal_manager()
-        .trigger_shutdown(SHUTDOWN_SIGNAL)
-        .unwrap();
+    shared.post_office().send_all(Letter::ShutdownServer).await;
 }

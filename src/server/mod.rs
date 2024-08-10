@@ -1,39 +1,25 @@
-mod bg_task_channel;
+mod connection;
 mod handler;
 mod listener;
 
-pub use bg_task_channel::*;
-use bytes::BytesMut;
+pub use connection::*;
+use event_listener::listener;
 pub use handler::*;
 pub use listener::*;
+
+use bytes::BytesMut;
 use rand::seq::IteratorRandom;
 use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
-    conf::Conf,
     persist::{aof::Aof, rdb::Rdb},
-    shared::Shared,
+    shared::{post_office::Letter, Shared, MAIN_ID, WCMD_PROPAGATE_ID},
     util::propagate_wcmd_to_replicas,
     Id,
 };
-use async_shutdown::ShutdownManager;
-use crossbeam::atomic::AtomicCell;
 use std::{cell::RefCell, str::FromStr, sync::atomic::Ordering, time::Duration};
 use tokio::{task_local, time::Instant};
 use tracing::{debug, error, info};
-
-/* 使用保留ID作为特殊信号，其它ID用于指定关闭该ID的连接 */
-// 关闭服务。
-pub const SHUTDOWN_SIGNAL: Id = 1;
-// 重启服务。断开所有连接，释放所有资源，重新初始化。
-pub const REBOOT_SIGNAL: Id = 2;
-pub const RESET_SIGNAL: Id = 3;
-
-pub const RESERVE_MAX_ID: Id = 20;
-pub static RESERVE_ID: AtomicCell<Id> = AtomicCell::new(0);
-// 该值作为新连接的客户端的ID。已连接的客户端的ID会被记录在`Shared`中，在设置ID时
-// 需要检查是否已经存在相同的ID。保留前20个ID，专用于事务处理
-pub static CLIENT_ID_COUNT: AtomicCell<Id> = AtomicCell::new(RESERVE_MAX_ID + 1);
 
 task_local! { pub static ID: Id; }
 
@@ -56,75 +42,66 @@ pub fn using_local_buf(f: impl FnOnce(&mut BytesMut)) -> BytesMut {
 
 #[inline]
 pub async fn run() {
-    let signal_manager = ShutdownManager::new();
+    let shared = Shared::new();
 
-    tokio::spawn({
-        let shutdown = signal_manager.clone();
-        async move {
-            if let Err(e) = tokio::signal::ctrl_c().await {
-                eprintln!("Failed to wait for CTRL+C: {}", e);
-                std::process::exit(1);
-            } else {
-                eprintln!("\nShutting down server...");
-                shutdown.trigger_shutdown(SHUTDOWN_SIGNAL).ok();
-            }
+    let post_office = shared.post_office();
+    tokio::spawn(async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            eprintln!("Failed to wait for CTRL+C: {}", e);
+            std::process::exit(1);
+        } else {
+            eprintln!("\nShutting down server...");
+            post_office.send_all(Letter::ShutdownServer).await;
         }
     });
 
-    'reboot: loop {
-        // 读取配置
-        let conf = Box::leak(Box::new(Conf::new().unwrap()));
+    if let Ok(level) = tracing::Level::from_str(shared.conf().server.log_level.as_ref()) {
+        tracing_subscriber::fmt()
+            .pretty()
+            .with_max_level(level)
+            .init();
+    }
 
-        if let Ok(level) = tracing::Level::from_str(conf.server.log_level.as_ref()) {
-            tracing_subscriber::fmt()
-                .pretty()
-                .with_max_level(level)
-                .init();
-        }
+    init(shared.clone()).await.unwrap();
 
-        let shared = Shared::new(conf, signal_manager.clone());
+    let mut server = Server::new(shared.clone()).await;
 
-        init(shared.clone()).await.unwrap();
-
-        loop {
-            let mut server = Server::new(shared.clone()).await;
-
-            // 运行服务，阻塞主线程。当shutdown触发时，解除主线程的阻塞
-            match signal_manager.wrap_cancel(server.run()).await {
-                // 服务初始化出错，关闭服务
-                Ok(Err(err)) => {
+    let mut inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
+    loop {
+        tokio::select! {
+            res = server.run() => {
+                if let Err(err) = res {
                     error!(cause = %err, "server run error");
-                    signal_manager.trigger_shutdown(SHUTDOWN_SIGNAL).ok();
+                    post_office.send_all(Letter::ShutdownServer).await;
                 }
-                // 如果是特殊信号，则退出循环，否则继续运行服务
-                Err(signal) => match signal {
-                    SHUTDOWN_SIGNAL => {
-                        debug!("shutdown signal received");
-                        break 'reboot;
-                    }
-                    REBOOT_SIGNAL => {
-                        debug!("reboot signal received");
-                        break;
-                    }
-                    RESET_SIGNAL => {
-                        debug!("reset signal received");
-                        shared.reset();
-                    }
-                    // 忽略其它信号
-                    _ => {}
-                },
-                // 服务正常运行时，永不返回
-                _ => unreachable!(),
             }
+            letter = inbox.recv_async() => match letter {
+                Letter::ShutdownServer => {
+                    break;
+                }
+                Letter::BlockServer { event } => {
+                    drop(inbox);
+                    post_office.wait_shutdown_complete().await;
 
-            server.clean().await;
-            drop(server.delay_token);
+                    listener!(event => listener);
+                    listener.await;
 
-            // 等待所有DelayShutdownToken被释放
-            debug!("waiting for shutdown complete");
-            signal_manager.wait_shutdown_complete().await;
+                    inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
+                }
+                Letter::BlockAll { event } => {
+                    listener!(event => listener);
+                    listener.await;
+                }
+                Letter::Resp3(_) | Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownClient | Letter::ShutdownReplicas => { }
+            }
         }
     }
+
+    drop(inbox);
+
+    // 等待其它任务完成
+    debug!("waiting for shutdown complete");
+    post_office.wait_shutdown_complete().await;
 }
 
 pub async fn init(shared: Shared) -> anyhow::Result<()> {
@@ -159,29 +136,26 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
             info!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
         }
 
-        let wcmd_rx = shared
-            .wcmd_rx()
-            .expect("wcmd_receiver should be `Some` when aof is enabled");
+        let wcmd_inbox = shared
+            .post_office()
+            .get_inbox(WCMD_PROPAGATE_ID)
+            .expect("wcmd mailbox should exist when aof is enabled");
 
         tokio::spawn(async move {
-            if let Err(e) = aof
-                .save_and_propagate_wcmd_to_replicas(wcmd_rx.clone())
-                .await
-            {
+            if let Err(e) = aof.save_and_propagate_wcmd_to_replicas(wcmd_inbox).await {
                 error!("Failed to save AOF file: {}", e);
             }
         });
     } else if !conf.server.standalone {
         // 如果是集群模式，但没有开启AOF
 
-        let wcmd_rx = shared
-            .wcmd_rx()
-            .expect("wcmd_receiver should be `Some` when standalone is false");
-
-        let signal_manager = shared.signal_manager().clone();
+        let wcmd_inbox = shared
+            .post_office()
+            .get_inbox(WCMD_PROPAGATE_ID)
+            .expect("wcmd mailbox should exist when standalone is false");
 
         tokio::spawn(async move {
-            if let Err(e) = propagate_wcmd_to_replicas(wcmd_rx.clone(), signal_manager).await {
+            if let Err(e) = propagate_wcmd_to_replicas(wcmd_inbox).await {
                 error!("{}", e);
             }
         });
@@ -227,7 +201,7 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
             let kind = ProcessRefreshKind::new().with_memory();
             loop {
                 interval.tick().await;
-                system.refresh_process_specifics(pid, kind);
+                system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), kind);
                 let new_used_mem = system.process(pid).unwrap().memory();
                 USED_MEMORY.store(new_used_mem, Ordering::Relaxed);
             }

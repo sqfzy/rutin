@@ -1,8 +1,8 @@
 use crate::{
     cmd::commands::{Flag, EXISTS_CMD_FLAG},
     conf::{
-        AccessControl, Acl, AofConf, Conf, MemoryConf, RdbConf, ReplicaConf, SecurityConf,
-        ServerConf,
+        gen_run_id, AccessControl, Acl, AofConf, Conf, MemoryConf, RdbConf, ReplicaConf,
+        SecurityConf, ServerConf,
     },
     persist::aof::AppendFSync,
     shared::{
@@ -11,9 +11,8 @@ use crate::{
     },
 };
 use arc_swap::ArcSwap;
-use bytestring::ByteString;
-use rand::Rng;
-use std::sync::{Mutex, Once};
+use std::sync::Once;
+use tokio::sync::Mutex;
 use tracing::Level;
 
 pub const TEST_AC_USERNAME: &str = "test_ac";
@@ -24,7 +23,9 @@ pub fn test_init() {
     static INIT: Once = Once::new();
 
     INIT.call_once(|| {
-        NEVER_EXPIRE.init();
+        unsafe {
+            NEVER_EXPIRE.init();
+        }
 
         tracing_subscriber::fmt()
             .with_max_level(Level::DEBUG)
@@ -33,13 +34,6 @@ pub fn test_init() {
 }
 
 pub fn get_test_config() -> Conf {
-    let run_id: ByteString = rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
-        .take(40)
-        .map(char::from)
-        .collect::<String>()
-        .into();
-
     let acl = Acl::new();
     acl.insert(
         TEST_AC_USERNAME.into(),
@@ -54,7 +48,7 @@ pub fn get_test_config() -> Conf {
         server: ServerConf {
             addr: "127.0.0.1".into(),
             port: 6379,
-            run_id,
+            run_id: gen_run_id(),
             expire_check_interval_secs: 1,
             log_level: "info".into(),
             max_connections: 1024,
@@ -69,6 +63,7 @@ pub fn get_test_config() -> Conf {
         },
         replica: ReplicaConf {
             master_info: Mutex::new(None),
+            read_only: true,
             max_replica: 6,
             master_auth: None,
         },
@@ -94,9 +89,9 @@ pub fn get_test_config() -> Conf {
 }
 
 pub fn get_test_db() -> Db {
-    Db::new(Box::leak(Box::new(get_test_config())))
+    Db::new(get_test_config().memory.clone())
 }
 
 pub fn get_test_shared() -> Shared {
-    Shared::new(Box::leak(Box::new(get_test_config())), Default::default())
+    Shared::with_conf(get_test_config())
 }

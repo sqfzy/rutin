@@ -1,9 +1,8 @@
 use crate::{
-    conf::AccessControl,
-    connection::AsyncStream,
+    conf::{AccessControl, DEFAULT_USER},
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::{FakeHandler, Handler, HandlerContext},
+    server::{AsyncStream, FakeHandler, Handler, HandlerContext},
     shared::Shared,
 };
 use ahash::RandomState;
@@ -52,9 +51,10 @@ fn get_or_create_lua_env(
 
     let fake_handler = Handler::new_fake_with(
         shared.clone(),
-        Some(HandlerContext::new_by_reserve_id(
+        Some(HandlerContext::with_ac(
             shared,
             Arc::new(AccessControl::new_strict()),
+            DEFAULT_USER,
         )),
         None,
     )
@@ -304,7 +304,7 @@ impl LuaScript {
                     for key in &keys {
                         if let Some(notify_unlock) = shared
                             .db()
-                            .add_lock_event(key.clone().into(), fake_handler.context.client_id)
+                            .add_lock_event(key.clone().into(), fake_handler.context.id)
                             .await?
                         {
                             intention_locks.push(notify_unlock);

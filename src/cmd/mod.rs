@@ -4,11 +4,10 @@ use std::{collections::VecDeque, num::NonZero};
 
 use crate::{
     conf::AccessControl,
-    connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::Handler,
-    shared::Message,
+    server::{AsyncStream, Handler},
+    shared::Letter,
     util,
 };
 use bytes::Bytes;
@@ -31,7 +30,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
             return Err(RutinError::NoPermission);
         }
 
-        let wcmd_and_tx = if let Some(wcmd_tx) = handler.shared.wcmd_tx()
+        let wcmd_and_tx = if let Some(wcmd_tx) = &handler.shared.post_office().wcmd_outbox
             && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG)
         {
             let resp3 = Resp3::from(args);
@@ -47,15 +46,18 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 
         let res = cmd.execute(handler).await?;
 
+        // 如果使用了pipline则该批命令视为一个整体命令。当最后一个命令执行完毕后，才发送写命令，
+        // 避免性能瓶颈。如果执行过程中程序崩溃，则客户端会报错，用户会视为该批命令没有执行成
+        // 功，也不会传播该批命令，符合一致性。
         if let Some((tx, wcmd)) = wcmd_and_tx {
             let wcmd_buf = &mut handler.context.wcmd_buf;
 
             if handler.conn.unhandled_count() == 1 {
                 if wcmd_buf.is_empty() {
-                    tx.send(Message::Wcmd(wcmd)).unwrap();
+                    tx.send(Letter::Wcmd(wcmd)).unwrap();
                 } else {
                     wcmd_buf.unsplit(wcmd);
-                    tx.send(Message::Wcmd(wcmd_buf.split())).unwrap();
+                    tx.send(Letter::Wcmd(wcmd_buf.split())).unwrap();
                 }
             } else {
                 wcmd_buf.unsplit(wcmd);

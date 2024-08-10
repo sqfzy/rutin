@@ -14,7 +14,6 @@ static GLOBAL: MiMalloc = MiMalloc;
 pub mod cli;
 pub mod cmd;
 pub mod conf;
-pub mod connection;
 pub mod error;
 pub mod frame;
 pub mod persist;

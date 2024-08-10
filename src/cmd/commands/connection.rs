@@ -2,9 +2,9 @@ use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
-    connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
+    server::AsyncStream,
     server::Handler,
     util, Id,
 };
@@ -171,14 +171,15 @@ impl CmdExecutor for ClientTracking {
         }
 
         if let Some(redirect) = self.redirect {
-            let redirect_bg_sender = handler
+            let redirect_outbox = handler
                 .shared
-                .db()
-                .get_client_bg_sender(redirect)
+                .post_office()
+                .get_outbox(redirect)
                 .ok_or("ERR the client ID you want redirect to does not exist")?;
-            handler.context.client_track = Some(redirect_bg_sender);
+
+            handler.context.client_track = Some(redirect_outbox);
         } else {
-            handler.context.client_track = Some(handler.context.bg_task_channel.new_sender());
+            handler.context.client_track = Some(handler.context.outbox.clone());
         }
 
         Ok(Some(Resp3::new_simple_string("OK".into())))

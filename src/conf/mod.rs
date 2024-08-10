@@ -7,7 +7,7 @@ mod server;
 mod tls;
 
 pub use aof::*;
-use bytestring::ByteString;
+use bytes::Bytes;
 use figment::providers::{Format, Toml};
 pub use memory::*;
 pub use rdb::*;
@@ -29,7 +29,7 @@ pub struct Conf {
     pub server: ServerConf,
     #[serde(rename = "security")]
     pub security: SecurityConf,
-    #[serde(rename = "replication")]
+    #[serde(rename = "replica")]
     pub replica: ReplicaConf,
     #[serde(rename = "rdb")]
     pub rdb: Option<RdbConf>,
@@ -88,11 +88,10 @@ impl Conf {
     }
 }
 
-fn gen_run_id() -> ByteString {
-    rand::thread_rng()
-        .sample_iter(&rand::distributions::Alphanumeric)
-        .take(40)
-        .map(char::from)
-        .collect::<String>()
-        .into()
+pub fn gen_run_id() -> Bytes {
+    Bytes::from_iter(
+        rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(40),
+    )
 }

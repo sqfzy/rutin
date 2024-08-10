@@ -133,12 +133,16 @@ impl AccessControl {
         }
     }
 
-    pub fn set_only_read(&mut self) {
+    pub fn allow_only_read(&mut self) {
         self.cmds_flag = READ_CAT_FLAG;
     }
 
-    pub fn set_only_write(&mut self) {
+    pub fn allow_only_write(&mut self) {
         self.cmds_flag = WRITE_CAT_FLAG;
+    }
+
+    pub fn allow_cmds(&mut self, cmds: Flag) {
+        self.cmds_flag |= cmds;
     }
 
     pub fn merge(&mut self, mut other: AccessControlIntermedium) -> RutinResult<()> {

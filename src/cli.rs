@@ -1,7 +1,7 @@
 use crate::conf::MasterInfo;
 use bytestring::ByteString;
 use clap::Parser;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
 #[derive(Parser)]
 pub struct Cli {

@@ -2,11 +2,10 @@ use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
-    connection::AsyncStream,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::Handler,
-    shared::{db::ObjValueType, Shared},
+    server::{AsyncStream, Handler},
+    shared::{db::ObjValueType, Letter, Shared},
     util::atoi,
     Id, Int, Key,
 };
@@ -550,15 +549,15 @@ impl CmdExecutor for NBLPop {
         };
 
         let shared = handler.shared.clone();
-        let bg_sender = if self.redirect != 0 {
-            shared
-                .db()
-                .get_client_bg_sender(self.redirect)
-                .ok_or(RutinError::from(
-                    "ERR The client ID you want redirect to does not exist",
-                ))?
+        let outbox = if self.redirect != 0 {
+            handler
+                .shared
+                .post_office()
+                .get_outbox(self.redirect)
+                .ok_or(RutinError::from("ERR The client ID does not exist"))?
+                .clone()
         } else {
-            handler.context.bg_task_channel.new_sender()
+            handler.context.outbox.clone()
         };
 
         tokio::spawn(async move {
@@ -566,7 +565,7 @@ impl CmdExecutor for NBLPop {
                 Ok(res) => res,
                 Err(e) => e.try_into().unwrap(),
             };
-            let _ = bg_sender.send(res);
+            let _ = outbox.send(Letter::Resp3(res));
         });
 
         // 开启后台任务后，向客户端返回的响应不由该函数负责，而是由后台任务负责
@@ -1056,11 +1055,16 @@ mod cmd_list_tests {
         );
 
         assert_eq!(
-            Resp3::new_array(vec![
+            &Resp3::new_array(vec![
                 Resp3::new_blob_string("list3".into()),
                 Resp3::new_blob_string("key".into())
             ]),
-            handler.context.bg_task_channel.recv_from_bg_task().await
+            handler
+                .context
+                .inbox
+                .recv_async()
+                .await
+                .as_resp3_unchecked()
         );
 
         /************************/
@@ -1073,8 +1077,13 @@ mod cmd_list_tests {
         .unwrap();
         nblpop.execute(&mut handler).await.unwrap();
         assert_eq!(
-            Resp3::Null,
-            handler.context.bg_task_channel.recv_from_bg_task().await
+            &Resp3::new_null(),
+            handler
+                .context
+                .inbox
+                .recv_async()
+                .await
+                .as_resp3_unchecked()
         );
 
         /**************/
@@ -1111,11 +1120,16 @@ mod cmd_list_tests {
         );
 
         assert_eq!(
-            Resp3::new_array(vec![
+            &Resp3::new_array(vec![
                 Resp3::new_blob_string("list3".into()),
                 Resp3::new_blob_string("key".into())
             ]),
-            handler.context.bg_task_channel.recv_from_bg_task().await
+            handler
+                .context
+                .inbox
+                .recv_async()
+                .await
+                .as_resp3_unchecked()
         );
     }
 

@@ -1,14 +1,10 @@
 #![allow(dead_code)]
-use crate::{
-    shared::{
-        db::{Db, Hash, List, ObjValue, Set, Str, ZSet},
-        Shared,
-    },
-    Id,
+use crate::shared::{
+    db::{Db, Hash, List, ObjValue, Set, Str, ZSet},
+    Shared,
 };
 use ahash::{AHashMap, AHashSet};
 use anyhow::bail;
-use async_shutdown::ShutdownManager;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use skiplist::OrderedSkipList;
 use std::collections::VecDeque;
@@ -18,8 +14,8 @@ use tokio::{
 };
 use tracing::trace;
 
-pub(super) use rdb_load::rdb_load;
-pub(super) use rdb_save::rdb_save;
+pub use rdb_load::rdb_load;
+pub use rdb_save::rdb_save;
 pub use rdb_save::{
     encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
 };
@@ -68,7 +64,6 @@ pub struct Rdb {
     shared: Shared,
     path: String,
     enable_checksum: bool,
-    shutdown: ShutdownManager<Id>,
 }
 
 impl Rdb {
@@ -77,7 +72,6 @@ impl Rdb {
             shared: shared.clone(),
             path,
             enable_checksum,
-            shutdown: shared.signal_manager().clone(),
         }
     }
 }
@@ -86,15 +80,9 @@ impl Rdb {
     pub async fn save(&mut self) -> anyhow::Result<()> {
         let mut file = tokio::fs::File::create(&self.path).await?;
 
-        if let Ok(fut) = self.shutdown.wrap_delay_shutdown(rdb_save::rdb_save(
-            &mut file,
-            self.shared.db(),
-            self.enable_checksum,
-        )) {
-            fut.await?;
-        } else {
-            return Ok(());
-        }
+        let _delay_token = self.shared.post_office().delay_token();
+
+        rdb_save::rdb_save(&mut file, self.shared.db(), self.enable_checksum).await?;
 
         Ok(())
     }
@@ -112,7 +100,7 @@ impl Rdb {
 }
 
 mod rdb_save {
-    use crate::{shared::db::as_bytes, util::UNIX_EPOCH};
+    use crate::shared::{db::as_bytes, UNIX_EPOCH};
 
     use super::*;
 
@@ -310,51 +298,51 @@ mod rdb_save {
 }
 
 mod rdb_load {
-    use crate::{
-        shared::db::{ObjectInner, NEVER_EXPIRE},
-        util::UNIX_EPOCH,
+    use crate::shared::{
+        db::{ObjectInner, NEVER_EXPIRE},
+        UNIX_EPOCH,
     };
 
     use super::*;
 
     pub async fn rdb_load(
-        rdb: &mut BytesMut,
+        rdb_data: &mut BytesMut,
         db: &Db,
         enable_checksum: bool,
     ) -> anyhow::Result<()> {
         if enable_checksum {
             let mut checksum = [0; 8];
-            checksum.copy_from_slice(&rdb[rdb.len() - 8..]);
+            checksum.copy_from_slice(&rdb_data[rdb_data.len() - 8..]);
 
             let checksum = u64::from_be_bytes(checksum);
             let crc = crc::Crc::<u64>::new(&crc::CRC_64_REDIS);
-            if checksum != crc.checksum(&rdb[..rdb.len() - 8]) {
+            if checksum != crc.checksum(&rdb_data[..rdb_data.len() - 8]) {
                 anyhow::bail!("checksum failed");
             }
         }
 
-        let magic = rdb.split_to(5);
+        let magic = rdb_data.split_to(5);
         if magic != b"REDIS"[..] {
             anyhow::bail!("magic string should be RUREDIS, but got {magic:?}");
         }
-        let _rdb_version = rdb.get_u32();
+        let _rdb_version = rdb_data.get_u32();
 
         let mut expire = *NEVER_EXPIRE;
         loop {
-            match rdb.get_u8() {
+            match rdb_data.get_u8() {
                 RDB_OPCODE_EOF => {
                     trace!("EOF");
                     // 丢弃EOF后面的checksum
-                    rdb.advance(8);
+                    rdb_data.advance(8);
                     break;
                 }
                 RDB_OPCODE_SELECTDB => {
-                    let _db_num = decode_length(rdb)?;
+                    let _db_num = decode_length(rdb_data)?;
                     continue;
                 }
                 RDB_OPCODE_RESIZEDB => {
-                    let _db_size = decode_length(rdb)?;
-                    let _expires_size = decode_length(rdb)?;
+                    let _db_size = decode_length(rdb_data)?;
+                    let _expires_size = decode_length(rdb_data)?;
 
                     trace!(
                         "Resizedb: db_size: {:?}, expires_size: {:?}",
@@ -364,26 +352,26 @@ mod rdb_load {
                     continue;
                 }
                 RDB_OPCODE_AUX => {
-                    let _key = decode_key(rdb)?;
-                    let _value = decode_str_value(rdb)?;
+                    let _key = decode_key(rdb_data)?;
+                    let _value = decode_str_value(rdb_data)?;
 
                     trace!("Auxiliary fields: key: {:?}, value: {:?}", _key, _value);
                     continue;
                 }
                 RDB_OPCODE_EXPIRETIME_MS => {
-                    let ms = rdb.get_u64_le();
+                    let ms = rdb_data.get_u64_le();
                     expire = *UNIX_EPOCH + Duration::from_millis(ms);
 
                     trace!("Expiretime_ms: {:?}", expire);
                 }
                 RDB_OPCODE_EXPIRETIME => {
-                    let sec = rdb.get_u32_le();
+                    let sec = rdb_data.get_u32_le();
                     expire = *UNIX_EPOCH + Duration::from_secs(sec as u64);
                     trace!("Expiretime: {:?}", expire);
                 }
                 RDB_TYPE_STRING => {
-                    let key = decode_key(rdb)?;
-                    let value = decode_str_value(rdb)?;
+                    let key = decode_key(rdb_data)?;
+                    let value = decode_str_value(rdb_data)?;
 
                     trace!("String: key: {:?}, value: {:?}", key, value);
 
@@ -392,8 +380,8 @@ mod rdb_load {
                     expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_LIST => {
-                    let key = decode_key(rdb)?;
-                    let value = decode_list_kv(rdb)?;
+                    let key = decode_key(rdb_data)?;
+                    let value = decode_list_kv(rdb_data)?;
 
                     trace!("List: key: {:?}, value: {:?}", key, value);
 
@@ -402,8 +390,8 @@ mod rdb_load {
                     expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_HASH => {
-                    let key = decode_key(rdb)?;
-                    let value = decode_hash_value(rdb)?;
+                    let key = decode_key(rdb_data)?;
+                    let value = decode_hash_value(rdb_data)?;
 
                     trace!("Hash: key: {:?}, value: {:?}", key, value);
 
@@ -412,8 +400,8 @@ mod rdb_load {
                     expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_SET => {
-                    let key = decode_key(rdb)?;
-                    let value = decode_set_value(rdb)?;
+                    let key = decode_key(rdb_data)?;
+                    let value = decode_set_value(rdb_data)?;
 
                     trace!("Set: key: {:?}, value: {:?}", key, value);
 
@@ -422,8 +410,8 @@ mod rdb_load {
                     expire = *NEVER_EXPIRE;
                 }
                 RDB_TYPE_ZSET => {
-                    let key = decode_key(rdb)?;
-                    let value = decode_zset_value(rdb)?;
+                    let key = decode_key(rdb_data)?;
+                    let value = decode_zset_value(rdb_data)?;
 
                     trace!("ZSet: key: {:?}, value: {:?}", key, value);
 

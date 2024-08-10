@@ -14,7 +14,7 @@ max_connections = 256           # 最大连接数
 # replicaof = "127.0.0.1:6380" # 主服务器地址
 max_replicate = 10 # 最多允许多少个从服务器连接到当前服务器
 # masterauth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
-# read-only = true
+read_only = true
 
 # [rdb]
 # file_path = "dump.rdb" # RDB文件路径
@@ -25,8 +25,8 @@ max_replicate = 10 # 最多允许多少个从服务器连接到当前服务器
 # version = 6                             # RDB版本
 # enable_checksum = false                 # 是否开启RDB校验和
 #
-[aof]
-use_rdb_preamble = true          # 是否在AOF文件开头加入RDB版本信息
-file_path = "appendonly.aof"     # AOF文件路径
-append_fsync = "everysec"        # AOF同步频率。可能为：always | everysec | no
-auto_aof_rewrite_min_size = 1024 # 单位为mb
+# [aof]
+# use_rdb_preamble = true          # 是否在AOF文件开头加入RDB版本信息
+# file_path = "appendonly.aof"     # AOF文件路径
+# append_fsync = "everysec"        # AOF同步频率。可能为：always | everysec | no
+# auto_aof_rewrite_min_size = 1024 # 单位为mb

@@ -149,6 +149,110 @@ where
     B: AsRef<[u8]> + PartialEq,
     S: AsRef<str> + PartialEq,
 {
+    // TODO: test
+    pub fn size(&self) -> usize {
+        fn attributes_size<B, S>(attributes: &Option<Attributes<B, S>>) -> usize
+        where
+            B: AsRef<[u8]> + PartialEq,
+            S: AsRef<str> + PartialEq,
+        {
+            if let Some(attributes) = attributes {
+                let mut size = itoa::Buffer::new().format(attributes.len()).len() + 3;
+                for (k, v) in attributes {
+                    size += k.size() + v.size();
+                }
+                size
+            } else {
+                0
+            }
+        }
+
+        match self {
+            Resp3::SimpleString { inner, attributes } => {
+                inner.as_ref().len() + 3 + attributes_size(attributes)
+            }
+            Resp3::SimpleError { inner, attributes } => {
+                inner.as_ref().len() + 3 + attributes_size(attributes)
+            }
+            Resp3::Integer { inner, attributes } => {
+                itoa::Buffer::new().format(*inner).len() + 3 + attributes_size(attributes)
+            }
+            Resp3::BlobString { inner, attributes } => {
+                itoa::Buffer::new().format(inner.as_ref().len()).len()
+                    + 3
+                    + inner.as_ref().len()
+                    + 2
+                    + attributes_size(attributes)
+            }
+            Resp3::BlobError { inner, attributes } => {
+                itoa::Buffer::new().format(inner.as_ref().len()).len()
+                    + 3
+                    + inner.as_ref().len()
+                    + 2
+                    + attributes_size(attributes)
+            }
+            Resp3::Array { inner, attributes } => {
+                let mut size =
+                    itoa::Buffer::new().format(inner.len()).len() + 3 + attributes_size(attributes);
+                for r in inner {
+                    size += r.size();
+                }
+                size
+            }
+            Resp3::Null => 3,
+            Resp3::Boolean { attributes, .. } => 3 + attributes_size(attributes),
+            Resp3::Double { inner, attributes } => {
+                ryu::Buffer::new().format(*inner).len() + 3 + attributes_size(attributes)
+            }
+            Resp3::BigNumber { inner, attributes } => {
+                inner.to_str_radix(10).len() + 3 + attributes_size(attributes)
+            }
+            Resp3::VerbatimString {
+                data, attributes, ..
+            } => 3 + 1 + 3 + 1 + data.as_ref().len() + 2 + attributes_size(attributes),
+            Resp3::Map { inner, attributes } => {
+                let mut size =
+                    itoa::Buffer::new().format(inner.len()).len() + 3 + attributes_size(attributes);
+                for (k, v) in inner {
+                    size += k.size() + v.size();
+                }
+
+                size
+            }
+            Resp3::Set { inner, attributes } => {
+                let mut size =
+                    itoa::Buffer::new().format(inner.len()).len() + 3 + attributes_size(attributes);
+                for r in inner {
+                    size += r.size();
+                }
+                size
+            }
+            Resp3::Push { inner, attributes } => {
+                let mut size =
+                    itoa::Buffer::new().format(inner.len()).len() + 3 + attributes_size(attributes);
+                for r in inner {
+                    size += r.size();
+                }
+                size
+            }
+            Resp3::ChunkedString(chunks) => {
+                let mut size = 3;
+                for chunk in chunks {
+                    size += 1 + itoa::Buffer::new().format(chunk.as_ref().len()).len() + 2;
+                    size += chunk.as_ref().len() + 2;
+                }
+                size
+            }
+            Resp3::Hello { version, auth } => {
+                let mut size = itoa::Buffer::new().format(*version).len() + 1;
+                if let Some((username, password)) = auth {
+                    size += username.as_ref().len() + 1 + password.as_ref().len() + 1;
+                }
+                size
+            }
+        }
+    }
+
     pub fn new_simple_string(string: S) -> Self {
         Resp3::SimpleString {
             inner: string,
@@ -326,7 +430,7 @@ where
         }
     }
 
-    pub fn try_blob(&self) -> Option<&B> {
+    pub fn try_blob_string(&self) -> Option<&B> {
         match self {
             Resp3::BlobString { inner, .. } => Some(inner),
             _ => None,
@@ -689,6 +793,134 @@ where
         match self {
             Resp3::Push { inner, .. } => inner,
             _ => panic!("not a push"),
+        }
+    }
+
+    pub fn into_simple_string(self) -> Option<S> {
+        if let Resp3::SimpleString { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_simple_error(self) -> Option<S> {
+        if let Resp3::SimpleError { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_integer(self) -> Option<Int> {
+        if let Resp3::Integer { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_blob_string(self) -> Option<B> {
+        if let Resp3::BlobString { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_blob_error(self) -> Option<B> {
+        if let Resp3::BlobError { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_array(self) -> Option<Vec<Resp3<B, S>>> {
+        if let Resp3::Array { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_null(self) -> Option<()> {
+        if let Resp3::Null = self {
+            Some(())
+        } else {
+            None
+        }
+    }
+
+    pub fn into_boolean(self) -> Option<bool> {
+        if let Resp3::Boolean { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_double(self) -> Option<f64> {
+        if let Resp3::Double { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_big_number(self) -> Option<BigInt> {
+        if let Resp3::BigNumber { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_verbatim_string(self) -> Option<([u8; 3], B)> {
+        if let Resp3::VerbatimString { format, data, .. } = self {
+            Some((format, data))
+        } else {
+            None
+        }
+    }
+
+    pub fn into_map(self) -> Option<AHashMap<Resp3<B, S>, Resp3<B, S>>> {
+        if let Resp3::Map { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_set(self) -> Option<AHashSet<Resp3<B, S>>> {
+        if let Resp3::Set { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_push(self) -> Option<Vec<Resp3<B, S>>> {
+        if let Resp3::Push { inner, .. } = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_chunked_string(self) -> Option<Vec<B>> {
+        if let Resp3::ChunkedString(inner) = self {
+            Some(inner)
+        } else {
+            None
+        }
+    }
+
+    pub fn into_hello(self) -> Option<(Int, Option<(B, B)>)> {
+        if let Resp3::Hello { version, auth } = self {
+            Some((version, auth))
+        } else {
+            None
         }
     }
 
@@ -1437,289 +1669,10 @@ impl Decoder for Resp3Decoder {
     type Error = RutinError;
     type Item = Resp3;
 
-    // 如果src中的数据不完整，会引发io::ErrorKind::UnexpectedEof错误
+    // 无论是否成功解码，该函数会消耗src中的所有数据
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         self.buf.unsplit(src.split());
-
-        if self.buf.is_empty() {
-            return Ok(None);
-        }
-
-        let origin = self.buf.as_ptr();
-
-        #[inline]
-        fn _decode(
-            decoder: &mut Resp3Decoder,
-        ) -> Result<<Resp3Decoder as Decoder>::Item, <Resp3Decoder as Decoder>::Error> {
-            let src = &mut decoder.buf;
-
-            if src.is_empty() {
-                return Err(RutinError::Incomplete);
-            }
-
-            let res = match src.get_u8() {
-                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
-                    inner: Resp3::decode_string(src)?,
-                    attributes: None,
-                },
-                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
-                    inner: Resp3::decode_string(src)?,
-                    attributes: None,
-                },
-                INTEGER_PREFIX => Resp3::Integer {
-                    inner: Resp3::decode_decimal(src)?,
-                    attributes: None,
-                },
-                BLOB_STRING_PREFIX => {
-                    let line = Resp3::decode_line(src)?;
-
-                    if Resp3::get(&line, 0..1)?[0] == CHUNKED_STRING_PREFIX {
-                        let mut chunks = Vec::new();
-                        loop {
-                            let mut line = Resp3::decode_line(src)?;
-
-                            if Resp3::get_u8(&mut line)? != CHUNKED_STRING_LENGTH_PREFIX {
-                                return Err(RutinError::InvalidFormat {
-                                    msg: "invalid chunk length prefix".into(),
-                                });
-                            }
-
-                            let len = util::atoi(&line).map_err(|_| {
-                                io::Error::new(io::ErrorKind::InvalidData, "invalid length")
-                            })?;
-
-                            if len == 0 {
-                                break;
-                            }
-
-                            Resp3::need_bytes(src, len + 2)?;
-                            let res = src.split_to(len);
-                            src.advance(2);
-
-                            chunks.push(res.freeze());
-                        }
-
-                        Resp3::ChunkedString(chunks)
-                    } else {
-                        let len = util::atoi(&line).map_err(|_| {
-                            io::Error::new(io::ErrorKind::InvalidData, "invalid length")
-                        })?;
-
-                        Resp3::need_bytes(src, len + 2)?;
-                        let res = src.split_to(len);
-                        src.advance(2);
-
-                        Resp3::BlobString {
-                            inner: res.freeze(),
-                            attributes: None,
-                        }
-                    }
-                }
-                ARRAY_PREFIX => {
-                    let len = Resp3::decode_length(src)?;
-
-                    let mut frames = Vec::with_capacity(len);
-                    for _ in 0..len {
-                        let frame = _decode(decoder)?;
-                        frames.push(frame);
-                    }
-
-                    Resp3::Array {
-                        inner: frames,
-                        attributes: None,
-                    }
-                }
-                NULL_PREFIX => {
-                    Resp3::need_bytes(src, 2)?;
-                    src.advance(2);
-                    Resp3::Null
-                }
-                BOOLEAN_PREFIX => {
-                    Resp3::need_bytes(src, 3)?;
-
-                    let b = match src[0] {
-                        b't' => true,
-                        b'f' => false,
-                        _ => {
-                            return Err(RutinError::InvalidFormat {
-                                msg: "invalid boolean".into(),
-                            });
-                        }
-                    };
-                    src.advance(3);
-
-                    Resp3::Boolean {
-                        inner: b,
-                        attributes: None,
-                    }
-                }
-                DOUBLE_PREFIX => {
-                    let line = Resp3::decode_line(src)?;
-
-                    let double = atof(&line).map_err(|e| RutinError::InvalidFormat {
-                        msg: e.to_string().into(),
-                    })?;
-
-                    Resp3::Double {
-                        inner: double,
-                        attributes: None,
-                    }
-                }
-                BIG_NUMBER_PREFIX => {
-                    let line = Resp3::decode_line(src)?;
-
-                    let n = BigInt::parse_bytes(&line, 10).ok_or_else(|| {
-                        RutinError::InvalidFormat {
-                            msg: "invalid big number".into(),
-                        }
-                    })?;
-
-                    Resp3::BigNumber {
-                        inner: n,
-                        attributes: None,
-                    }
-                }
-                BLOB_ERROR_PREFIX => {
-                    let len = Resp3::decode_length(src)?;
-
-                    Resp3::need_bytes(src, len + 2)?;
-                    let e = src.split_to(len);
-                    src.advance(2);
-
-                    Resp3::BlobError {
-                        inner: e.freeze(),
-
-                        attributes: None,
-                    }
-                }
-                VERBATIM_STRING_PREFIX => {
-                    let len = Resp3::decode_length(src)?;
-
-                    Resp3::need_bytes(src, len + 2)?;
-
-                    let format = src[0..3].try_into().unwrap();
-                    src.advance(4);
-
-                    let data = src.split_to(len - 4).freeze();
-                    src.advance(2);
-
-                    Resp3::VerbatimString {
-                        format,
-                        data,
-                        attributes: None,
-                    }
-                }
-                MAP_PREFIX => {
-                    let len = Resp3::decode_length(src)?;
-
-                    let mut map = AHashMap::with_capacity(len);
-                    for _ in 0..len {
-                        let k = _decode(decoder)?;
-                        let v = _decode(decoder)?;
-                        map.insert(k, v);
-                    }
-
-                    // map的key由客户端保证唯一
-                    Resp3::Map {
-                        inner: map,
-                        attributes: None,
-                    }
-                }
-                SET_PREFIX => {
-                    let len = Resp3::decode_length(src)?;
-
-                    let mut set = AHashSet::with_capacity(len);
-                    for _ in 0..len {
-                        let frame = _decode(decoder)?;
-                        set.insert(frame);
-                    }
-
-                    // set的元素由客户端保证唯一
-                    Resp3::Set {
-                        inner: set,
-                        attributes: None,
-                    }
-                }
-                PUSH_PREFIX => {
-                    let len = Resp3::decode_length(src)?;
-
-                    let mut frames = Vec::with_capacity(len);
-                    for _ in 0..len {
-                        let frame = _decode(decoder)?;
-                        frames.push(frame);
-                    }
-
-                    Resp3::Push {
-                        inner: frames,
-                        attributes: None,
-                    }
-                }
-                b'H' => {
-                    let mut line = Resp3::decode_line(src)?;
-
-                    let ello = Resp3::decode_until(&mut line, b' ')?;
-                    if ello != b"ELLO".as_slice() {
-                        return Err(RutinError::InvalidFormat {
-                            msg: "expect 'HELLO'".into(),
-                        });
-                    }
-
-                    let version =
-                        util::atoi(&Resp3::decode_until(&mut line, b' ')?).map_err(|e| {
-                            RutinError::InvalidFormat {
-                                msg: format!("invalid version: {}", e).into(),
-                            }
-                        })?;
-
-                    if line.is_empty() {
-                        Resp3::Hello {
-                            version,
-                            auth: None,
-                        }
-                    } else {
-                        let auth = Resp3::decode_until(&mut line, b' ')?;
-                        if auth != b"AUTH".as_slice() {
-                            return Err(RutinError::InvalidFormat {
-                                msg: "invalid auth".into(),
-                            });
-                        }
-
-                        let username = Resp3::decode_until(&mut line, b' ')?.freeze();
-
-                        let password = line.split().freeze();
-
-                        Resp3::Hello {
-                            version,
-                            auth: Some((username, password)),
-                        }
-                    }
-                }
-                prefix => {
-                    return Err(RutinError::InvalidFormat {
-                        msg: format!("invalid prefix: {}", prefix).into(),
-                    });
-                }
-            };
-
-            Ok(res)
-        }
-
-        let res = _decode(self);
-        match res {
-            Err(RutinError::Incomplete) => {
-                // 恢复消耗的数据
-                let consume = unsafe {
-                    slice_from_raw_parts(origin, self.buf.as_ptr() as usize - origin as usize)
-                        .as_ref()
-                        .unwrap()
-                };
-                let temp = self.buf.split();
-                self.buf.put_slice(consume);
-                self.buf.unsplit(temp);
-                Ok(None)
-            }
-            res => Ok(Some(res?)),
-        }
+        decode(&mut self.buf)
     }
 }
 
@@ -2325,6 +2278,285 @@ where
     for (k, v) in attr {
         k.encode_buf(buf);
         v.encode_buf(buf);
+    }
+}
+
+// src中必须包含一个完整的Resp3，否则引发io::ErrorKind::UnexpectedEof错误
+pub fn decode(src: &mut BytesMut) -> RutinResult<Option<Resp3>> {
+    if src.is_empty() {
+        return Ok(None);
+    }
+
+    let origin = src.as_ptr();
+
+    #[inline]
+    fn _decode(
+        src: &mut BytesMut,
+    ) -> Result<<Resp3Decoder as Decoder>::Item, <Resp3Decoder as Decoder>::Error> {
+        if src.is_empty() {
+            return Err(RutinError::Incomplete);
+        }
+
+        let res = match src.get_u8() {
+            SIMPLE_STRING_PREFIX => Resp3::SimpleString {
+                inner: Resp3::decode_string(src)?,
+                attributes: None,
+            },
+            SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
+                inner: Resp3::decode_string(src)?,
+                attributes: None,
+            },
+            INTEGER_PREFIX => Resp3::Integer {
+                inner: Resp3::decode_decimal(src)?,
+                attributes: None,
+            },
+            BLOB_STRING_PREFIX => {
+                let line = Resp3::decode_line(src)?;
+
+                if Resp3::get(&line, 0..1)?[0] == CHUNKED_STRING_PREFIX {
+                    let mut chunks = Vec::new();
+                    loop {
+                        let mut line = Resp3::decode_line(src)?;
+
+                        if Resp3::get_u8(&mut line)? != CHUNKED_STRING_LENGTH_PREFIX {
+                            return Err(RutinError::InvalidFormat {
+                                msg: "invalid chunk length prefix".into(),
+                            });
+                        }
+
+                        let len = util::atoi(&line).map_err(|_| {
+                            io::Error::new(io::ErrorKind::InvalidData, "invalid length")
+                        })?;
+
+                        if len == 0 {
+                            break;
+                        }
+
+                        Resp3::need_bytes(src, len + 2)?;
+                        let res = src.split_to(len);
+                        src.advance(2);
+
+                        chunks.push(res.freeze());
+                    }
+
+                    Resp3::ChunkedString(chunks)
+                } else {
+                    let len = util::atoi(&line).map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidData, "invalid length")
+                    })?;
+
+                    Resp3::need_bytes(src, len + 2)?;
+                    let res = src.split_to(len);
+                    src.advance(2);
+
+                    Resp3::BlobString {
+                        inner: res.freeze(),
+                        attributes: None,
+                    }
+                }
+            }
+            ARRAY_PREFIX => {
+                let len = Resp3::decode_length(src)?;
+
+                let mut frames = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let frame = _decode(src)?;
+                    frames.push(frame);
+                }
+
+                Resp3::Array {
+                    inner: frames,
+                    attributes: None,
+                }
+            }
+            NULL_PREFIX => {
+                Resp3::need_bytes(src, 2)?;
+                src.advance(2);
+                Resp3::Null
+            }
+            BOOLEAN_PREFIX => {
+                Resp3::need_bytes(src, 3)?;
+
+                let b = match src[0] {
+                    b't' => true,
+                    b'f' => false,
+                    _ => {
+                        return Err(RutinError::InvalidFormat {
+                            msg: "invalid boolean".into(),
+                        });
+                    }
+                };
+                src.advance(3);
+
+                Resp3::Boolean {
+                    inner: b,
+                    attributes: None,
+                }
+            }
+            DOUBLE_PREFIX => {
+                let line = Resp3::decode_line(src)?;
+
+                let double = atof(&line).map_err(|e| RutinError::InvalidFormat {
+                    msg: e.to_string().into(),
+                })?;
+
+                Resp3::Double {
+                    inner: double,
+                    attributes: None,
+                }
+            }
+            BIG_NUMBER_PREFIX => {
+                let line = Resp3::decode_line(src)?;
+
+                let n =
+                    BigInt::parse_bytes(&line, 10).ok_or_else(|| RutinError::InvalidFormat {
+                        msg: "invalid big number".into(),
+                    })?;
+
+                Resp3::BigNumber {
+                    inner: n,
+                    attributes: None,
+                }
+            }
+            BLOB_ERROR_PREFIX => {
+                let len = Resp3::decode_length(src)?;
+
+                Resp3::need_bytes(src, len + 2)?;
+                let e = src.split_to(len);
+                src.advance(2);
+
+                Resp3::BlobError {
+                    inner: e.freeze(),
+
+                    attributes: None,
+                }
+            }
+            VERBATIM_STRING_PREFIX => {
+                let len = Resp3::decode_length(src)?;
+
+                Resp3::need_bytes(src, len + 2)?;
+
+                let format = src[0..3].try_into().unwrap();
+                src.advance(4);
+
+                let data = src.split_to(len - 4).freeze();
+                src.advance(2);
+
+                Resp3::VerbatimString {
+                    format,
+                    data,
+                    attributes: None,
+                }
+            }
+            MAP_PREFIX => {
+                let len = Resp3::decode_length(src)?;
+
+                let mut map = AHashMap::with_capacity(len);
+                for _ in 0..len {
+                    let k = _decode(src)?;
+                    let v = _decode(src)?;
+                    map.insert(k, v);
+                }
+
+                // map的key由客户端保证唯一
+                Resp3::Map {
+                    inner: map,
+                    attributes: None,
+                }
+            }
+            SET_PREFIX => {
+                let len = Resp3::decode_length(src)?;
+
+                let mut set = AHashSet::with_capacity(len);
+                for _ in 0..len {
+                    let frame = _decode(src)?;
+                    set.insert(frame);
+                }
+
+                // set的元素由客户端保证唯一
+                Resp3::Set {
+                    inner: set,
+                    attributes: None,
+                }
+            }
+            PUSH_PREFIX => {
+                let len = Resp3::decode_length(src)?;
+
+                let mut frames = Vec::with_capacity(len);
+                for _ in 0..len {
+                    let frame = _decode(src)?;
+                    frames.push(frame);
+                }
+
+                Resp3::Push {
+                    inner: frames,
+                    attributes: None,
+                }
+            }
+            b'H' => {
+                let mut line = Resp3::decode_line(src)?;
+
+                let ello = Resp3::decode_until(&mut line, b' ')?;
+                if ello != b"ELLO".as_slice() {
+                    return Err(RutinError::InvalidFormat {
+                        msg: "expect 'HELLO'".into(),
+                    });
+                }
+
+                let version = util::atoi(&Resp3::decode_until(&mut line, b' ')?).map_err(|e| {
+                    RutinError::InvalidFormat {
+                        msg: format!("invalid version: {}", e).into(),
+                    }
+                })?;
+
+                if line.is_empty() {
+                    Resp3::Hello {
+                        version,
+                        auth: None,
+                    }
+                } else {
+                    let auth = Resp3::decode_until(&mut line, b' ')?;
+                    if auth != b"AUTH".as_slice() {
+                        return Err(RutinError::InvalidFormat {
+                            msg: "invalid auth".into(),
+                        });
+                    }
+
+                    let username = Resp3::decode_until(&mut line, b' ')?.freeze();
+
+                    let password = line.split().freeze();
+
+                    Resp3::Hello {
+                        version,
+                        auth: Some((username, password)),
+                    }
+                }
+            }
+            prefix => {
+                return Err(RutinError::InvalidFormat {
+                    msg: format!("invalid prefix: {}", prefix).into(),
+                });
+            }
+        };
+
+        Ok(res)
+    }
+
+    let res = _decode(src);
+    match res {
+        Err(RutinError::Incomplete) => {
+            // 恢复消耗的数据
+            let consume = unsafe {
+                slice_from_raw_parts(origin, src.as_ptr() as usize - origin as usize)
+                    .as_ref()
+                    .unwrap()
+            };
+            let temp = src.split();
+            src.put_slice(consume);
+            src.unsplit(temp);
+            Ok(None)
+        }
+        res => Ok(Some(res?)),
     }
 }
 

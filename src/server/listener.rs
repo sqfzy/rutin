@@ -2,9 +2,7 @@ use super::Handler;
 use crate::{
     persist::rdb::Rdb,
     shared::{db::Lru, Shared},
-    Id,
 };
-use async_shutdown::DelayShutdownToken;
 use backon::Retryable;
 use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
@@ -33,7 +31,6 @@ pub struct Server {
     pub listener: TcpListener,
     pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
-    pub delay_token: DelayShutdownToken<Id>,
 }
 
 impl Server {
@@ -54,16 +51,11 @@ impl Server {
             None
         };
 
-        let limit_connections = Arc::new(Semaphore::new(conf.server.max_connections));
-
-        let delay_token = shared.signal_manager().delay_shutdown_token().unwrap();
-
         Server {
             shared,
             listener,
             tls_acceptor,
-            limit_connections,
-            delay_token,
+            limit_connections: Arc::new(Semaphore::new(conf.server.max_connections)),
         }
     }
 
@@ -92,8 +84,6 @@ impl Server {
 
             let shared = self.shared.clone();
 
-            // 对于每个连接都创建一个delay_token，只有当所有连接都正常退出时，才关闭服务
-            let delay_token = self.delay_token.clone();
             match &self.tls_acceptor {
                 None => {
                     let mut handler = Handler::new(shared, stream);
@@ -104,8 +94,6 @@ impl Server {
                             error!(cause = ?err, "connection error");
                         }
 
-                        // handler.run()不应该block，这会导致delay_token无法释放
-                        drop(delay_token);
                         #[cfg(not(feature = "debug"))]
                         drop(permit);
                     });
@@ -120,7 +108,6 @@ impl Server {
                             error!(cause = ?err, "connection error");
                         }
 
-                        drop(delay_token);
                         #[cfg(not(feature = "debug"))]
                         drop(permit);
                     });
@@ -128,14 +115,20 @@ impl Server {
             };
         }
     }
+}
 
-    pub async fn clean(&mut self) {
+impl Drop for Server {
+    fn drop(&mut self) {
         let conf = self.shared.conf();
         if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
             let mut rdb = Rdb::new(&self.shared, rdb.file_path.clone(), rdb.enable_checksum);
-            let start = tokio::time::Instant::now();
-            rdb.save().await.ok();
-            tracing::info!("RDB file saved. Time elapsed: {:?}", start.elapsed());
+
+            let _delay_token = self.shared.post_office().delay_token();
+            tokio::spawn(async move {
+                rdb.save().await.ok();
+
+                drop(_delay_token);
+            });
         }
     }
 }

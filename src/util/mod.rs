@@ -1,8 +1,12 @@
+mod master;
 mod replica;
 mod test;
+mod unsafe_lazy;
 
+pub use master::*;
 pub use replica::*;
 pub use test::*;
+pub use unsafe_lazy::*;
 
 use bytes::Bytes;
 use snafu::OptionExt;
@@ -12,32 +16,6 @@ use crate::{
     Int,
 };
 use atoi::FromRadix10SignedChecked;
-use std::{ops::Deref, sync::OnceLock, time::SystemTime};
-use tokio::time::Instant;
-
-pub static UNIX_EPOCH: UnixEpoch = UnixEpoch::new();
-
-pub struct UnixEpoch(OnceLock<Instant>);
-
-impl UnixEpoch {
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self(OnceLock::new())
-    }
-}
-
-impl Deref for UnixEpoch {
-    type Target = Instant;
-
-    fn deref(&self) -> &Self::Target {
-        self.0.get_or_init(|| {
-            Instant::now()
-                - SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .unwrap()
-        })
-    }
-}
 
 // 模拟服务端，接收客户端的命令并打印
 #[cfg(feature = "debug_server")]

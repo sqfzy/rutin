@@ -6,10 +6,11 @@ use object_entry::IntentionLock;
 pub use object_entry::ObjectEntry;
 
 use crate::{
-    conf::Conf,
+    conf::MemoryConf,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::BgTaskSender,
+    shared::OutBox,
+    util::UnsafeLazy,
     Id, Key,
 };
 use ahash::RandomState;
@@ -18,62 +19,12 @@ use dashmap::{
     DashMap, DashSet,
 };
 use flume::Sender;
-use std::{cell::UnsafeCell, ops::Deref, time::Duration};
+use std::time::Duration;
 use tokio::time::Instant;
 use tracing::instrument;
 
-pub static NEVER_EXPIRE: NeverExpire = NeverExpire(UnsafeCell::new(None));
-
-// 必须在进入多线程之前初始化
-// FIX: 调用Db::new()时会进行初始化。当多线程执行test时，可能出现数据竞争
-pub struct NeverExpire(UnsafeCell<Option<Instant>>);
-
-unsafe impl Send for NeverExpire {}
-unsafe impl Sync for NeverExpire {}
-
-impl NeverExpire {
-    pub fn init(&self) {
-        unsafe {
-            if (*self.0.get()).is_none() {
-                *self.0.get() = Some(Instant::now() + Duration::from_secs(3600 * 24 * 365));
-            }
-        };
-    }
-}
-
-impl PartialEq<Instant> for NeverExpire {
-    fn eq(&self, other: &Instant) -> bool {
-        debug_assert!(unsafe { *self.0.get() }.is_some());
-
-        unsafe { (*self.0.get()).as_ref().unwrap_unchecked() }.eq(other)
-    }
-}
-
-impl PartialOrd<Instant> for NeverExpire {
-    fn partial_cmp(&self, other: &Instant) -> Option<std::cmp::Ordering> {
-        debug_assert!(unsafe { *self.0.get() }.is_some());
-
-        unsafe { (*self.0.get()).unwrap_unchecked() }.partial_cmp(other)
-    }
-}
-
-impl From<NeverExpire> for Instant {
-    fn from(val: NeverExpire) -> Self {
-        debug_assert!(unsafe { *val.0.get() }.is_some());
-
-        unsafe { (*val.0.get()).unwrap_unchecked() }
-    }
-}
-
-impl Deref for NeverExpire {
-    type Target = Instant;
-
-    fn deref(&self) -> &Self::Target {
-        debug_assert!(unsafe { *self.0.get() }.is_some());
-
-        unsafe { (*self.0.get()).as_ref().unwrap_unchecked() }
-    }
-}
+pub static NEVER_EXPIRE: UnsafeLazy<Instant> =
+    UnsafeLazy::new(|| Instant::now() + Duration::from_secs(3600 * 24 * 365));
 
 #[derive(Debug)]
 pub struct Db {
@@ -88,31 +39,25 @@ pub struct Db {
 
     // Key代表频道名，每个频道名映射着一组Sender，通过这些Sender可以发送消息给订阅频道
     // 的客户端
-    pub_sub: DashMap<Key, Vec<Sender<Resp3>>, RandomState>,
+    pub_sub: DashMap<Key, Vec<OutBox>, RandomState>,
 
-    // 记录已经连接的客户端，并且映射到该连接的`BgTaskSender`，使用该sender可以向该连接
-    // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
-    // 消息
-    client_records: DashMap<Id, BgTaskSender, nohash::BuildNoHashHasher<u64>>,
-
-    pub conf: &'static Conf,
+    // // 记录已经连接的客户端，并且映射到该连接的`BgTaskSender`，使用该sender可以向该连接
+    // // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
+    // // 消息
+    // client_records: DashMap<Id, BgTaskSender, nohash::BuildNoHashHasher<u64>>,
+    mem_conf: Option<MemoryConf>,
 }
 
 impl Db {
-    pub fn new(conf: &'static Conf) -> Self {
-        // 初始化NEVER_EXPIRE
-        NEVER_EXPIRE.init();
+    pub fn new(mem_conf: Option<MemoryConf>) -> Self {
+        // WARN: 当多线程执行test时，极小概率会同时执行Db::new()，出现数据竞争
+        unsafe { NEVER_EXPIRE.init() };
 
         Self {
             entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
             pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
-            client_records: DashMap::with_capacity_and_hasher(
-                1024,
-                nohash::BuildNoHashHasher::default(),
-            ),
-            // Safety: conf在整个程序运行期间都是有效的
-            conf,
+            mem_conf,
         }
     }
 
@@ -132,42 +77,41 @@ impl Db {
         self.entries.clear();
         self.entry_expire_records.clear();
         self.pub_sub.clear();
-        self.client_records.clear();
     }
 
     #[inline]
     pub async fn try_evict(&self) -> RutinResult<()> {
-        if let Some(mem_conf) = &self.conf.memory {
+        if let Some(mem_conf) = &self.mem_conf {
             mem_conf.try_evict(self).await
         } else {
             Ok(())
         }
     }
 
-    // 记录客户端ID和其对应的`BgTaskSender`，用于向客户端发送消息
-    #[inline]
-    pub fn insert_client_record(&self, mut id: Id, bg_sender: BgTaskSender) -> Id {
-        loop {
-            match self.client_records.entry(id) {
-                // 如果id已经存在，则自增1
-                Entry::Occupied(_) => id += 1,
-                // 如果id不存在，则插入
-                Entry::Vacant(e) => {
-                    e.insert(bg_sender);
-                    return id;
-                }
-            }
-        }
-    }
-
-    pub fn remove_client_record(&self, client_id: Id) {
-        self.client_records.remove(&client_id);
-    }
-
-    pub fn get_client_bg_sender(&self, client_id: Id) -> Option<BgTaskSender> {
-        self.client_records.get(&client_id).map(|e| e.clone())
-    }
-
+    // // 记录客户端ID和其对应的`BgTaskSender`，用于向客户端发送消息
+    // #[inline]
+    // pub fn insert_client_record(&self, mut id: Id, bg_sender: BgTaskSender) -> Id {
+    //     loop {
+    //         match self.client_records.entry(id) {
+    //             // 如果id已经存在，则自增1
+    //             Entry::Occupied(_) => id += 1,
+    //             // 如果id不存在，则插入
+    //             Entry::Vacant(e) => {
+    //                 e.insert(bg_sender);
+    //                 return id;
+    //             }
+    //         }
+    //     }
+    // }
+    //
+    // pub fn remove_client_record(&self, client_id: Id) {
+    //     self.client_records.remove(&client_id);
+    // }
+    //
+    // pub fn get_client_bg_sender(&self, client_id: Id) -> Option<BgTaskSender> {
+    //     self.client_records.get(&client_id).map(|e| e.clone())
+    // }
+    //
     pub async fn add_lock_event(
         &self,
         key: Key,
@@ -204,6 +148,7 @@ impl Db {
         if NEVER_EXPIRE != old_ex {
             self.entry_expire_records.remove(&(old_ex, key.clone()));
         }
+
         // 如果new_expire不为NEVER_EXPIRE ，则需要记录新的过期时间
         if NEVER_EXPIRE != new_ex && new_ex > Instant::now() {
             self.entry_expire_records.insert((new_ex, key.clone()));
@@ -342,23 +287,19 @@ impl Db {
 impl Db {
     // 获取该频道的所有监听者
     #[instrument(level = "debug", skip(self))]
-    pub fn get_channel_all_listener(&self, topic: &Key) -> Option<Vec<Sender<Resp3>>> {
+    pub fn get_channel_all_listener(&self, topic: &Key) -> Option<Vec<OutBox>> {
         self.pub_sub.get(topic).map(|listener| listener.clone())
     }
 
     // 向频道添加一个监听者
     #[instrument(level = "debug", skip(self, listener))]
-    pub fn add_channel_listener(&self, topic: Key, listener: Sender<Resp3>) {
+    pub fn add_channel_listener(&self, topic: Key, listener: OutBox) {
         self.pub_sub.entry(topic).or_default().push(listener);
     }
 
     // 移除频道的一个监听者
     #[instrument(level = "debug", skip(self, listener))]
-    pub fn remove_channel_listener(
-        &self,
-        topic: &Key,
-        listener: &Sender<Resp3>,
-    ) -> Option<Sender<Resp3>> {
+    pub fn remove_channel_listener(&self, topic: &Key, listener: &OutBox) -> Option<OutBox> {
         if let Some(mut pubs) = self.pub_sub.get_mut(topic) {
             // 如果找到匹配的listener，则移除
             if let Some(index) = pubs.iter().position(|l| l.same_channel(listener)) {
