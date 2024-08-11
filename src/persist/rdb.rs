@@ -28,7 +28,7 @@ const RDB_OPCODE_RESIZEDB: u8 = 0xfb;
 const RDB_OPCODE_EXPIRETIME_MS: u8 = 0xfc;
 const RDB_OPCODE_EXPIRETIME: u8 = 0xfd;
 const RDB_OPCODE_SELECTDB: u8 = 0xfe; // 只允许一个数据库
-const RDB_OPCODE_EOF: u8 = 0xff;
+pub const RDB_OPCODE_EOF: u8 = 0xff;
 
 const RDB_TYPE_STRING: u8 = 0;
 const RDB_TYPE_LIST: u8 = 1;
@@ -311,19 +311,25 @@ mod rdb_load {
         enable_checksum: bool,
     ) -> anyhow::Result<()> {
         if enable_checksum {
-            let mut checksum = [0; 8];
-            checksum.copy_from_slice(&rdb_data[rdb_data.len() - 8..]);
+            let mut buf = [0; 8];
+            buf.copy_from_slice(&rdb_data[rdb_data.len() - 8..]);
+            let expected_checksum = u64::from_be_bytes(buf);
 
-            let checksum = u64::from_be_bytes(checksum);
             let crc = crc::Crc::<u64>::new(&crc::CRC_64_REDIS);
-            if checksum != crc.checksum(&rdb_data[..rdb_data.len() - 8]) {
-                anyhow::bail!("checksum failed");
+            let checksum = crc.checksum(&rdb_data[..rdb_data.len() - 8]);
+
+            if expected_checksum != checksum {
+                anyhow::bail!(
+                    "checksum failed, expected: {:?}, got: {:?}",
+                    expected_checksum,
+                    checksum
+                );
             }
         }
 
         let magic = rdb_data.split_to(5);
         if magic != b"REDIS"[..] {
-            anyhow::bail!("magic string should be RUREDIS, but got {magic:?}");
+            anyhow::bail!("magic string should be REDIS, but got {magic:?}");
         }
         let _rdb_version = rdb_data.get_u32();
 

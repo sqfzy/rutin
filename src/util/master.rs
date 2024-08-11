@@ -76,8 +76,8 @@ pub async fn propagate_wcmd_to_replicas(wcmd_inbox: Inbox) -> RutinResult<()> {
                 Letter::ShutdownServer => {
                     break;
                 }
-                Letter::BlockAll { event } => {
-                    listener!(event => listener);
+                Letter::BlockAll { unblock_event } => {
+                    listener!(unblock_event  => listener);
                     listener.await;
                 }
                 Letter::Wcmd(wcmd) => {
@@ -100,8 +100,8 @@ pub async fn propagate_wcmd_to_replicas(wcmd_inbox: Inbox) -> RutinResult<()> {
                     Letter::ShutdownServer => {
                         break;
                     }
-                    Letter::BlockAll { event } => {
-                        listener!(event => listener);
+                    Letter::BlockAll { unblock_event } => {
+                        listener!(unblock_event  => listener);
                         listener.await;
                     }
                     Letter::Wcmd(wcmd) => {
@@ -163,8 +163,8 @@ pub async fn save_and_propagate_wcmd_to_replicas(
                         Letter::ShutdownServer => {
                             break;
                         }
-                        Letter::BlockAll { event } => {
-                            listener!(event => listener);
+                        Letter::BlockAll { unblock_event } => {
+                            listener!(unblock_event  => listener);
                             listener.await;
                         }
                         Letter::Wcmd(wcmd) => {
@@ -224,8 +224,8 @@ pub async fn save_and_propagate_wcmd_to_replicas(
                         Letter::ShutdownServer => {
                             break;
                         }
-                        Letter::BlockAll { event } => {
-                            listener!(event => listener);
+                        Letter::BlockAll { unblock_event } => {
+                            listener!(unblock_event  => listener);
                             listener.await;
                         }
                         Letter::Wcmd(wcmd) => {
@@ -287,8 +287,8 @@ pub async fn save_and_propagate_wcmd_to_replicas(
                         Letter::ShutdownServer => {
                             break;
                         }
-                        Letter::BlockAll { event } => {
-                            listener!(event => listener);
+                        Letter::BlockAll { unblock_event } => {
+                            listener!(unblock_event  => listener);
                             listener.await;
                         }
                         Letter::Wcmd(wcmd) => {

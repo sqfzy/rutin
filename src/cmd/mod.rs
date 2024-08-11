@@ -81,7 +81,6 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
 }
 
 #[inline]
-#[instrument(level = "debug", skip(handler), err, ret)]
 pub async fn dispatch(
     cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
@@ -134,33 +133,90 @@ pub async fn dispatch(
     let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
 
     let res = dispatch_command!(
-        cmd, handler,
-        // commands::other
-        BgSave, Ping, Echo, Auth,
-
-        // commands::key
-        Del, Dump, Exists, Expire, ExpireAt, ExpireTime, Keys, NBKeys, Persist,
-        Pttl, Ttl, Type,
-
-        // commands::str
-        Append, Decr, DecrBy, Get, GetRange, GetSet, Incr, IncrBy, MGet, MSet, MSetNx, Set, SetEx,
+        cmd,
+        handler,
+        /*********/
+        /* admin */
+        /*********/
+        AclCat,
+        AclDelUser,
+        AclSetUser,
+        AclUsers,
+        AclWhoAmI,
+        BgSave,
+        PSync,
+        ReplicaOf,
+        /**************/
+        /* connection */
+        /**************/
+        Auth,
+        Echo,
+        Ping,
+        /************/
+        /* keyspace */
+        /************/
+        Del,
+        Dump,
+        Exists,
+        Expire,
+        ExpireAt,
+        ExpireTime,
+        Keys,
+        NBKeys,
+        Persist,
+        Pttl,
+        Ttl,
+        Type,
+        /**********/
+        /* string */
+        /**********/
+        Append,
+        Decr,
+        DecrBy,
+        Get,
+        GetRange,
+        GetSet,
+        Incr,
+        IncrBy,
+        MGet,
+        MSet,
+        MSetNx,
+        Set,
+        SetEx,
         SetNx,
         StrLen,
-        // commands::list
-        LLen, LPush, LPop, BLPop, LPos, NBLPop, BLMove,
+        /********/
+        /* list */
+        /********/
+        BLMove,
+        BLPop,
+        LLen,
+        LPop,
+        LPos,
+        LPush,
+        NBLPop,
+        /********/
+        /* hash */
+        /********/
+        HDel,
+        HExists,
+        HGet,
+        HSet,
+        /**********/
+        /* pubsub */
+        /**********/
+        Publish,
+        Subscribe,
+        Unsubscribe,
+        /*************/
+        /* scripting */
+        /*************/
+        Eval,
+        EvalName;
 
-        // commands::hash
-        HDel, HExists, HGet, HSet,
+       "CLIENT" => ClientTracking;
 
-        // commands::pub_sub
-        Publish, Subscribe, Unsubscribe,
-
-        // commands::script
-        Eval, EvalName;
-
-        "CLIENT" => ClientTracking;
-
-        "SCRIPT" => ScriptExists, ScriptFlush, ScriptRegister
+       "SCRIPT" => ScriptExists, ScriptFlush, ScriptRegister
     );
 
     match res {

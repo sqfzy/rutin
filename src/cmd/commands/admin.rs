@@ -403,6 +403,7 @@ impl CmdExecutor for ReplicaOf {
     const CATS_FLAG: Flag = REPLICAOF_CATS_FLAG;
     const CMD_FLAG: Flag = REPLICAOF_CMD_FLAG;
 
+    #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         if self.should_set_to_master {
             set_server_to_master(&handler.shared).await;
@@ -410,7 +411,7 @@ impl CmdExecutor for ReplicaOf {
             return Ok(Some(Resp3::new_simple_string("OK".into())));
         }
 
-        set_server_to_replica(&handler.shared, self.master_host, self.master_port).await?;
+        set_server_to_replica(handler.shared.clone(), self.master_host, self.master_port).await?;
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
@@ -433,12 +434,10 @@ impl CmdExecutor for ReplicaOf {
 
         Ok(ReplicaOf {
             should_set_to_master: false,
-            master_host: args
-                .next()
-                .unwrap()
+            master_host: arg1
                 .try_into()
                 .map_err(|_| RutinError::from("ERR value is not a valid hostname or ip address"))?,
-            master_port: util::atoi(&args.next().unwrap())?,
+            master_port: util::atoi(&arg2)?,
         })
     }
 }

@@ -19,7 +19,7 @@ use crate::{
 };
 use std::{cell::RefCell, str::FromStr, sync::atomic::Ordering, time::Duration};
 use tokio::{task_local, time::Instant};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 task_local! { pub static ID: Id; }
 
@@ -79,17 +79,17 @@ pub async fn run() {
                 Letter::ShutdownServer => {
                     break;
                 }
-                Letter::BlockServer { event } => {
+                Letter::BlockServer { unblock_event } => {
                     drop(inbox);
-                    post_office.wait_shutdown_complete().await;
 
-                    listener!(event => listener);
+                    // TODO: 是否应该select! ShutdownServer
+                    listener!(unblock_event  => listener);
                     listener.await;
 
                     inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
                 }
-                Letter::BlockAll { event } => {
-                    listener!(event => listener);
+                Letter::BlockAll { unblock_event } => {
+                    listener!(unblock_event  => listener);
                     listener.await;
                 }
                 Letter::Resp3(_) | Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownClient | Letter::ShutdownReplicas => { }
@@ -99,8 +99,6 @@ pub async fn run() {
 
     drop(inbox);
 
-    // 等待其它任务完成
-    debug!("waiting for shutdown complete");
     post_office.wait_shutdown_complete().await;
 }
 

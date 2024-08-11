@@ -56,8 +56,8 @@ impl<S: AsyncStream> Handler<S> {
                         Letter::Resp3(resp) => {
                             self.conn.write_frame(&resp).await?;
                         }
-                        Letter::BlockAll { event } => {
-                            listener!(event => listener);
+                        Letter::BlockAll { unblock_event } => {
+                            listener!(unblock_event  => listener);
                             listener.await;
                         }
                         Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownReplicas => { }
@@ -87,10 +87,11 @@ impl<S: AsyncStream> Handler<S> {
         ID.scope(self.context.id, async {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
 
-            let mut resp3: Resp3<&[u8], String> = Resp3::new_array(vec![
-                Resp3::new_blob_string(b"REPLCONF".as_ref()),
-                Resp3::new_blob_string(b"ACK".as_ref()),
-                Resp3::new_integer(*offset as i128),
+            let mut buf = itoa::Buffer::new();
+            let mut resp3: Resp3<BytesMut, String> = Resp3::new_array(vec![
+                Resp3::new_blob_string("REPLCONF".into()),
+                Resp3::new_blob_string("ACK".into()),
+                Resp3::new_blob_string(buf.format(*offset).into()),
             ]);
 
             loop {
@@ -101,8 +102,8 @@ impl<S: AsyncStream> Handler<S> {
                         Letter::ShutdownClient | Letter::ShutdownServer | Letter::BlockServer { .. }  => {
                             return Ok(());
                         }
-                        Letter::BlockAll { event } => {
-                            listener!(event => listener);
+                        Letter::BlockAll { unblock_event } => {
+                            listener!(unblock_event  => listener);
                             listener.await;
                         }
                         Letter::Resp3(resp) => {
@@ -127,7 +128,7 @@ impl<S: AsyncStream> Handler<S> {
                     // 如果offset小于master offset，则主节点会补发相差的数据
                     _ = interval.tick() => {
                         // 更新offset frame
-                        resp3.try_array_mut().unwrap()[2] = Resp3::new_integer(*offset as i128);
+                        resp3.try_array_mut().unwrap()[2] = Resp3::new_blob_string(buf.format(*offset).into());
 
                         self.conn.write_frame(&resp3).await?;
                     },

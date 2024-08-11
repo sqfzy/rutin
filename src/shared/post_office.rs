@@ -22,6 +22,7 @@ use dashmap::{DashMap, Entry};
 use event_listener::Event;
 use flume::{Receiver, Sender};
 use tokio::net::TcpStream;
+use tracing::debug;
 
 pub const SPECIAL_ID_RANGE: std::ops::Range<Id> = 0..64;
 
@@ -38,7 +39,7 @@ pub enum Letter {
 
     // 阻塞服务，断开所有连接。
     BlockServer {
-        event: Arc<Event>,
+        unblock_event: Arc<Event>,
     },
 
     /// 如果不是向所有client handler发送，那么需要指定ID
@@ -76,7 +77,7 @@ pub enum Letter {
     ///            +-----------------------------+
     ///
     BlockAll {
-        event: Arc<Event>,
+        unblock_event: Arc<Event>,
     },
     ShutdownReplicas,
 
@@ -100,8 +101,12 @@ impl Debug for Letter {
         match self {
             Letter::Resp3(resp) => write!(f, "Letter::Resp3({:?})", resp),
             Letter::ShutdownServer => write!(f, "Letter::ShutdownServer"),
-            Letter::BlockServer { event } => write!(f, "Letter::BlockServer({:?})", event),
-            Letter::BlockAll { event } => write!(f, "Letter::BlockAll({:?})", event),
+            Letter::BlockServer {
+                unblock_event: event,
+            } => write!(f, "Letter::BlockServer({:?})", event),
+            Letter::BlockAll {
+                unblock_event: event,
+            } => write!(f, "Letter::BlockAll({:?})", event),
             Letter::ShutdownReplicas => write!(f, "Letter::ShutdownReplicas"),
             Letter::Wcmd(cmd) => write!(f, "Letter::Wcmd({:?})", cmd),
             Letter::AddReplica(_) => write!(f, "Letter::AddReplica"),
@@ -116,11 +121,15 @@ impl Clone for Letter {
         match self {
             Letter::Resp3(resp) => Letter::Resp3(resp.clone()),
             Letter::ShutdownServer => Letter::ShutdownServer,
-            Letter::BlockServer { event } => Letter::BlockServer {
-                event: event.clone(),
+            Letter::BlockServer {
+                unblock_event: event,
+            } => Letter::BlockServer {
+                unblock_event: event.clone(),
             },
-            Letter::BlockAll { event } => Letter::BlockAll {
-                event: event.clone(),
+            Letter::BlockAll {
+                unblock_event: event,
+            } => Letter::BlockAll {
+                unblock_event: event.clone(),
             },
             Letter::ShutdownReplicas => Letter::ShutdownReplicas,
             Letter::Wcmd(cmd) => Letter::Wcmd(cmd.clone()),
@@ -193,12 +202,6 @@ impl PostOffice {
         (id, tx, rx)
     }
 
-    pub fn clear(&self) {
-        self.inner.clear();
-        self.current_id
-            .store(SPECIAL_ID_RANGE.end, Ordering::Relaxed);
-    }
-
     #[inline]
     pub fn delay_token(&'static self) -> Inbox {
         self.new_mailbox().2.clone()
@@ -241,6 +244,12 @@ impl PostOffice {
                 break;
             }
 
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                for entry in self.inner.iter() {
+                    debug!("wait id={} shutdown", entry.key());
+                }
+            }
+
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
     }
@@ -253,7 +262,9 @@ impl PostOffice {
                     let _ = entry.0.send_async(msg.clone()).await;
                 }
             }
-            Letter::BlockServer { event } => {
+            Letter::BlockServer {
+                unblock_event: event,
+            } => {
                 let _ = self
                     .inner
                     .get(&MAIN_ID)
@@ -271,7 +282,9 @@ impl PostOffice {
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
             }
-            Letter::BlockAll { event } => {
+            Letter::BlockAll {
+                unblock_event: event,
+            } => {
                 // 阻塞服务，不允许新连接
                 let _ = self
                     .inner
@@ -301,9 +314,9 @@ impl PostOffice {
                     let _ = entry.0.send_async(msg.clone()).await;
                 }
 
-                // 循环等待它们准备好监听
+                // 循环等待它们(主服务以及除自己以外的连接)准备好监听
                 loop {
-                    if event.total_listeners() == self.get_clients_count() + 1 {
+                    if event.total_listeners() == self.get_clients_count() + 1 - 1 {
                         break;
                     }
 

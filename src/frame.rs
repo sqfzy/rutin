@@ -18,7 +18,7 @@ use tokio_util::{
     bytes::BufMut,
     codec::{Decoder, Encoder},
 };
-use tracing::instrument;
+use tracing::{instrument, trace};
 
 const CRLF: &[u8] = b"\r\n";
 
@@ -1141,6 +1141,8 @@ impl Resp3<BytesMut, ByteString> {
             io_read: &mut R,
             src: &mut BytesMut,
         ) -> RutinResult<Resp3> {
+            trace!("reader_buf: {src:?}");
+
             let res = match Resp3::get_u8(src)? {
                 SIMPLE_STRING_PREFIX => Resp3::SimpleString {
                     inner: Resp3::decode_string_async(io_read, src).await?,
@@ -1400,7 +1402,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn need_bytes_async<R: AsyncRead + Unpin + Send>(
+    pub async fn need_bytes_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
         len: usize,
@@ -1415,7 +1417,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn decode_line_async<R: AsyncRead + Unpin + Send>(
+    pub async fn decode_line_async<R: AsyncRead + Unpin + Send>(
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> RutinResult<BytesMut> {

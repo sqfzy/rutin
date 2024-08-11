@@ -117,7 +117,6 @@ impl Shared {
     pub fn clear(&self) {
         self.inner.db.clear();
         self.inner.script.clear();
-        self.post_office().clear();
     }
 }
 

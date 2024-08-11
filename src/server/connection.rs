@@ -43,8 +43,8 @@ impl<S: AsyncStream> Connection<S> {
     pub fn new(stream: S, max_batch_count: usize) -> Self {
         Self {
             stream,
-            reader_buf: BytesMut::with_capacity(1024),
-            writer_buf: BytesMut::with_capacity(1024),
+            reader_buf: BytesMut::with_capacity(4096),
+            writer_buf: BytesMut::with_capacity(4096),
             batch: 0,
             max_batch: max_batch_count,
         }
@@ -78,14 +78,8 @@ impl<S: AsyncStream> Connection<S> {
         self.stream.read_buf(&mut self.reader_buf).await
     }
 
-    #[inline]
-    pub async fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.stream.read_exact(buf).await
-    }
-
-    #[inline]
-    pub async fn read_inner_exact(&mut self) -> io::Result<usize> {
-        self.stream.read_exact(&mut self.reader_buf).await
+    pub async fn read_line(&mut self) -> RutinResult<BytesMut> {
+        Resp3::decode_line_async(&mut self.stream, &mut self.reader_buf).await
     }
 
     #[inline]
@@ -123,7 +117,7 @@ impl<S: AsyncStream> Connection<S> {
     pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 32]>>> {
         let mut frames = SmallVec::new();
 
-        self.reader_buf.reserve(1024);
+        self.reader_buf.reserve(4096);
 
         loop {
             let frame = match Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await? {
@@ -171,6 +165,8 @@ impl<S: AsyncStream> Connection<S> {
         if self.batch == 0 {
             self.stream.write_buf(&mut self.writer_buf).await?;
             self.flush().await?;
+
+            self.writer_buf.reserve(4096);
         }
 
         Ok(())
