@@ -38,7 +38,7 @@ impl<'de> Deserialize<'de> for ReplicaConf {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct MasterInfo {
     pub host: ByteString,
     pub port: u16,

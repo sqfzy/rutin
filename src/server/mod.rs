@@ -14,7 +14,7 @@ use sysinfo::{ProcessRefreshKind, System};
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
     shared::{post_office::Letter, Shared, MAIN_ID, WCMD_PROPAGATE_ID},
-    util::propagate_wcmd_to_replicas,
+    util::{propagate_wcmd_to_replicas, set_server_to_replica},
     Id,
 };
 use std::{cell::RefCell, str::FromStr, sync::atomic::Ordering, time::Duration};
@@ -43,24 +43,7 @@ pub fn using_local_buf(f: impl FnOnce(&mut BytesMut)) -> BytesMut {
 #[inline]
 pub async fn run() {
     let shared = Shared::new();
-
     let post_office = shared.post_office();
-    tokio::spawn(async {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            eprintln!("Failed to wait for CTRL+C: {}", e);
-            std::process::exit(1);
-        } else {
-            eprintln!("\nShutting down server...");
-            post_office.send_all(Letter::ShutdownServer).await;
-        }
-    });
-
-    if let Ok(level) = tracing::Level::from_str(shared.conf().server.log_level.as_ref()) {
-        tracing_subscriber::fmt()
-            .pretty()
-            .with_max_level(level)
-            .init();
-    }
 
     init(shared.clone()).await.unwrap();
 
@@ -82,7 +65,7 @@ pub async fn run() {
                 Letter::BlockServer { unblock_event } => {
                     drop(inbox);
 
-                    // TODO: 是否应该select! ShutdownServer
+
                     listener!(unblock_event  => listener);
                     listener.await;
 
@@ -103,7 +86,33 @@ pub async fn run() {
 }
 
 pub async fn init(shared: Shared) -> anyhow::Result<()> {
+    let post_office = shared.post_office();
     let conf = shared.conf();
+
+    tokio::spawn(async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            eprintln!("Failed to wait for CTRL+C: {}", e);
+            std::process::exit(1);
+        } else {
+            eprintln!("\nShutting down server...");
+            post_office.send_all(Letter::ShutdownServer).await;
+        }
+    });
+
+    if let Ok(level) = tracing::Level::from_str(shared.conf().server.log_level.as_ref()) {
+        tracing_subscriber::fmt()
+            .pretty()
+            .with_max_level(level)
+            .init();
+    }
+
+    /**********************/
+    /* 是否开启了主从复制 */
+    /**********************/
+    let ms_info = { conf.replica.master_info.lock().await.clone() };
+    if let Some(ms_info) = ms_info {
+        set_server_to_replica(shared.clone(), ms_info.host, ms_info.port).await?;
+    }
 
     /*********************/
     /* 是否开启RDB持久化 */

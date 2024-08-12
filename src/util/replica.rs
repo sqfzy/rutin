@@ -4,7 +4,7 @@ use crate::{
     frame::Resp3,
     persist::rdb::rdb_load,
     server::{Handler, HandlerContext},
-    shared::{Letter, Shared},
+    shared::{Letter, Shared, UnblockEvent},
     util::atoi,
 };
 use bytes::Buf;
@@ -12,15 +12,17 @@ use bytestring::ByteString;
 use event_listener::Event;
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::Mutex};
-use tokio_util::time::FutureExt;
+use tokio_util::time::FutureExt as _;
 use tracing::error;
 
-//
-// 如果server本身已经是从节点，则会发送PSYNC <master_run_id>
-// <offset>，尝试增量同步，如果失败则同步offset后，执行全量同步
-//
-// 如果server本身是主节点，则会发送PSYNC ? -1，同步offset后，执
-// 行全量同步
+/// ## 将服务设为从节点意味着：
+///
+/// 1. 服务会清空所有旧数据
+/// 2. 服务需要定期向主节点发送REPLCONF ACK <offset>命令，以便主节点知道从节点的
+///    复制进度
+/// 3. 服务会定期收到主节点的PING命令，以便主节点知道从节点是否存活
+/// 4. 服务会接收主节点传播的写命令，并执行，但不会返回结果
+/// 5. 服务只能执行读命令(如果配置了read_only))
 //
 // WARN: :
 // Recursive async functions don't internally implement auto traits
@@ -45,182 +47,171 @@ pub fn set_server_to_replica(
             })?;
 
         /* step1: 阻塞服务，断开所有连接 */
-        let unblock_event = Arc::new(Event::new());
+        let unblock_event = UnblockEvent(Arc::new(Event::new()));
         shared
             .post_office()
             .send_all(Letter::BlockServer {
-                unblock_event: unblock_event.clone(),
+                unblock_event: unblock_event.0.clone(),
             })
             .await;
 
-        let res = async {
-            /* step2: 与主节点握手建立连接 */
+        /* step2: 与主节点握手建立连接 */
 
-            let to_master = TcpStream::connect((master_host.as_ref(), master_port))
-                .timeout(Duration::from_secs(5))
-                .await
-                .map_err(|_| {
-                    RutinError::from(format!(
-                        "ERR timeout connecting to master {}:{}",
-                        master_host, master_port
-                    ))
-                })??;
+        let to_master = TcpStream::connect((master_host.as_ref(), master_port))
+            .timeout(Duration::from_secs(3))
+            .await
+            .map_err(|_| {
+                RutinError::from(format!(
+                    "ERR timeout connecting to master {}:{}",
+                    master_host, master_port
+                ))
+            })??;
 
-            // 接收主节点的所有命令
-            let ac = AccessControl::new_loose();
+        // 接收主节点的所有命令
+        let ac = AccessControl::new_loose();
 
-            let mut handle_master = Handler::with_cx(
-                shared.clone(),
-                to_master,
-                HandlerContext::with_ac(&shared, Arc::new(ac), DEFAULT_USER),
-            );
+        let mut handle_master = Handler::with_cx(
+            shared.clone(),
+            to_master,
+            HandlerContext::with_ac(&shared, Arc::new(ac), DEFAULT_USER),
+        );
 
-            // 发送PING测试主节点是否可达
+        // 发送PING测试主节点是否可达
+        handle_master
+            .conn
+            .write_frame(&Resp3::<_, String>::new_array(vec![
+                Resp3::new_blob_string(b"PING"),
+            ]))
+            .await?;
+
+        if !handle_master.conn.read_frame().await?.is_some_and(|frame| {
+            frame
+                .try_simple_string()
+                .is_some_and(|frame| frame == "PONG")
+        }) {
+            return Err(RutinError::from(format!(
+                "ERR master {}:{} is unreachable or busy",
+                master_host, master_port
+            )));
+        };
+
+        // 身份验证(可选)
+        if let Some(password) = conf.replica.master_auth.as_ref() {
             handle_master
                 .conn
                 .write_frame(&Resp3::<_, String>::new_array(vec![
-                    Resp3::new_blob_string(b"PING"),
+                    Resp3::new_blob_string(b"AUTH".to_vec()),
+                    Resp3::new_blob_string(password.clone().into_bytes()),
                 ]))
                 .await?;
 
-            if !handle_master.conn.read_frame().await?.is_some_and(|frame| {
-                frame
-                    .try_simple_string()
-                    .is_some_and(|frame| frame == "PONG")
-            }) {
-                return Err(RutinError::from(format!(
-                    "ERR master {}:{} is unreachable or busy",
-                    master_host, master_port
-                )));
-            };
+            if handle_master
+                .conn
+                .read_frame()
+                .await?
+                .is_some_and(|frame| frame.is_simple_error())
+            {
+                return Err(RutinError::from("ERR master authentication failed"));
+            }
+        }
 
-            // 身份验证(可选)
-            if let Some(password) = conf.replica.master_auth.as_ref() {
-                handle_master
-                    .conn
-                    .write_frame(&Resp3::<_, String>::new_array(vec![
-                        Resp3::new_blob_string(b"AUTH".to_vec()),
-                        Resp3::new_blob_string(password.clone().into_bytes()),
-                    ]))
-                    .await?;
+        // 发送端口信息
+        handle_master
+            .conn
+            .write_frame(&Resp3::<_, String>::new_array(vec![
+                Resp3::new_blob_string(b"REPLCONF".to_vec()),
+                Resp3::new_blob_string(b"listening-port".to_vec()),
+                Resp3::new_blob_string(conf.server.port.to_string().into_bytes()),
+            ]))
+            .await?;
 
-                if handle_master
-                    .conn
-                    .read_frame()
-                    .await?
-                    .is_some_and(|frame| frame.is_simple_error())
-                {
-                    return Err(RutinError::from("ERR master authentication failed"));
+        // 等待旧的run_replica()任务结束并获取offset
+        let mut offset = OFFSET.lock().await;
+
+        // 发送PSYNC命令
+        if let Some(ms_info) = ms_info.as_mut() {
+            // PSYNC <run_id> <offset>
+            let array = vec![
+                Resp3::new_blob_string("PSYNC".into()),
+                Resp3::new_blob_string(ms_info.run_id.clone()),
+                Resp3::new_blob_string((*offset).to_string().into()),
+            ];
+            handle_master
+                .conn
+                .write_frame(&Resp3::<_, String>::new_array(array))
+                .await?;
+        } else {
+            // PSYNC ? -1
+            handle_master
+                .conn
+                .write_frame(&Resp3::<_, String>::new_array(vec![
+                    Resp3::new_blob_string(b"PSYNC".as_ref()),
+                    Resp3::new_blob_string(b"?".as_ref()),
+                    Resp3::new_blob_string(b"-1".as_ref()),
+                ]))
+                .await?;
+        };
+
+        let _ok = handle_master.conn.read_frame_force().await?;
+
+        let response = handle_master.conn.read_frame_force().await?;
+
+        let shared = shared.clone();
+        tokio::spawn(async move {
+            // read_only模式下，所有ac都只允许读命令
+            if conf.replica.read_only {
+                if let Some(acl) = &conf.security.acl {
+                    for mut ac in acl.iter_mut() {
+                        ac.allow_only_read();
+                    }
                 }
+
+                conf.security.default_ac.rcu(|ac| {
+                    let mut ac = AccessControl::clone(ac);
+                    ac.allow_only_read();
+                    ac
+                });
             }
 
-            // 发送端口信息
-            handle_master
-                .conn
-                .write_frame(&Resp3::<_, String>::new_array(vec![
-                    Resp3::new_blob_string(b"REPLCONF".to_vec()),
-                    Resp3::new_blob_string(b"listening-port".to_vec()),
-                    Resp3::new_blob_string(conf.server.port.to_string().into_bytes()),
-                ]))
-                .await?;
+            /* step3: 进行同步 */
 
-            // 等待旧的run_replica()任务结束并获取offset
-            let mut offset = OFFSET.lock().await;
+            // 如果响应为+FULLRESYNC run_id offset，执行全量同步
+            // 如果响应为+CONTINUE，执行增量同步(什么都不做，等之后向主节点发送REPLCONF ACK
+            // <offset>时会进行同步)
+            let response = response.into_simple_string().unwrap();
+            let mut splits = response.split_whitespace().map(|s| s.to_string());
 
-            // 发送PSYNC命令
-            if let Some(ms_info) = ms_info.as_mut() {
-                // PSYNC <run_id> <offset>
-                let array = vec![
-                    Resp3::new_blob_string("PSYNC".into()),
-                    Resp3::new_blob_string(ms_info.run_id.clone()),
-                    Resp3::new_blob_string((*offset).to_string().into()),
-                ];
-                handle_master
-                    .conn
-                    .write_frame(&Resp3::<_, String>::new_array(array))
-                    .await?;
-            } else {
-                // PSYNC ? -1
-                handle_master
-                    .conn
-                    .write_frame(&Resp3::<_, String>::new_array(vec![
-                        Resp3::new_blob_string(b"PSYNC".as_ref()),
-                        Resp3::new_blob_string(b"?".as_ref()),
-                        Resp3::new_blob_string(b"-1".as_ref()),
-                    ]))
-                    .await?;
-            };
+            if let Some(fullresync) = splits.next()
+                && fullresync == "FULLRESYNC"
+            {
+                let run_id = splits.next().unwrap();
+                let master_offset = splits.next().unwrap().parse::<u64>().unwrap();
 
-            let _ok = handle_master.conn.read_frame_force().await?;
+                *ms_info = Some(MasterInfo {
+                    host: master_host,
+                    port: master_port,
+                    run_id: run_id.into(),
+                });
+                *offset = master_offset;
 
-            let response = handle_master.conn.read_frame_force().await?;
+                // 清除旧数据并执行全量同步
+                shared.clear();
+                full_sync(&mut handle_master).await.unwrap();
+            }
 
-            let shared = shared.clone();
-            let unblock_event = unblock_event.clone();
-            tokio::spawn(async move {
-                // read_only模式下，所有ac都只允许读命令
-                if conf.replica.read_only {
-                    if let Some(acl) = &conf.security.acl {
-                        for mut ac in acl.iter_mut() {
-                            ac.allow_only_read();
-                        }
-                    }
+            // 释放锁，重新允许执行set_server_to_replica函数
+            drop(ms_info);
 
-                    conf.security.default_ac.rcu(|ac| {
-                        let mut ac = AccessControl::clone(ac);
-                        ac.allow_only_read();
-                        ac
-                    });
-                }
+            /* step4: 接收并处理传播的写命令 */
+            if let Err(e) = handle_master.run_replica(offset).await {
+                error!(cause = %e, "replica run error");
+            }
+        });
 
-                /* step3: 进行同步 */
+        /* step5: 解除阻塞 */
+        drop(unblock_event);
 
-                // 如果响应为+FULLRESYNC run_id offset，执行全量同步
-                // 如果响应为+CONTINUE，执行增量同步(什么都不做，等之后向主节点发送REPLCONF ACK
-                // <offset>时会进行同步)
-                let response = response.into_simple_string().unwrap();
-                let mut splits = response.split_whitespace().map(|s| s.to_string());
-
-                if let Some(fullresync) = splits.next()
-                    && fullresync == "FULLRESYNC"
-                {
-                    let run_id = splits.next().unwrap();
-                    let master_offset = splits.next().unwrap().parse::<u64>().unwrap();
-
-                    *ms_info = Some(MasterInfo {
-                        host: master_host,
-                        port: master_port,
-                        run_id: run_id.into(),
-                    });
-                    *offset = master_offset;
-
-                    // 清除旧数据并执行全量同步
-                    shared.clear();
-                    full_sync(&mut handle_master).await.unwrap();
-                }
-
-                /* step4: 解除阻塞 */
-                unblock_event.notify(usize::MAX);
-
-                // 释放锁，重新允许执行set_server_to_replica函数
-                drop(ms_info);
-
-                /* step5: 接收并处理传播的写命令 */
-                if let Err(e) = handle_master.run_replica(offset).await {
-                    error!(cause = %e, "replica run error");
-                }
-            });
-
-            Ok(())
-        }
-        .await;
-
-        // 如果出现错误，则解除阻塞
-        if res.is_err() {
-            unblock_event.notify(usize::MAX);
-        }
-
-        res
+        Ok(())
     }
 }
 

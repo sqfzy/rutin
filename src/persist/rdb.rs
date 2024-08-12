@@ -929,11 +929,11 @@ mod rdb_test {
         db.insert_object("zs3".into(), zs3.clone()).await.unwrap();
         db.insert_object("zs4".into(), zs4.clone()).await.unwrap();
 
-        let mut rdb = Rdb::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
+        let mut rdb = Rdb::new(&shared, "tests/rdb/rdb_test.rdb".into(), true);
         rdb.save().await.unwrap();
 
         let shared = get_test_shared();
-        let mut rdb = Rdb::new(&shared, "tests/dump/dump_temp.rdb".into(), true);
+        let mut rdb = Rdb::new(&shared, "tests/rdb/rdb_test.rdb".into(), true);
         rdb.load().await.unwrap();
 
         assert_eq!(

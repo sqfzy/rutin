@@ -4,6 +4,7 @@
 // Wcmd Propagate需要处理Wcmd，AddReplica和RemoveReplica消息，
 // Handler需要处理ShutdownServer和BlockAllClients消息。
 
+use core::panic;
 use std::{
     fmt::Debug,
     sync::{
@@ -32,113 +33,6 @@ pub const USED_SPECIAL_ID_COUNT: usize = 3;
 pub const MAIN_ID: Id = 0;
 pub const WCMD_PROPAGATE_ID: Id = 1;
 pub const RUN_REPLICA_ID: Id = 2;
-
-pub enum Letter {
-    // 关闭服务。
-    ShutdownServer,
-
-    // 阻塞服务，断开所有连接。
-    BlockServer {
-        unblock_event: Arc<Event>,
-    },
-
-    /// 如果不是向所有client handler发送，那么需要指定ID
-    /// 阻塞服务(不允许新增连接)，阻塞所有客户端连接
-    ///
-    ///        +-------+                   
-    ///        \ Task X\                   
-    ///        +---+---+                   
-    ///            \    BlockAllClients          +------------+
-    ///            +---------------------------->\ Main Task  \
-    ///            \                             +-----+------+
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///  Wait until main task               start listening     
-    ///  begins listening                        \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             +------------+
-    ///            \    BlockAllClients          \Other Client\
-    ///            +---------------------------->\ Handlers   \
-    ///            \                             +------+-----+
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///  Wait until main task                 all clients     
-    ///  begins listening                   start listening
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            +-----------------------------+
-    ///
-    BlockAll {
-        unblock_event: Arc<Event>,
-    },
-    ShutdownReplicas,
-
-    // 用于客户端之间重定向
-    Resp3(Resp3),
-
-    Wcmd(BytesMut),
-    AddReplica(Handler<TcpStream>),
-    // RemoveReplica,
-
-    // 关闭某个连接
-    ShutdownClient,
-    // Block
-
-    // // do nothing
-    // Null,
-}
-
-impl Debug for Letter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Letter::Resp3(resp) => write!(f, "Letter::Resp3({:?})", resp),
-            Letter::ShutdownServer => write!(f, "Letter::ShutdownServer"),
-            Letter::BlockServer {
-                unblock_event: event,
-            } => write!(f, "Letter::BlockServer({:?})", event),
-            Letter::BlockAll {
-                unblock_event: event,
-            } => write!(f, "Letter::BlockAll({:?})", event),
-            Letter::ShutdownReplicas => write!(f, "Letter::ShutdownReplicas"),
-            Letter::Wcmd(cmd) => write!(f, "Letter::Wcmd({:?})", cmd),
-            Letter::AddReplica(_) => write!(f, "Letter::AddReplica"),
-            // Letter::RemoveReplica => write!(f, "Letter::RemoveReplica"),
-            Letter::ShutdownClient => write!(f, "Letter::ShutdownClient"),
-        }
-    }
-}
-
-impl Clone for Letter {
-    fn clone(&self) -> Self {
-        match self {
-            Letter::Resp3(resp) => Letter::Resp3(resp.clone()),
-            Letter::ShutdownServer => Letter::ShutdownServer,
-            Letter::BlockServer {
-                unblock_event: event,
-            } => Letter::BlockServer {
-                unblock_event: event.clone(),
-            },
-            Letter::BlockAll {
-                unblock_event: event,
-            } => Letter::BlockAll {
-                unblock_event: event.clone(),
-            },
-            Letter::ShutdownReplicas => Letter::ShutdownReplicas,
-            Letter::Wcmd(cmd) => Letter::Wcmd(cmd.clone()),
-            Letter::AddReplica(_) => panic!("AddReplica cannot be cloned"),
-            // Letter::RemoveReplica => Letter::RemoveReplica,
-            Letter::ShutdownClient => Letter::ShutdownClient,
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct PostOffice {
@@ -265,26 +159,26 @@ impl PostOffice {
             Letter::BlockServer {
                 unblock_event: event,
             } => {
-                let _ = self
-                    .inner
-                    .get(&MAIN_ID)
-                    .unwrap()
-                    .0
-                    .send_async(msg.clone())
-                    .await;
+                if let Some(entry) = self.inner.get(&MAIN_ID) {
+                    let _ = entry.0.send_async(msg.clone()).await;
 
-                // 循环等待服务准备好监听
-                loop {
-                    if event.total_listeners() == 1 {
-                        break;
+                    // 循环等待服务准备好监听
+                    loop {
+                        if event.total_listeners() == 1 {
+                            break;
+                        }
+
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
-
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 }
             }
             Letter::BlockAll {
                 unblock_event: event,
             } => {
+                if self.inner.is_empty() {
+                    return;
+                }
+
                 // 阻塞服务，不允许新连接
                 let _ = self
                     .inner
@@ -324,6 +218,112 @@ impl PostOffice {
                 }
             }
             _ => unreachable!(),
+        }
+    }
+}
+
+pub enum Letter {
+    // 关闭服务。
+    ShutdownServer,
+
+    // 阻塞服务，断开所有连接。
+    BlockServer {
+        unblock_event: Arc<Event>,
+    },
+
+    /// 阻塞服务(不允许新增连接)以及所有客户端连接。
+    /// 阻塞后必须解除阻塞，否则服务无法正常关闭。
+    ///
+    ///
+    ///        +-------+                   
+    ///        \ Task X\                   
+    ///        +---+---+                   
+    ///            \    BlockAllClients          +------------+
+    ///            +---------------------------->\ Main Task  \
+    ///            \                             +-----+------+
+    ///            \                             \
+    ///            \                             \
+    ///            \                             \
+    ///  Wait until main task               start listening     
+    ///  begins listening                        \
+    ///            \                             \
+    ///            \                             \
+    ///            \                             \
+    ///            \                             \
+    ///            \                             +------------+
+    ///            \    BlockAllClients          \Other Client\
+    ///            +---------------------------->\ Handlers   \
+    ///            \                             +------+-----+
+    ///            \                             \
+    ///            \                             \
+    ///            \                             \
+    ///            \                             \
+    ///  Wait until main task                 all clients     
+    ///  begins listening                   start listening
+    ///            \                             \
+    ///            \                             \
+    ///            \                             \
+    ///            \                             \
+    ///            +-----------------------------+
+    ///
+    BlockAll {
+        unblock_event: Arc<Event>,
+    },
+    ShutdownReplicas,
+
+    // 用于客户端之间重定向
+    Resp3(Resp3),
+
+    Wcmd(BytesMut),
+    AddReplica(Handler<TcpStream>),
+    // RemoveReplica,
+
+    // 关闭某个连接
+    ShutdownClient,
+    // Block
+
+    // // do nothing
+    // Null,
+}
+
+impl Debug for Letter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Letter::Resp3(resp) => write!(f, "Letter::Resp3({:?})", resp),
+            Letter::ShutdownServer => write!(f, "Letter::ShutdownServer"),
+            Letter::BlockServer {
+                unblock_event: event,
+            } => write!(f, "Letter::BlockServer({:?})", event),
+            Letter::BlockAll {
+                unblock_event: event,
+            } => write!(f, "Letter::BlockAll({:?})", event),
+            Letter::ShutdownReplicas => write!(f, "Letter::ShutdownReplicas"),
+            Letter::Wcmd(cmd) => write!(f, "Letter::Wcmd({:?})", cmd),
+            Letter::AddReplica(_) => write!(f, "Letter::AddReplica"),
+            // Letter::RemoveReplica => write!(f, "Letter::RemoveReplica"),
+            Letter::ShutdownClient => write!(f, "Letter::ShutdownClient"),
+        }
+    }
+}
+
+impl Clone for Letter {
+    fn clone(&self) -> Self {
+        match self {
+            Letter::Resp3(resp) => Letter::Resp3(resp.clone()),
+            Letter::ShutdownServer => Letter::ShutdownServer,
+            Letter::BlockServer { unblock_event } => Letter::BlockServer {
+                unblock_event: unblock_event.clone(),
+            },
+            Letter::BlockAll {
+                unblock_event: event,
+            } => Letter::BlockAll {
+                unblock_event: event.clone(),
+            },
+            Letter::ShutdownReplicas => Letter::ShutdownReplicas,
+            Letter::Wcmd(cmd) => Letter::Wcmd(cmd.clone()),
+            Letter::AddReplica(_) => panic!("AddReplica cannot be cloned"),
+            // Letter::RemoveReplica => Letter::RemoveReplica,
+            Letter::ShutdownClient => Letter::ShutdownClient,
         }
     }
 }
@@ -374,5 +374,14 @@ impl Clone for Inbox {
 impl Debug for Inbox {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Inbox").field("id", &self.id).finish()
+    }
+}
+
+pub struct UnblockEvent(pub Arc<Event>);
+
+// WARN: 必须执行该步骤否则阻塞的服务无法正常关闭，因此不能设置panic="abort"
+impl Drop for UnblockEvent {
+    fn drop(&mut self) {
+        self.0.notify(usize::MAX);
     }
 }
