@@ -216,7 +216,7 @@ pub fn set_server_to_replica(
 }
 
 async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
-    // 接收RDB文件，格式为：
+    // 接收RDB文件，格式为(末尾没有\r\n)：
     // $<len>\r\n<rdb data>
     let mut len = handler.conn.read_line().await?;
     len.advance(1); // 忽略'$'
