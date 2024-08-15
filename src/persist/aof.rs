@@ -3,14 +3,16 @@ use crate::{
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
     server::Handler,
-    shared::{Inbox, Shared},
+    shared::Shared,
     util::save_and_propagate_wcmd_to_replicas,
 };
-use anyhow::Result;
 use bytes::BytesMut;
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, path::Path};
-use tokio::{fs::File, io::AsyncReadExt};
+use tokio::{
+    fs::File,
+    io::{self, AsyncReadExt},
+};
 use tokio_util::codec::Decoder;
 
 pub struct Aof {
@@ -19,7 +21,7 @@ pub struct Aof {
 }
 
 impl Aof {
-    pub async fn new(shared: Shared, file_path: impl AsRef<Path>) -> Result<Self> {
+    pub async fn new(shared: Shared, file_path: impl AsRef<Path>) -> io::Result<Self> {
         Ok(Aof {
             file: tokio::fs::OpenOptions::new()
                 .read(true)
@@ -32,7 +34,7 @@ impl Aof {
     }
 
     // 清空AOF文件
-    pub async fn clear(&mut self) -> Result<()> {
+    pub async fn clear(&mut self) -> io::Result<()> {
         self.file.set_len(0).await?;
         Ok(())
     }
@@ -67,9 +69,9 @@ impl Aof {
 impl Aof {
     pub async fn save_and_propagate_wcmd_to_replicas(
         &mut self,
-        wcmd_inbox: Inbox,
+        shared: Shared,
     ) -> anyhow::Result<()> {
-        save_and_propagate_wcmd_to_replicas(self, wcmd_inbox).await
+        save_and_propagate_wcmd_to_replicas(self, shared).await
     }
 
     pub async fn load(&mut self) -> anyhow::Result<()> {
@@ -81,7 +83,7 @@ impl Aof {
             rdb_load(&mut buf, self.shared.db(), false).await?;
         }
 
-        let (mut handler, _) = Handler::new_fake_with(self.shared.clone(), None, None);
+        let (mut handler, _) = Handler::new_fake_with(self.shared, None, None);
         let mut decoder = Resp3Decoder::default();
         while let Some(cmd_frame) = decoder.decode(&mut buf)? {
             dispatch(cmd_frame, &mut handler).await?;
@@ -108,7 +110,7 @@ async fn aof_test() {
         cmd::dispatch,
         frame::Resp3,
         server::Handler,
-        shared::{Letter, WCMD_PROPAGATE_ID},
+        shared::Letter,
         util::{get_test_shared, test_init},
     };
     use std::io::Write;
@@ -137,13 +139,12 @@ async fn aof_test() {
 
     let shared = get_test_shared();
 
-    let mut aof = Aof::new(shared.clone(), test_file_path).await.unwrap();
+    let mut aof = Aof::new(shared, test_file_path).await.unwrap();
 
     aof.load().await.unwrap();
 
-    let wcmd_receiver = shared.post_office().get_inbox(WCMD_PROPAGATE_ID).unwrap();
     tokio::spawn(async move {
-        aof.save_and_propagate_wcmd_to_replicas(wcmd_receiver)
+        aof.save_and_propagate_wcmd_to_replicas(shared)
             .await
             .unwrap();
     });
@@ -181,7 +182,7 @@ async fn aof_test() {
         b"VXK"
     );
 
-    let (mut handler, _) = Handler::new_fake_with(shared.clone(), None, None);
+    let (mut handler, _) = Handler::new_fake_with(shared, None, None);
 
     let file = tokio::fs::OpenOptions::new()
         .write(true)

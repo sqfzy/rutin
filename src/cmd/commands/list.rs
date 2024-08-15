@@ -89,7 +89,7 @@ impl CmdExecutor for BLMove {
             Some(Instant::now() + Duration::from_secs(self.timeout))
         };
 
-        let res = pop_timeout_at(&handler.shared, key_tx, key_rx, deadline).await?;
+        let res = pop_timeout_at(handler.shared, key_tx, key_rx, deadline).await?;
 
         Ok(Some(res))
     }
@@ -138,7 +138,7 @@ impl CmdExecutor for BLPop {
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let db = handler.shared.db();
 
-        match first_round(&self.keys, &handler.shared).await {
+        match first_round(&self.keys, handler.shared).await {
             // 弹出成功，直接返回
             Ok(Some(frame)) => {
                 return Ok(Some(frame));
@@ -163,7 +163,7 @@ impl CmdExecutor for BLPop {
             Some(Instant::now() + Duration::from_secs(self.timeout))
         };
 
-        let res = pop_timeout_at(&handler.shared, key_tx, key_rx, deadline).await?;
+        let res = pop_timeout_at(handler.shared, key_tx, key_rx, deadline).await?;
 
         Ok(Some(res))
     }
@@ -518,7 +518,7 @@ impl CmdExecutor for NBLPop {
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        let Handler { shared, .. } = handler;
+        let shared = handler.shared;
 
         match first_round(&self.keys, shared).await {
             // 弹出成功，直接返回
@@ -548,7 +548,6 @@ impl CmdExecutor for NBLPop {
             Some(Instant::now() + Duration::from_secs(self.timeout))
         };
 
-        let shared = handler.shared.clone();
         let outbox = if self.redirect != 0 {
             handler
                 .shared
@@ -561,7 +560,7 @@ impl CmdExecutor for NBLPop {
         };
 
         tokio::spawn(async move {
-            let res = match pop_timeout_at(&shared, key_tx, key_rx, deadline).await {
+            let res = match pop_timeout_at(shared, key_tx, key_rx, deadline).await {
                 Ok(res) => res,
                 Err(e) => e.try_into().unwrap(),
             };
@@ -624,7 +623,7 @@ impl TryFrom<&[u8]> for Where {
 
 async fn first_round<S: AsRef<str> + PartialEq>(
     keys: &[Key],
-    shared: &Shared,
+    shared: Shared,
 ) -> RutinResult<Option<Resp3<Bytes, S>>> {
     let mut res = None;
     // 先尝试一轮pop
@@ -660,7 +659,7 @@ async fn first_round<S: AsRef<str> + PartialEq>(
 }
 
 async fn pop_timeout_at(
-    shared: &Shared,
+    shared: Shared,
     key_tx: Sender<Key>,
     key_rx: Receiver<Key>,
     deadline: Option<Instant>,

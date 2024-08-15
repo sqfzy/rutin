@@ -99,7 +99,7 @@ fn bench_create_handler_cx(c: &mut Criterion) {
 
             let start = Instant::now();
             for _ in 0..iters {
-                let mut cx = HandlerContext::new(&shared);
+                let mut cx = HandlerContext::new(shared);
                 cx.id = 1;
             }
             start.elapsed()
@@ -115,7 +115,7 @@ fn bench_create_handler(c: &mut Criterion) {
 
             let start = Instant::now();
             for _ in 0..iters {
-                Handler::new_fake_with(shared.clone(), None, None);
+                Handler::new_fake_with(shared, None, None);
             }
             start.elapsed()
         })

@@ -18,17 +18,15 @@ pub struct Handler<S: AsyncStream> {
     pub shared: Shared,
     pub conn: Connection<S>,
     pub context: HandlerContext,
-    pub back_log: Option<BackLog>,
 }
 
 impl<S: AsyncStream> Handler<S> {
     #[inline]
     pub fn new(shared: Shared, stream: S) -> Self {
         Self {
-            context: HandlerContext::new(&shared),
+            context: HandlerContext::new(shared),
             conn: Connection::new(stream, shared.conf().server.max_batch),
             shared,
-            back_log: None,
         }
     }
 
@@ -37,7 +35,6 @@ impl<S: AsyncStream> Handler<S> {
             context,
             conn: Connection::new(stream, shared.conf().server.max_batch),
             shared,
-            back_log: None,
         }
     }
 
@@ -60,7 +57,7 @@ impl<S: AsyncStream> Handler<S> {
                             listener!(unblock_event  => listener);
                             listener.await;
                         }
-                        Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownReplicas => { }
+                        Letter::Wcmd(_) | Letter::Psync {..} | Letter::ShutdownReplicas => {}
                     },
                     // 等待客户端请求
                     frames = self.conn.read_frames() => {
@@ -109,7 +106,7 @@ impl<S: AsyncStream> Handler<S> {
                         Letter::Resp3(resp) => {
                             self.conn.write_frame(&resp).await?;
                         }
-                        Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownReplicas => { }
+                        Letter::Wcmd(_) | Letter::Psync {..} | Letter::ShutdownReplicas => {}
                     },
                     // 等待master请求(一般为master传播的写命令)
                     frames = self.conn.read_frames() => {
@@ -147,38 +144,44 @@ impl<S: AsyncStream> Handler<S> {
 #[derive(Debug)]
 pub struct HandlerContext {
     pub id: Id,
+    pub ac: Arc<AccessControl>,
+    pub user: bytes::Bytes,
+
     pub inbox: Inbox,
     pub outbox: OutBox,
+
     // 客户端订阅的频道
     pub subscribed_channels: Option<Vec<Key>>,
+
     // 是否开启缓存追踪
     pub client_track: Option<OutBox>,
+
     // 用于缓存需要传播的写命令
     pub wcmd_buf: BytesMut,
-    pub user: bytes::Bytes,
-    pub ac: Arc<AccessControl>,
+    pub back_log: Option<BackLog>,
 }
 
 impl HandlerContext {
-    pub fn new(shared: &Shared) -> Self {
+    pub fn new(shared: Shared) -> Self {
         // 使用默认ac
         let ac = shared.conf().security.default_ac.load_full();
 
         Self::with_ac(shared, ac, DEFAULT_USER)
     }
 
-    pub fn with_ac(shared: &Shared, ac: Arc<AccessControl>, user: bytes::Bytes) -> Self {
+    pub fn with_ac(shared: Shared, ac: Arc<AccessControl>, user: bytes::Bytes) -> Self {
         let (client_id, outbox, inbox) = shared.post_office().new_mailbox();
 
         Self {
             id: client_id,
+            ac,
+            user,
             inbox,
             outbox,
             subscribed_channels: None,
             client_track: None,
             wcmd_buf: BytesMut::new(),
-            user,
-            ac,
+            back_log: None,
         }
     }
 
@@ -218,7 +221,7 @@ impl Handler<FakeStream> {
         let context = if let Some(ctx) = context {
             ctx
         } else {
-            HandlerContext::new(&shared)
+            HandlerContext::new(shared)
         };
 
         let max_batch = shared.conf().server.max_batch;
@@ -227,7 +230,6 @@ impl Handler<FakeStream> {
                 shared,
                 conn: Connection::new(FakeStream::new(server_tx, server_rx), max_batch),
                 context,
-                back_log: None,
             },
             Connection::new(FakeStream::new(client_tx, client_rx), max_batch),
         )

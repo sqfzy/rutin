@@ -62,6 +62,10 @@ pub fn get_test_config() -> Conf {
             acl: Some(acl),
         },
         replica: ReplicaConf {
+            repl_ping_replica_period: 10,
+            repl_timeout: 60,
+            repl_backlog_size: 1 << 10,
+
             master_info: Mutex::new(None),
             read_only: true,
             max_replica: 6,

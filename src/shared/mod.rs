@@ -17,7 +17,7 @@ pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
             .unwrap()
 });
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Shared {
     inner: &'static SharedInner,
 }
@@ -27,6 +27,7 @@ pub struct SharedInner {
     conf: Conf,
     script: Script,
     post_office: PostOffice,
+    // offset: AtomicU64,
 }
 
 impl Shared {
@@ -62,6 +63,7 @@ impl Shared {
                     conf,
                     script,
                     post_office,
+                    // offset: AtomicU64::new(0),
                 })),
             };
 
@@ -87,6 +89,7 @@ impl Shared {
                     conf,
                     script,
                     post_office,
+                    // offset: AtomicU64::new(0),
                 })),
             };
 
@@ -113,6 +116,21 @@ impl Shared {
     pub fn post_office(&self) -> &'static PostOffice {
         &self.inner.post_office
     }
+
+    // #[inline]
+    // pub fn get_offset(&self) -> u64 {
+    //     self.inner.offset.load(Ordering::AcqRel)
+    // }
+    //
+    // #[inline]
+    // pub fn add_offset(&self, offset: u64) {
+    //     self.inner.offset.fetch_add(offset, Ordering::AcqRel);
+    // }
+    //
+    // #[inline]
+    // pub fn set_offset(&self, offset: u64) {
+    //     self.inner.offset.store(offset, Ordering::AcqRel);
+    // }
 
     pub fn clear(&self) {
         self.inner.db.clear();

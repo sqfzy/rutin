@@ -275,7 +275,11 @@ pub enum Letter {
     Resp3(Resp3),
 
     Wcmd(BytesMut),
-    AddReplica(Handler<TcpStream>),
+    Psync {
+        handle_replica: Handler<TcpStream>,
+        repl_id: Id,
+        repl_offset: u64,
+    },
     // RemoveReplica,
 
     // 关闭某个连接
@@ -299,7 +303,11 @@ impl Debug for Letter {
             } => write!(f, "Letter::BlockAll({:?})", event),
             Letter::ShutdownReplicas => write!(f, "Letter::ShutdownReplicas"),
             Letter::Wcmd(cmd) => write!(f, "Letter::Wcmd({:?})", cmd),
-            Letter::AddReplica(_) => write!(f, "Letter::AddReplica"),
+            Letter::Psync {
+                repl_id,
+                repl_offset,
+                ..
+            } => write!(f, "Letter::Psync({:?}, {:?})", repl_id, repl_offset),
             // Letter::RemoveReplica => write!(f, "Letter::RemoveReplica"),
             Letter::ShutdownClient => write!(f, "Letter::ShutdownClient"),
         }
@@ -321,7 +329,7 @@ impl Clone for Letter {
             },
             Letter::ShutdownReplicas => Letter::ShutdownReplicas,
             Letter::Wcmd(cmd) => Letter::Wcmd(cmd.clone()),
-            Letter::AddReplica(_) => panic!("AddReplica cannot be cloned"),
+            Letter::Psync { .. } => unreachable!(),
             // Letter::RemoveReplica => Letter::RemoveReplica,
             Letter::ShutdownClient => Letter::ShutdownClient,
         }

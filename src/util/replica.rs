@@ -2,7 +2,7 @@ use crate::{
     conf::{AccessControl, MasterInfo, DEFAULT_USER},
     error::{RutinError, RutinResult},
     frame::Resp3,
-    persist::rdb::rdb_load,
+    persist::{aof::Aof, rdb::rdb_load},
     server::{Handler, HandlerContext},
     shared::{Letter, Shared, UnblockEvent},
     util::atoi,
@@ -35,7 +35,10 @@ pub fn set_server_to_replica(
     master_port: u16,
 ) -> impl Future<Output = RutinResult<()>> + Send {
     async move {
-        // 记录replica的offset。运行run_replica()时，会一直持有该锁，直到trigger_shutdown时释放
+        // 记录replica的offset。运行run_replica()时，由于发送
+        // PSYNC <run_id> <offset>是多线程的，所以需要上锁共享
+        // offset。run_replica()会一直持有该锁，直到断开连接时
+        // 释放，避免锁的性能影响
         static OFFSET: Mutex<u64> = Mutex::const_new(0);
 
         let conf = shared.conf();
@@ -71,9 +74,9 @@ pub fn set_server_to_replica(
         let ac = AccessControl::new_loose();
 
         let mut handle_master = Handler::with_cx(
-            shared.clone(),
+            shared,
             to_master,
-            HandlerContext::with_ac(&shared, Arc::new(ac), DEFAULT_USER),
+            HandlerContext::with_ac(shared, Arc::new(ac), DEFAULT_USER),
         );
 
         // 发送PING测试主节点是否可达
@@ -156,7 +159,7 @@ pub fn set_server_to_replica(
 
         let response = handle_master.conn.read_frame_force().await?;
 
-        let shared = shared.clone();
+        let shared = shared;
         tokio::spawn(async move {
             // read_only模式下，所有ac都只允许读命令
             if conf.replica.read_only {
@@ -228,6 +231,14 @@ async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
     rdb_load(&mut rdb, handler.shared.db(), false)
         .await
         .map_err(|e| RutinError::new_server_error(e.to_string()))?;
+
+    // 已经BlockALl，因此不会有其它任务向aof写入数据，可以rewrite
+    if let Some(aof_conf) = &handler.shared.conf().aof {
+        let mut aof = Aof::new(handler.shared, aof_conf.file_path.clone()).await?;
+        aof.rewrite()
+            .await
+            .map_err(|e| RutinError::new_server_error(e.to_string()))?;
+    }
 
     Ok(())
 }

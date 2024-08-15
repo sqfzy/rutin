@@ -6,7 +6,7 @@ use crate::{
     frame::Resp3,
     persist::rdb::Rdb,
     server::{AsyncStream, Handler},
-    util::{set_server_to_master, set_server_to_replica},
+    util::{set_server_to_replica, set_server_to_standalone},
 };
 use bytes::Bytes;
 use bytestring::ByteString;
@@ -328,12 +328,11 @@ impl CmdExecutor for BgSave {
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let rdb_conf = &handler.shared.conf().rdb;
-        let shared = &handler.shared;
 
         let mut rdb = if let Some(rdb) = rdb_conf {
-            Rdb::new(shared, rdb.file_path.clone(), rdb.enable_checksum)
+            Rdb::new(handler.shared, rdb.file_path.clone(), rdb.enable_checksum)
         } else {
-            Rdb::new(shared, "./dump.rdb".into(), false)
+            Rdb::new(handler.shared, "./dump.rdb".into(), false)
         };
         // let mut rdb = RDB::new(shared, rdb_conf.unwrap_or("").file_path.clone(), rdb_conf.enable_checksum);
         tokio::spawn(async move {
@@ -406,12 +405,12 @@ impl CmdExecutor for ReplicaOf {
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         if self.should_set_to_master {
-            set_server_to_master(&handler.shared).await;
+            set_server_to_standalone(handler.shared).await;
 
             return Ok(Some(Resp3::new_simple_string("OK".into())));
         }
 
-        set_server_to_replica(handler.shared.clone(), self.master_host, self.master_port).await?;
+        set_server_to_replica(handler.shared, self.master_host, self.master_port).await?;
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }

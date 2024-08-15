@@ -13,6 +13,7 @@ use snafu::OptionExt;
 
 use crate::{
     error::{A2IParseSnafu, RutinError, RutinResult},
+    shared::{Letter, Shared},
     Int,
 };
 use atoi::FromRadix10SignedChecked;
@@ -179,6 +180,23 @@ pub fn to_valid_range(start: Int, end: Int, len: usize) -> Option<(usize, usize)
     }
 
     Some((start_index as usize, end_index as usize - 1))
+}
+
+pub async fn set_server_to_standalone(shared: Shared) {
+    let conf = shared.conf();
+
+    let mut ms_info = conf.replica.master_info.lock().await;
+    if ms_info.is_none() {
+        return;
+    } else {
+        *ms_info = None;
+    }
+
+    // 断开Psync中的连接
+    shared
+        .post_office()
+        .send_all(Letter::ShutdownReplicas)
+        .await;
 }
 
 #[test]

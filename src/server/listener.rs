@@ -82,11 +82,9 @@ impl Server {
                 .retry(&backon::ExponentialBuilder::default())
                 .await?;
 
-            let shared = self.shared.clone();
-
             match &self.tls_acceptor {
                 None => {
-                    let mut handler = Handler::new(shared, stream);
+                    let mut handler = Handler::new(self.shared, stream);
 
                     tokio::spawn(async move {
                         // 开始处理连接
@@ -100,7 +98,7 @@ impl Server {
                 }
                 // 如果开启了TLS，则使用TlsStream
                 Some(tls_acceptor) => {
-                    let mut handler = Handler::new(shared, tls_acceptor.accept(stream).await?);
+                    let mut handler = Handler::new(self.shared, tls_acceptor.accept(stream).await?);
 
                     tokio::spawn(async move {
                         // 开始处理连接
@@ -121,7 +119,7 @@ impl Drop for Server {
     fn drop(&mut self) {
         let conf = self.shared.conf();
         if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
-            let mut rdb = Rdb::new(&self.shared, rdb.file_path.clone(), rdb.enable_checksum);
+            let mut rdb = Rdb::new(self.shared, rdb.file_path.clone(), rdb.enable_checksum);
 
             let _delay_token = self.shared.post_office().delay_token();
             tokio::spawn(async move {

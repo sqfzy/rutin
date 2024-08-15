@@ -28,7 +28,7 @@ thread_local! {
 /// fake handler: 用于执行Redis命令。fake handler的执行权限应当与客户端的权限保持一致
 #[allow(clippy::type_complexity)]
 fn get_or_create_lua_env(
-    shared: &Shared,
+    shared: Shared,
 ) -> anyhow::Result<(
     Rc<LocalMutex<Option<Lua>>>,
     Rc<LocalMutex<Option<FakeHandler>>>,
@@ -50,7 +50,7 @@ fn get_or_create_lua_env(
     }
 
     let fake_handler = Handler::new_fake_with(
-        shared.clone(),
+        shared,
         Some(HandlerContext::with_ac(
             shared,
             Arc::new(AccessControl::new_strict()),
@@ -276,14 +276,14 @@ impl LuaScript {
         keys: Vec<Bytes>,
         argv: Vec<Bytes>,
     ) -> RutinResult<Resp3> {
-        let shared = handler.shared.clone();
+        let shared = handler.shared;
         let client_ac = handler.context.ac.clone();
         let user = handler.context.user.clone();
 
         let res = self
             .pool
-            .spawn_pinned(|| async move {
-                let (lua, fake_handler) = get_or_create_lua_env(&shared)?;
+            .spawn_pinned(move || async move {
+                let (lua, fake_handler) = get_or_create_lua_env(shared)?;
 
                 let mut lua = lua.lock().await;
                 let lua = lua.as_mut().unwrap();

@@ -13,7 +13,7 @@ use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
-    shared::{post_office::Letter, Shared, MAIN_ID, WCMD_PROPAGATE_ID},
+    shared::{post_office::Letter, Shared, MAIN_ID},
     util::{propagate_wcmd_to_replicas, set_server_to_replica},
     Id,
 };
@@ -45,9 +45,9 @@ pub async fn run() {
     let shared = Shared::new();
     let post_office = shared.post_office();
 
-    init(shared.clone()).await.unwrap();
+    init(shared).await.unwrap();
 
-    let mut server = Server::new(shared.clone()).await;
+    let mut server = Server::new(shared).await;
 
     let mut inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
     loop {
@@ -75,7 +75,7 @@ pub async fn run() {
                     listener!(unblock_event  => listener);
                     listener.await;
                 }
-                Letter::Resp3(_) | Letter::Wcmd(_) | Letter::AddReplica(_) | Letter::ShutdownClient | Letter::ShutdownReplicas => { }
+                Letter::Resp3(_) | Letter::Wcmd(_) | Letter::Psync {..} | Letter::ShutdownClient | Letter::ShutdownReplicas => {}
             }
         }
     }
@@ -111,14 +111,14 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
     /**********************/
     let ms_info = { conf.replica.master_info.lock().await.clone() };
     if let Some(ms_info) = ms_info {
-        set_server_to_replica(shared.clone(), ms_info.host, ms_info.port).await?;
+        set_server_to_replica(shared, ms_info.host, ms_info.port).await?;
     }
 
     /*********************/
     /* 是否开启RDB持久化 */
     /*********************/
     if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
-        let mut rdb = Rdb::new(&shared, rdb.file_path.clone(), rdb.enable_checksum);
+        let mut rdb = Rdb::new(shared, rdb.file_path.clone(), rdb.enable_checksum);
 
         let start = std::time::Instant::now();
         info!("Loading RDB file...");
@@ -133,7 +133,7 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
     /* 是否开启AOF持久化 */
     /*********************/
     if let Some(aof) = conf.aof.as_ref() {
-        let mut aof = Aof::new(shared.clone(), aof.file_path.clone()).await?;
+        let mut aof = Aof::new(shared, aof.file_path.clone()).await?;
 
         let start = std::time::Instant::now();
         info!("Loading AOF file...");
@@ -143,26 +143,16 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
             info!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
         }
 
-        let wcmd_inbox = shared
-            .post_office()
-            .get_inbox(WCMD_PROPAGATE_ID)
-            .expect("wcmd mailbox should exist when aof is enabled");
-
         tokio::spawn(async move {
-            if let Err(e) = aof.save_and_propagate_wcmd_to_replicas(wcmd_inbox).await {
+            if let Err(e) = aof.save_and_propagate_wcmd_to_replicas(shared).await {
                 error!("Failed to save AOF file: {}", e);
             }
         });
     } else if !conf.server.standalone {
         // 如果是集群模式，但没有开启AOF
 
-        let wcmd_inbox = shared
-            .post_office()
-            .get_inbox(WCMD_PROPAGATE_ID)
-            .expect("wcmd mailbox should exist when standalone is false");
-
         tokio::spawn(async move {
-            if let Err(e) = propagate_wcmd_to_replicas(wcmd_inbox).await {
+            if let Err(e) = propagate_wcmd_to_replicas(shared).await {
                 error!("{}", e);
             }
         });
@@ -172,26 +162,22 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
     /* 开启过期键定时检查 */
     /**********************/
     let period = Duration::from_secs(conf.server.expire_check_interval_secs);
-    tokio::spawn({
-        let shared = shared.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(period);
 
-        async move {
-            let mut interval = tokio::time::interval(period);
+        loop {
+            interval.tick().await;
 
-            loop {
-                interval.tick().await;
+            for _ in 0..10 {
+                if let Some(record) = {
+                    let mut rng = rand::thread_rng();
 
-                for _ in 0..10 {
-                    if let Some(record) = {
-                        let mut rng = rand::thread_rng();
+                    shared.db().entry_expire_records().iter().choose(&mut rng)
+                } {
+                    if record.0 <= Instant::now() {
+                        tracing::trace!("key {:?} is expired", record.1);
 
-                        shared.db().entry_expire_records().iter().choose(&mut rng)
-                    } {
-                        if record.0 <= Instant::now() {
-                            tracing::trace!("key {:?} is expired", record.1);
-
-                            let _ = shared.db().remove_object(record.1.clone()).await;
-                        }
+                        let _ = shared.db().remove_object(record.1.clone()).await;
                     }
                 }
             }

@@ -511,7 +511,6 @@ impl CmdExecutor for NBKeys {
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))?;
 
-        let shared = handler.shared.clone();
         let outbox = if self.redirect != 0 {
             &handler
                 .shared
@@ -523,7 +522,7 @@ impl CmdExecutor for NBKeys {
         };
 
         tokio::task::block_in_place(|| {
-            let db = shared.db();
+            let db = handler.shared.db();
 
             let matched_keys = if db.entries_size() > (1024 << 32) {
                 // 并行
