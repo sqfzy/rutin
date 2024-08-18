@@ -5,7 +5,7 @@ use crate::{
     error::RutinResult,
     frame::Resp3,
     server::{AsyncStream, Connection, FakeStream},
-    shared::{Inbox, Letter, OutBox, Shared},
+    shared::{Inbox, Letter, Outbox, Shared, NULL_ID},
     util::{get_test_shared, BackLog},
     Id, Key,
 };
@@ -22,15 +22,7 @@ pub struct Handler<S: AsyncStream> {
 
 impl<S: AsyncStream> Handler<S> {
     #[inline]
-    pub fn new(shared: Shared, stream: S) -> Self {
-        Self {
-            context: HandlerContext::new(shared),
-            conn: Connection::new(stream, shared.conf().server.max_batch),
-            shared,
-        }
-    }
-
-    pub fn with_cx(shared: Shared, stream: S, context: HandlerContext) -> Self {
+    pub fn new(shared: Shared, stream: S, context: HandlerContext) -> Self {
         Self {
             context,
             conn: Connection::new(stream, shared.conf().server.max_batch),
@@ -40,14 +32,14 @@ impl<S: AsyncStream> Handler<S> {
 
     #[inline]
     #[instrument(level = "debug", skip(self), fields(client_id), err)]
-    pub async fn run(&mut self) -> RutinResult<()> {
+    pub async fn run(mut self) -> RutinResult<()> {
         ID.scope(self.context.id, async {
             loop {
                 tokio::select! {
                     biased; // 有序轮询
 
                     letter = self.context.inbox.recv_async() => match letter {
-                        Letter::ShutdownClient | Letter::ShutdownServer | Letter::BlockServer { .. }  => {
+                        Letter::ShutdownTask | Letter::ShutdownServer | Letter::Reset => {
                             return Ok(());
                         }
                         Letter::Resp3(resp) => {
@@ -57,13 +49,13 @@ impl<S: AsyncStream> Handler<S> {
                             listener!(unblock_event  => listener);
                             listener.await;
                         }
-                        Letter::Wcmd(_) | Letter::Psync {..} | Letter::ShutdownReplicas => {}
+                        Letter::Wcmd(_) | Letter::Psync {..} => {}
                     },
                     // 等待客户端请求
                     frames = self.conn.read_frames() => {
                         if let Some(frames) = frames? {
                             for f in frames.into_iter() {
-                                if let Some(resp) = dispatch(f, self).await? {
+                                if let Some(resp) = dispatch(f, &mut self).await? {
                                     self.conn.write_frames(&resp).await?;
                                 }
                             }
@@ -78,7 +70,7 @@ impl<S: AsyncStream> Handler<S> {
     }
 
     pub async fn run_replica(
-        &mut self,
+        mut self,
         mut offset: tokio::sync::MutexGuard<'_, u64>,
     ) -> RutinResult<()> {
         ID.scope(self.context.id, async {
@@ -96,7 +88,7 @@ impl<S: AsyncStream> Handler<S> {
                     biased;
 
                     letter = self.context.inbox.recv_async() => match letter {
-                        Letter::ShutdownClient | Letter::ShutdownServer | Letter::BlockServer { .. }  => {
+                        Letter::ShutdownTask | Letter::ShutdownServer | Letter::Reset => {
                             return Ok(());
                         }
                         Letter::BlockAll { unblock_event } => {
@@ -106,7 +98,7 @@ impl<S: AsyncStream> Handler<S> {
                         Letter::Resp3(resp) => {
                             self.conn.write_frame(&resp).await?;
                         }
-                        Letter::Wcmd(_) | Letter::Psync {..} | Letter::ShutdownReplicas => {}
+                        Letter::Wcmd(_) | Letter::Psync {..} => {}
                     },
                     // 等待master请求(一般为master传播的写命令)
                     frames = self.conn.read_frames() => {
@@ -115,7 +107,7 @@ impl<S: AsyncStream> Handler<S> {
                                 // 更新偏移量
                                 *offset += f.size() as u64;
                                 // 不返回响应
-                                dispatch(f, self).await?;
+                                dispatch(f, &mut self).await?;
                             }
                         } else {
                             return Ok(());
@@ -148,13 +140,13 @@ pub struct HandlerContext {
     pub user: bytes::Bytes,
 
     pub inbox: Inbox,
-    pub outbox: OutBox,
+    pub outbox: Outbox,
 
     // 客户端订阅的频道
     pub subscribed_channels: Option<Vec<Key>>,
 
     // 是否开启缓存追踪
-    pub client_track: Option<OutBox>,
+    pub client_track: Option<Outbox>,
 
     // 用于缓存需要传播的写命令
     pub wcmd_buf: BytesMut,
@@ -162,18 +154,22 @@ pub struct HandlerContext {
 }
 
 impl HandlerContext {
-    pub fn new(shared: Shared) -> Self {
+    pub fn new(shared: Shared, id: Id, outbox: Outbox, inbox: Inbox) -> Self {
         // 使用默认ac
         let ac = shared.conf().security.default_ac.load_full();
 
-        Self::with_ac(shared, ac, DEFAULT_USER)
+        Self::with_ac(id, outbox, inbox, ac, DEFAULT_USER)
     }
 
-    pub fn with_ac(shared: Shared, ac: Arc<AccessControl>, user: bytes::Bytes) -> Self {
-        let (client_id, outbox, inbox) = shared.post_office().new_mailbox();
-
+    pub fn with_ac(
+        id: Id,
+        outbox: Outbox,
+        inbox: Inbox,
+        ac: Arc<AccessControl>,
+        user: bytes::Bytes,
+    ) -> Self {
         Self {
-            id: client_id,
+            id,
             ac,
             user,
             inbox,
@@ -191,6 +187,24 @@ impl HandlerContext {
         self.wcmd_buf.clear();
     }
 }
+
+// impl Clone for HandlerContext {
+//     fn clone(&self) -> Self {
+//         assert!(self.back_log.is_none());
+//
+//         Self {
+//             id: self.id,
+//             ac: self.ac.clone(),
+//             user: self.user.clone(),
+//             inbox: self.inbox.clone(),
+//             outbox: self.outbox.clone(),
+//             subscribed_channels: self.subscribed_channels.clone(),
+//             client_track: self.client_track.clone(),
+//             wcmd_buf: self.wcmd_buf.clone(),
+//             back_log: None,
+//         }
+//     }
+// }
 
 pub type FakeHandler = Handler<FakeStream>;
 
@@ -221,7 +235,8 @@ impl Handler<FakeStream> {
         let context = if let Some(ctx) = context {
             ctx
         } else {
-            HandlerContext::new(shared)
+            let (outbox, inbox) = shared.post_office().new_mailbox_with_special_id(NULL_ID);
+            HandlerContext::new(shared, NULL_ID, outbox, inbox)
         };
 
         let max_batch = shared.conf().server.max_batch;

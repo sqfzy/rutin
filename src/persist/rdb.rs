@@ -82,7 +82,9 @@ impl Rdb {
 
         let _delay_token = self.shared.post_office().delay_token();
 
-        rdb_save::rdb_save(&mut file, self.shared.db(), self.enable_checksum).await?;
+        let rdb_data = rdb_save::rdb_save(self.shared.db(), self.enable_checksum).await?;
+
+        file.write_all(&rdb_data).await?;
 
         Ok(())
     }
@@ -104,18 +106,13 @@ mod rdb_save {
 
     use super::*;
 
-    pub async fn rdb_save(
-        file: &mut tokio::fs::File,
-        db: &Db,
-        enable_checksum: bool,
-    ) -> anyhow::Result<()> {
+    pub async fn rdb_save(db: &Db, enable_checksum: bool) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::with_capacity(1024 * 8);
         buf.extend_from_slice(b"REDIS");
         buf.put_u32(RDB_VERSION);
         buf.put_u8(RDB_OPCODE_SELECTDB);
         buf.put_u32(0);
 
-        let max_buf_size = 2 << 28;
         for entry in db.entries().iter() {
             let (key, obj) = (entry.key().clone(), entry.value().clone());
             let obj_inner = if let Some(inner) = obj.inner() {
@@ -163,10 +160,6 @@ mod rdb_save {
                     encode_zset_value(&mut buf, value)
                 }
             }
-
-            if buf.len() >= max_buf_size {
-                file.write_all_buf(&mut buf.split()).await?;
-            }
         }
 
         buf.put_u8(RDB_OPCODE_EOF);
@@ -177,8 +170,7 @@ mod rdb_save {
         };
         buf.put_u64(checksum);
 
-        file.write_all_buf(&mut buf).await?;
-        Ok(())
+        Ok(buf)
     }
 
     pub fn encode_expire(buf: &mut BytesMut, expire: Duration) {

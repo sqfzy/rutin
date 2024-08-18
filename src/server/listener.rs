@@ -1,14 +1,15 @@
 use super::Handler;
 use crate::{
     persist::rdb::Rdb,
-    shared::{db::Lru, Shared},
+    server::HandlerContext,
+    shared::{db::Lru, Shared, SPECIAL_ID_RANGE},
 };
 use backon::Retryable;
 use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
     Arc,
 };
-use tokio::{io, net::TcpListener, sync::Semaphore};
+use tokio::{net::TcpListener, sync::Semaphore};
 use tokio_rustls::TlsAcceptor;
 use tracing::error;
 
@@ -26,20 +27,21 @@ pub fn get_lru_clock() -> u32 {
     LRU_CLOCK.load(Ordering::Relaxed) % Lru::LRU_CLOCK_MAX
 }
 
-pub struct Server {
+pub struct Listener {
     pub shared: Shared,
     pub listener: TcpListener,
     pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
+    pub next_client_id: u64,
 }
 
-impl Server {
+impl Listener {
     pub async fn new(shared: Shared) -> Self {
         let conf = shared.conf();
 
         // 开始监听
         let listener =
-            tokio::net::TcpListener::bind(format!("{}:{}", conf.server.addr, conf.server.port))
+            tokio::net::TcpListener::bind(format!("{}:{}", conf.server.host, conf.server.port))
                 .await
                 .unwrap();
 
@@ -51,42 +53,43 @@ impl Server {
             None
         };
 
-        Server {
+        Listener {
             shared,
             listener,
             tls_acceptor,
             limit_connections: Arc::new(Semaphore::new(conf.server.max_connections)),
+            next_client_id: SPECIAL_ID_RANGE.end,
         }
     }
 
-    pub async fn run(&mut self) -> Result<(), io::Error> {
+    pub async fn run(&mut self) -> anyhow::Result<()> {
         tracing::info!(
             "server is running on {}:{}...",
-            &self.shared.conf().server.addr,
+            &self.shared.conf().server.host,
             self.shared.conf().server.port
         );
 
         #[cfg(feature = "debug")]
         println!("debug mode is enabled.\n{:?}", self.shared.conf());
 
+        let post_office = self.shared.post_office();
         loop {
             #[cfg(not(feature = "debug"))]
-            let permit = self
-                .limit_connections
-                .clone()
-                .acquire_owned()
-                .await
-                .unwrap();
+            let permit = self.limit_connections.clone().acquire_owned().await?;
 
             let (stream, _) = (|| async { self.listener.accept().await })
                 .retry(&backon::ExponentialBuilder::default())
                 .await?;
 
+            let (id, outbox, inbox) = post_office.new_mailbox(self.next_client_id);
+            self.next_client_id = id + 1;
+
+            let context = HandlerContext::new(self.shared, id, outbox, inbox);
             match &self.tls_acceptor {
                 None => {
-                    let mut handler = Handler::new(self.shared, stream);
+                    let handler = Handler::new(self.shared, stream, context);
 
-                    tokio::spawn(async move {
+                    self.shared.pool().spawn_pinned(|| async move {
                         // 开始处理连接
                         if let Err(err) = handler.run().await {
                             error!(cause = ?err, "connection error");
@@ -98,9 +101,10 @@ impl Server {
                 }
                 // 如果开启了TLS，则使用TlsStream
                 Some(tls_acceptor) => {
-                    let mut handler = Handler::new(self.shared, tls_acceptor.accept(stream).await?);
+                    let handler =
+                        Handler::new(self.shared, tls_acceptor.accept(stream).await?, context);
 
-                    tokio::spawn(async move {
+                    self.shared.pool().spawn_pinned(|| async move {
                         // 开始处理连接
                         if let Err(err) = handler.run().await {
                             error!(cause = ?err, "connection error");
@@ -115,14 +119,14 @@ impl Server {
     }
 }
 
-impl Drop for Server {
+impl Drop for Listener {
     fn drop(&mut self) {
         let conf = self.shared.conf();
         if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
             let mut rdb = Rdb::new(self.shared, rdb.file_path.clone(), rdb.enable_checksum);
 
             let _delay_token = self.shared.post_office().delay_token();
-            tokio::spawn(async move {
+            self.shared.pool().spawn_pinned(move || async move {
                 rdb.save().await.ok();
 
                 drop(_delay_token);

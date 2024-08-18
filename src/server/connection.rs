@@ -11,6 +11,7 @@ use futures::{future::poll_immediate, io, Future};
 use pin_project::{pin_project, pinned_drop};
 use smallvec::SmallVec;
 use std::{
+    any::Any,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -21,10 +22,13 @@ use tokio::{
 use tracing::{error, instrument, trace};
 
 pub trait AsyncStream:
-    AsyncRead + AsyncReadExt + AsyncWrite + AsyncWriteExt + Unpin + Send
+    AsyncRead + AsyncReadExt + AsyncWrite + AsyncWriteExt + Unpin + Send + Any
 {
 }
-impl<T: AsyncRead + AsyncReadExt + AsyncWrite + AsyncWriteExt + Unpin + Send> AsyncStream for T {}
+impl<T: AsyncRead + AsyncReadExt + AsyncWrite + AsyncWriteExt + Unpin + Send + Any> AsyncStream
+    for T
+{
+}
 
 #[derive(Debug)]
 pub struct Connection<S = TcpStream>

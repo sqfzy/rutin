@@ -5,6 +5,8 @@
 #![feature(decl_macro)]
 #![feature(iter_advance_by)]
 #![feature(let_chains)]
+#![feature(once_cell_get_mut)]
+#![feature(async_closure)]
 
 use mimalloc::MiMalloc;
 

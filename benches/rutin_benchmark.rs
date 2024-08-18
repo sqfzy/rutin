@@ -6,6 +6,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rutin::{
     frame::{Resp3, Resp3Decoder, Resp3Encoder},
     server::{Handler, HandlerContext},
+    shared::NULL_ID,
     util::get_test_shared,
 };
 use tokio_util::codec::{Decoder, Encoder};
@@ -96,10 +97,12 @@ fn bench_create_handler_cx(c: &mut Criterion) {
     c.bench_function("bench_create_handler_cx", |b| {
         b.iter_custom(|iters| {
             let shared = get_test_shared();
+            let post_office = shared.post_office();
 
             let start = Instant::now();
             for _ in 0..iters {
-                let mut cx = HandlerContext::new(shared);
+                let (outbox, inbox) = post_office.new_mailbox_with_special_id(NULL_ID);
+                let mut cx = HandlerContext::new(shared, NULL_ID, outbox, inbox);
                 cx.id = 1;
             }
             start.elapsed()

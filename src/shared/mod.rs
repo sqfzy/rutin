@@ -4,10 +4,11 @@ pub mod script;
 
 pub use post_office::*;
 pub use script::*;
+use tokio_util::task::LocalPoolHandle;
 
 use crate::{conf::Conf, server::Handler, shared::db::Db, util::UnsafeLazy};
 use bytes::BytesMut;
-use std::time::SystemTime;
+use std::{cell::UnsafeCell, time::SystemTime};
 use tokio::{net::TcpStream, time::Instant};
 
 pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
@@ -19,16 +20,11 @@ pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Shared {
-    inner: &'static SharedInner,
+    inner: &'static UnsafeCell<SharedInner>,
 }
 
-pub struct SharedInner {
-    db: Db,
-    conf: Conf,
-    script: Script,
-    post_office: PostOffice,
-    // offset: AtomicU64,
-}
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
 
 impl Shared {
     // 整个程序运行期间只会创建一次
@@ -47,95 +43,113 @@ impl Shared {
         let db = Db::new(conf.memory.clone());
         let script = Script::new();
 
-        let mailbox = if !conf.server.standalone || conf.aof.is_some() {
+        let aof_mailbox = if conf.aof.is_some() {
             Some(flume::unbounded())
         } else {
             None
         };
 
-        // 如果是集群模式，或者开启了aof，则需要传播写命令
-        if let Some((outbox, inbox)) = mailbox {
-            let post_office = PostOffice::new(Some(outbox.clone()));
+        let set_master_mailbox = if conf.master.is_some() {
+            Some(flume::unbounded())
+        } else {
+            None
+        };
 
-            let shared = Self {
-                inner: Box::leak(Box::new(SharedInner {
-                    db,
-                    conf,
-                    script,
-                    post_office,
-                    // offset: AtomicU64::new(0),
-                })),
-            };
+        let post_office = PostOffice::new(
+            aof_mailbox.as_ref().map(|mailbox| mailbox.0.clone()),
+            set_master_mailbox.as_ref().map(|mailbox| mailbox.0.clone()),
+        );
 
+        let shared = Self {
+            inner: Box::leak(Box::new(UnsafeCell::new(SharedInner {
+                pool: LocalPoolHandle::new(num_cpus::get()),
+                db,
+                conf,
+                script,
+                post_office,
+                // back_log: Mutex::new(BytesMut::new()),
+                // offset: AtomicU64::new(0),
+            }))),
+        };
+
+        if let Some((outbox, inbox)) = aof_mailbox {
             shared.post_office().inner.insert(
-                WCMD_PROPAGATE_ID,
+                AOF_ID,
                 (
                     outbox,
                     Inbox {
                         inner: inbox,
                         post_office: shared.post_office(),
-                        id: WCMD_PROPAGATE_ID,
+                        id: AOF_ID,
                     },
                 ),
             );
-
-            shared
-        } else {
-            let post_office = PostOffice::new(None);
-
-            let shared = Self {
-                inner: Box::leak(Box::new(SharedInner {
-                    db,
-                    conf,
-                    script,
-                    post_office,
-                    // offset: AtomicU64::new(0),
-                })),
-            };
-
-            shared
         }
+
+        if let Some((outbox, inbox)) = set_master_mailbox {
+            shared.post_office().inner.insert(
+                SET_MASTER_ID,
+                (
+                    outbox,
+                    Inbox {
+                        inner: inbox,
+                        post_office: shared.post_office(),
+                        id: SET_MASTER_ID,
+                    },
+                ),
+            );
+        }
+
+        shared
+    }
+
+    #[inline]
+    pub fn pool(&self) -> &LocalPoolHandle {
+        unsafe { &(*self.inner.get()).pool }
     }
 
     #[inline]
     pub fn db(&self) -> &'static Db {
-        &self.inner.db
+        unsafe { &(*self.inner.get()).db }
     }
 
     #[inline]
     pub fn script(&self) -> &'static Script {
-        &self.inner.script
+        unsafe { &(*self.inner.get()).script }
     }
 
     #[inline]
     pub fn conf(&self) -> &'static Conf {
-        &self.inner.conf
+        unsafe { &(*self.inner.get()).conf }
     }
 
     #[inline]
     pub fn post_office(&self) -> &'static PostOffice {
-        &self.inner.post_office
+        unsafe { &(*self.inner.get()).post_office }
     }
 
-    // #[inline]
-    // pub fn get_offset(&self) -> u64 {
-    //     self.inner.offset.load(Ordering::AcqRel)
-    // }
-    //
-    // #[inline]
-    // pub fn add_offset(&self, offset: u64) {
-    //     self.inner.offset.fetch_add(offset, Ordering::AcqRel);
-    // }
-    //
-    // #[inline]
-    // pub fn set_offset(&self, offset: u64) {
-    //     self.inner.offset.store(offset, Ordering::AcqRel);
-    // }
-
-    pub fn clear(&self) {
-        self.inner.db.clear();
-        self.inner.script.clear();
+    /// Returns the reset of this [`Shared`].
+    ///
+    /// # Safety
+    ///
+    /// 调用该函数时，不允许其它线程持有post_office.aof_outbox和post_office.set_master_outbox
+    pub unsafe fn reset(&self) {
+        self.db().clear();
+        self.script().clear();
+        unsafe {
+            (*self.inner.get()).post_office.reset(self.conf());
+        }
     }
+}
+
+pub struct SharedInner {
+    pool: LocalPoolHandle,
+    db: Db,
+    conf: Conf,
+    script: Script,
+    post_office: PostOffice,
+    // back_log: Mutex<BytesMut>,
+    // offset: AtomicU64,
 }
 
 impl std::fmt::Debug for SharedInner {

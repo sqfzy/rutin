@@ -175,7 +175,8 @@ impl CmdExecutor for ClientTracking {
                 .shared
                 .post_office()
                 .get_outbox(redirect)
-                .ok_or("ERR the client ID you want redirect to does not exist")?;
+                .ok_or("ERR the client ID you want redirect to does not exist")?
+                .clone();
 
             handler.context.client_track = Some(redirect_outbox);
         } else {

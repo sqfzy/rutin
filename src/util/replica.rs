@@ -4,25 +4,26 @@ use crate::{
     frame::Resp3,
     persist::{aof::Aof, rdb::rdb_load},
     server::{Handler, HandlerContext},
-    shared::{Letter, Shared, UnblockEvent},
+    shared::{Letter, Shared, SET_MASTER_ID, SET_REPLICA_ID},
     util::atoi,
 };
 use bytes::Buf;
 use bytestring::ByteString;
-use event_listener::Event;
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::Mutex};
 use tokio_util::time::FutureExt as _;
 use tracing::error;
 
-/// ## 将服务设为从节点意味着：
+/// ## set_server_to_replica意味着：
 ///
 /// 1. 服务会清空所有旧数据
-/// 2. 服务需要定期向主节点发送REPLCONF ACK <offset>命令，以便主节点知道从节点的
+/// 2. 不存在SET_MASTER任务
+/// 3. post_office中不存在SET_MASTER_ID mailbox以及set_master_outbox
+/// 4. 服务需要定期向主节点发送REPLCONF ACK <offset>命令，以便主节点知道从节点的
 ///    复制进度
-/// 3. 服务会定期收到主节点的PING命令，以便主节点知道从节点是否存活
-/// 4. 服务会接收主节点传播的写命令，并执行，但不会返回结果
-/// 5. 服务只能执行读命令(如果配置了read_only))
+/// 5. 服务会定期收到主节点的PING命令，以便主节点知道从节点是否存活
+/// 6. 服务会接收主节点传播的写命令，并执行，但不会返回结果
+/// 7. 服务只能执行读命令(如果配置了read_only))
 //
 // WARN: :
 // Recursive async functions don't internally implement auto traits
@@ -49,14 +50,13 @@ pub fn set_server_to_replica(
                 "ERR another replica operation is in progress, please try again later"
             })?;
 
-        /* step1: 阻塞服务，断开所有连接 */
-        let unblock_event = UnblockEvent(Arc::new(Event::new()));
-        shared
-            .post_office()
-            .send_all(Letter::BlockServer {
-                unblock_event: unblock_event.0.clone(),
-            })
-            .await;
+        /* step1: 关闭SetMaster任务并阻塞所有任务 */
+
+        let post_office = shared.post_office();
+        if let Some(outbox) = post_office.get_outbox(SET_MASTER_ID) {
+            outbox.send(Letter::ShutdownTask).ok();
+            post_office.remove(SET_MASTER_ID);
+        }
 
         /* step2: 与主节点握手建立连接 */
 
@@ -70,14 +70,15 @@ pub fn set_server_to_replica(
                 ))
             })??;
 
-        // 接收主节点的所有命令
-        let ac = AccessControl::new_loose();
+        let mut handle_master = {
+            // 允许接收主节点的所有命令
+            let ac = AccessControl::new_loose();
 
-        let mut handle_master = Handler::with_cx(
-            shared,
-            to_master,
-            HandlerContext::with_ac(shared, Arc::new(ac), DEFAULT_USER),
-        );
+            let (outbox, inbox) = post_office.new_mailbox_with_special_id(SET_REPLICA_ID);
+            let context =
+                HandlerContext::with_ac(SET_REPLICA_ID, outbox, inbox, Arc::new(ac), DEFAULT_USER);
+            Handler::new(shared, to_master, context)
+        };
 
         // 发送PING测试主节点是否可达
         handle_master
@@ -159,8 +160,7 @@ pub fn set_server_to_replica(
 
         let response = handle_master.conn.read_frame_force().await?;
 
-        let shared = shared;
-        tokio::spawn(async move {
+        shared.pool().spawn_pinned(move || async move {
             // read_only模式下，所有ac都只允许读命令
             if conf.replica.read_only {
                 if let Some(acl) = &conf.security.acl {
@@ -198,7 +198,7 @@ pub fn set_server_to_replica(
                 *offset = master_offset;
 
                 // 清除旧数据并执行全量同步
-                shared.clear();
+                post_office.send_all(Letter::Reset).await;
                 full_sync(&mut handle_master).await.unwrap();
             }
 
@@ -210,9 +210,6 @@ pub fn set_server_to_replica(
                 error!(cause = %e, "replica run error");
             }
         });
-
-        /* step5: 解除阻塞 */
-        drop(unblock_event);
 
         Ok(())
     }

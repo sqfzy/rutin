@@ -3,17 +3,18 @@ use crate::{
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
     server::Handler,
-    shared::Shared,
-    util::save_and_propagate_wcmd_to_replicas,
+    shared::{Letter, Shared, AOF_ID, SET_MASTER_ID},
 };
 use bytes::BytesMut;
+use event_listener::listener;
 use serde::Deserialize;
-use std::{os::unix::fs::MetadataExt, path::Path};
+use std::{os::unix::fs::MetadataExt, path::Path, time::Duration};
 use tokio::{
     fs::File,
-    io::{self, AsyncReadExt},
+    io::{self, AsyncReadExt, AsyncWriteExt},
 };
 use tokio_util::codec::Decoder;
+use tracing::info;
 
 pub struct Aof {
     pub file: File,
@@ -52,7 +53,9 @@ impl Aof {
             .await?;
 
         // 将数据保存到临时文件
-        rdb_save(&mut temp_file, self.shared.db(), true).await?;
+        let rdb_data = rdb_save(self.shared.db(), true).await?;
+
+        temp_file.write_all(&rdb_data).await?;
 
         // 将数据保存到临时文件后，将原来的AOF文件关闭
         self.file = temp_file;
@@ -67,14 +70,128 @@ impl Aof {
 }
 
 impl Aof {
-    pub async fn save_and_propagate_wcmd_to_replicas(
-        &mut self,
-        shared: Shared,
-    ) -> anyhow::Result<()> {
-        save_and_propagate_wcmd_to_replicas(self, shared).await
+    pub async fn save(&mut self, shared: Shared) -> anyhow::Result<()> {
+        let aof_conf = shared.conf().aof.as_ref().unwrap();
+
+        let mut curr_aof_size = 0_u128; // 单位为byte
+        let auto_aof_rewrite_min_size = aof_conf.auto_aof_rewrite_min_size;
+
+        let aof_inbox = shared
+            .post_office()
+            .get_inbox(AOF_ID)
+            .ok_or(anyhow::anyhow!(
+                "AOF_ID mailbox should exist when aof is enabled",
+            ))?;
+
+        let set_master_outbox = shared.post_office().get_outbox(SET_MASTER_ID);
+
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        match aof_conf.append_fsync {
+            AppendFSync::Always => loop {
+                match aof_inbox.recv_async().await {
+                    Letter::ShutdownServer | Letter::ShutdownTask | Letter::Reset => {
+                        break;
+                    }
+                    Letter::BlockAll { unblock_event } => {
+                        listener!(unblock_event  => listener);
+                        listener.await;
+                    }
+                    Letter::Wcmd(wcmd) => {
+                        curr_aof_size += wcmd.len() as u128;
+
+                        self.file.write_all(&wcmd).await?;
+
+                        if let Some(set_master_outbox) = &set_master_outbox {
+                            set_master_outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+                        }
+
+                        self.file.sync_data().await?;
+
+                        if curr_aof_size >= auto_aof_rewrite_min_size {
+                            self.rewrite().await?;
+                            curr_aof_size = 0;
+                        }
+                    }
+                    Letter::Resp3(_) | Letter::Psync { .. } => {}
+                }
+            },
+
+            AppendFSync::EverySec => loop {
+                tokio::select! {
+                    biased;
+
+                    letter = aof_inbox.recv_async() => match letter {
+                        Letter::ShutdownServer | Letter::ShutdownTask | Letter::Reset => {
+                            break;
+                        }
+                        Letter::BlockAll { unblock_event } => {
+                            listener!(unblock_event  => listener);
+                            listener.await;
+                        }
+                        Letter::Wcmd(wcmd) => {
+                            curr_aof_size += wcmd.len() as u128;
+
+                            self.file.write_all(&wcmd).await?;
+
+                            if let Some(set_master_outbox) = &set_master_outbox {
+                                set_master_outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+                            }
+
+                            if curr_aof_size >= auto_aof_rewrite_min_size {
+                                self.rewrite().await?;
+                                curr_aof_size = 0;
+                            }
+                        }
+                        Letter::Resp3(_) | Letter::Psync { .. } => {}
+                    },
+                    // 每隔一秒，同步文件
+                    _ = interval.tick() => {
+                        self.file.sync_data().await?;
+                    }
+                }
+            },
+
+            AppendFSync::No => loop {
+                match aof_inbox.recv_async().await {
+                    Letter::ShutdownServer | Letter::ShutdownTask | Letter::Reset => {
+                        break;
+                    }
+                    Letter::BlockAll { unblock_event } => {
+                        listener!(unblock_event  => listener);
+                        listener.await;
+                    }
+                    Letter::Wcmd(wcmd) => {
+                        curr_aof_size += wcmd.len() as u128;
+
+                        self.file.write_all(&wcmd).await?;
+
+                        if let Some(set_master_outbox) = &set_master_outbox {
+                            set_master_outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+                        }
+
+                        if curr_aof_size >= auto_aof_rewrite_min_size {
+                            self.rewrite().await?;
+                            curr_aof_size = 0;
+                        }
+                    }
+                    Letter::Resp3(_) | Letter::Psync { .. } => {}
+                }
+            },
+        }
+
+        while let Ok(Letter::Wcmd(wcmd)) = aof_inbox.inner.try_recv() {
+            self.file.write_all(&wcmd).await?;
+        }
+
+        self.file.sync_data().await?;
+        self.rewrite().await?; // 最后再重写一次
+        info!("AOF file rewrited.");
+        Ok(())
     }
 
     pub async fn load(&mut self) -> anyhow::Result<()> {
+        info!("Loading AOF file...");
+
         let mut buf = BytesMut::with_capacity(self.file.metadata().await?.size() as usize);
         while self.file.read_buf(&mut buf).await? != 0 {}
 
@@ -90,6 +207,8 @@ impl Aof {
         }
 
         debug_assert!(buf.is_empty());
+
+        info!("AOF file loaded.");
 
         Ok(())
     }
@@ -143,10 +262,8 @@ async fn aof_test() {
 
     aof.load().await.unwrap();
 
-    tokio::spawn(async move {
-        aof.save_and_propagate_wcmd_to_replicas(shared)
-            .await
-            .unwrap();
+    shared.pool().spawn_pinned(move || async move {
+        aof.save(shared).await.unwrap();
     });
 
     let db = shared.db();

@@ -5,39 +5,37 @@
 // Handler需要处理ShutdownServer和BlockAllClients消息。
 
 use core::panic;
-use std::{
-    fmt::Debug,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-};
+use std::{fmt::Debug, sync::Arc};
 
 use crate::{
+    conf::Conf,
     frame::Resp3,
-    server::{Handler, ID},
+    server::{AsyncStream, Handler, ID},
     Id,
 };
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use dashmap::{DashMap, Entry};
 use event_listener::Event;
 use flume::{Receiver, Sender};
-use tokio::net::TcpStream;
-use tracing::debug;
+use tokio::net::{TcpSocket, TcpStream};
+use tracing::{debug, instrument};
+
+pub const NULL_ID: Id = 0; // 用于测试以及创建FakeHandler。该ID没有统一对应的mailbox
+pub const DELAY_ID: Id = 1; // 用于延迟任务
 
 pub const SPECIAL_ID_RANGE: std::ops::Range<Id> = 0..64;
 
 // INFO: 特殊ID的数量。每次新增特殊ID时，都需要更新这个值
-pub const USED_SPECIAL_ID_COUNT: usize = 3;
+pub const USED_SPECIAL_ID_COUNT: usize = 4;
 
-pub const MAIN_ID: Id = 0;
-pub const WCMD_PROPAGATE_ID: Id = 1;
-pub const RUN_REPLICA_ID: Id = 2;
+pub const MAIN_ID: Id = 2;
+pub const AOF_ID: Id = 3;
+pub const SET_MASTER_ID: Id = 4;
+pub const SET_REPLICA_ID: Id = 5;
 
 #[derive(Debug)]
 pub struct PostOffice {
-    pub(super) inner: DashMap<Id, (OutBox, Inbox), nohash::BuildNoHashHasher<u64>>,
-    current_id: AtomicU64,
+    pub(super) inner: DashMap<Id, (Outbox, Inbox), nohash::BuildNoHashHasher<u64>>,
 
     /// 传播写命令到aof或replica。由于需要频繁使用该OutBox，因此直接保存在字段中
     ///
@@ -52,26 +50,25 @@ pub struct PostOffice {
     /// 理，因此aof和replica需要在同一个task中处理。但是replica的数目是运行时可
     /// 变的，为避免额外得同步措施，wcmd_propagator既可以传播wcmd，也可以发送一个
     /// replica的handler
-    pub wcmd_outbox: Option<OutBox>,
+    aof_outbox: Option<Outbox>,
+    set_master_outbox: Option<Outbox>,
 }
 
 impl PostOffice {
-    pub fn new(wcmd_outbox: Option<OutBox>) -> Self {
+    pub fn new(aof_outbox: Option<Outbox>, set_master_outbox: Option<Outbox>) -> Self {
         Self {
             inner: DashMap::with_hasher(nohash::BuildNoHashHasher::default()),
-            current_id: AtomicU64::new(SPECIAL_ID_RANGE.end),
-            wcmd_outbox,
+            aof_outbox,
+            set_master_outbox,
         }
     }
 
-    pub fn new_mailbox(&'static self) -> (Id, OutBox, Inbox) {
+    pub fn new_mailbox(&'static self, mut id: Id) -> (Id, Outbox, Inbox) {
         let (tx, rx) = flume::unbounded();
-        let mut id = self.current_id.fetch_add(1, Ordering::Relaxed);
 
-        // 自动分配ID时，跳过特殊ID
+        // 跳过特殊ID
         if SPECIAL_ID_RANGE.contains(&id) {
             id = SPECIAL_ID_RANGE.end;
-            self.current_id.store(id + 1, Ordering::Relaxed);
         }
 
         let mut rx = Inbox {
@@ -87,7 +84,7 @@ impl PostOffice {
                     break;
                 }
                 Entry::Occupied(_) => {
-                    id = self.current_id.fetch_add(1, Ordering::Relaxed);
+                    id += 1;
                     rx.id = id;
                 }
             }
@@ -96,13 +93,95 @@ impl PostOffice {
         (id, tx, rx)
     }
 
-    #[inline]
-    pub fn delay_token(&'static self) -> Inbox {
-        self.new_mailbox().2.clone()
+    pub fn reset(&'static mut self, conf: &Conf) {
+        match (
+            conf.aof.is_some() && self.aof_outbox.is_none(),
+            conf.master.is_some() && self.set_master_outbox.is_none(),
+        ) {
+            (true, true) => {
+                let (aof_outbox, aof_inbox) = flume::unbounded();
+                let (set_master_outbox, set_master_inbox) = flume::unbounded();
+
+                self.aof_outbox = Some(aof_outbox.clone());
+                self.set_master_outbox = Some(set_master_outbox.clone());
+
+                self.inner.insert(
+                    AOF_ID,
+                    (
+                        aof_outbox,
+                        Inbox {
+                            inner: aof_inbox,
+                            post_office: self as &'static Self,
+                            id: AOF_ID,
+                        },
+                    ),
+                );
+
+                self.inner.insert(
+                    SET_MASTER_ID,
+                    (
+                        set_master_outbox,
+                        Inbox {
+                            inner: set_master_inbox,
+                            post_office: self as &'static Self,
+                            id: SET_MASTER_ID,
+                        },
+                    ),
+                );
+            }
+            (true, false) => {
+                let (outbox, inbox) = flume::unbounded();
+
+                self.aof_outbox = Some(outbox.clone());
+                self.inner.insert(
+                    AOF_ID,
+                    (
+                        outbox,
+                        Inbox {
+                            inner: inbox,
+                            post_office: self as &'static Self,
+                            id: AOF_ID,
+                        },
+                    ),
+                );
+            }
+            (false, true) => {
+                let (outbox, inbox) = flume::unbounded();
+
+                self.set_master_outbox = Some(outbox.clone());
+                self.inner.insert(
+                    SET_MASTER_ID,
+                    (
+                        outbox,
+                        Inbox {
+                            inner: inbox,
+                            post_office: self as &'static Self,
+                            id: SET_MASTER_ID,
+                        },
+                    ),
+                );
+            }
+            _ => {}
+        }
     }
 
-    pub fn new_mailbox_with_special_id(&'static self, id: Id) -> (OutBox, Inbox) {
+    #[inline]
+    pub fn delay_token(&'static self) -> Inbox {
+        self.new_mailbox_with_special_id(DELAY_ID).1.clone()
+    }
+
+    pub fn new_mailbox_with_special_id(&'static self, id: Id) -> (Outbox, Inbox) {
         debug_assert!(SPECIAL_ID_RANGE.contains(&id));
+
+        if id == NULL_ID {
+            let (outbox, inbox) = flume::unbounded();
+            let inbox = Inbox {
+                inner: inbox,
+                post_office: self,
+                id,
+            };
+            return (outbox, inbox);
+        }
 
         let (tx, rx) = flume::unbounded();
 
@@ -123,13 +202,34 @@ impl PostOffice {
     }
 
     #[inline]
-    pub fn get_outbox(&self, id: Id) -> Option<Sender<Letter>> {
+    pub fn get_outbox(&self, id: Id) -> Option<Outbox> {
         self.inner.get(&id).map(|entry| entry.0.clone())
     }
 
     #[inline]
     pub fn get_inbox(&self, id: Id) -> Option<Inbox> {
         self.inner.get(&id).map(|entry| entry.1.clone())
+    }
+
+    #[inline]
+    pub fn need_send_wcmd(&self) -> bool {
+        self.aof_outbox.is_some() || self.set_master_outbox.is_some()
+    }
+
+    #[inline]
+    pub fn remove(&self, id: Id) -> Option<(Id, (Outbox, Inbox))> {
+        self.inner.remove(&id)
+    }
+
+    #[inline]
+    pub async fn send_wcmd(&self, wcmd: BytesMut) {
+        // Aof和SetMaster任务都需要处理写命令，但Aof只需要&wcmd，为了避免clone，
+        // 如果存在Aof任务，则由Aof任务在使用完&wcmd后发送给SetMaster任务
+        if let Some(outbox) = &self.aof_outbox {
+            outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+        } else if let Some(outbox) = &self.set_master_outbox {
+            outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+        }
     }
 
     pub async fn wait_shutdown_complete(&self) {
@@ -149,44 +249,61 @@ impl PostOffice {
     }
 
     // 广播消息。如果想要单播，可以使用get_outbox
+    #[instrument(level = "debug", skip(self))]
     pub async fn send_all(&self, msg: Letter) {
         match &msg {
             Letter::ShutdownServer => {
                 for entry in self.inner.iter() {
-                    let _ = entry.0.send_async(msg.clone()).await;
+                    entry.0.send_async(msg.clone()).await.ok();
                 }
             }
-            Letter::BlockServer {
-                unblock_event: event,
-            } => {
-                if let Some(entry) = self.inner.get(&MAIN_ID) {
-                    let _ = entry.0.send_async(msg.clone()).await;
-
-                    // 循环等待服务准备好监听
-                    loop {
-                        if event.total_listeners() == 1 {
-                            break;
-                        }
-
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                    }
+            Letter::Reset => {
+                // 服务还未初始化
+                if !self.inner.contains_key(&MAIN_ID) {
+                    return;
                 }
+
+                // 重置服务，关闭除主任务以外的所有任务
+                for entry in self.inner.iter() {
+                    if *entry.key() == MAIN_ID {
+                        continue;
+                    }
+
+                    entry.0.send_async(msg.clone()).await.ok();
+                }
+
+                // 循环等待主任务以外的任务关闭
+                loop {
+                    if self.inner.len() == 1 {
+                        break;
+                    }
+
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+
+                // 向主任务发送Reset，由主任务重置Shared
+                self.get_outbox(MAIN_ID)
+                    .unwrap()
+                    .send_async(msg.clone())
+                    .await
+                    .ok();
             }
             Letter::BlockAll {
                 unblock_event: event,
             } => {
+                // 不存在任何任务
                 if self.inner.is_empty() {
                     return;
                 }
 
                 // 阻塞服务，不允许新连接
-                let _ = self
-                    .inner
+                self.inner
                     .get(&MAIN_ID)
                     .unwrap()
                     .0
                     .send_async(msg.clone())
-                    .await;
+                    .await
+                    .ok();
 
                 // 循环等待服务准备好监听
                 loop {
@@ -198,19 +315,20 @@ impl PostOffice {
                 }
 
                 let src_id = ID.get();
+                let len = self.inner.len();
 
-                // 向除自己以外的client handler发送
+                // 向除自己以外的task发送
                 for entry in self.inner.iter() {
-                    if SPECIAL_ID_RANGE.contains(entry.key()) || *entry.key() == src_id {
+                    if *entry.key() == src_id {
                         continue;
                     }
 
-                    let _ = entry.0.send_async(msg.clone()).await;
+                    entry.0.send_async(msg.clone()).await.ok();
                 }
 
                 // 循环等待它们(主服务以及除自己以外的连接)准备好监听
                 loop {
-                    if event.total_listeners() == self.get_clients_count() + 1 - 1 {
+                    if event.total_listeners() == len - 1 {
                         break;
                     }
 
@@ -225,51 +343,52 @@ impl PostOffice {
 pub enum Letter {
     // 关闭服务。
     ShutdownServer,
+    // 重置服务。关闭除主任务以外的所有任务，并重置Shared
+    Reset,
 
-    // 阻塞服务，断开所有连接。
-    BlockServer {
-        unblock_event: Arc<Event>,
-    },
-
+    // // 阻塞服务，断开所有连接。
+    // BlockServer {
+    //     unblock_event: Arc<Event>,
+    // },
     /// 阻塞服务(不允许新增连接)以及所有客户端连接。
     /// 阻塞后必须解除阻塞，否则服务无法正常关闭。
     ///
+    ///```plaintext
     ///
-    ///        +-------+                   
-    ///        \ Task X\                   
-    ///        +---+---+                   
-    ///            \    BlockAllClients          +------------+
-    ///            +---------------------------->\ Main Task  \
-    ///            \                             +-----+------+
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///  Wait until main task               start listening     
-    ///  begins listening                        \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             +------------+
-    ///            \    BlockAllClients          \Other Client\
-    ///            +---------------------------->\ Handlers   \
-    ///            \                             +------+-----+
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///  Wait until main task                 all clients     
+    ///        +--------+                   
+    ///        | Task X |                   
+    ///        +---+----+                   
+    ///            |    BlockAll                 +-----------+
+    ///            +---------------------------->| Main Task |
+    ///            |                             +-----+-----+
+    ///            |                             |
+    ///            |                             |
+    ///            |                             |
+    ///  Wait until main task                  main task
     ///  begins listening                   start listening
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
-    ///            \                             \
+    ///            |                             |
+    ///            |                             |
+    ///            |                             |
+    ///            |                             |
+    ///            |    BlockAll                 +------------+
+    ///            +---------------------------->| Other Task |
+    ///            |                             +------------+
+    ///            |                             |
+    ///            |                             |
+    ///            |                             |
+    ///            |                             |
+    ///  Wait until all task                  all task     
+    ///  begins listening                   start listening
+    ///            |                             |
+    ///            |                             |
+    ///            |                             |
+    ///            |                             |
     ///            +-----------------------------+
-    ///
+    ///```
     BlockAll {
         unblock_event: Arc<Event>,
     },
-    ShutdownReplicas,
+    // ShutdownReplicas,
 
     // 用于客户端之间重定向
     Resp3(Resp3),
@@ -277,13 +396,13 @@ pub enum Letter {
     Wcmd(BytesMut),
     Psync {
         handle_replica: Handler<TcpStream>,
-        repl_id: Id,
+        repl_id: Bytes,
         repl_offset: u64,
     },
     // RemoveReplica,
 
-    // 关闭某个连接
-    ShutdownClient,
+    // 关闭某个任务
+    ShutdownTask,
     // Block
 
     // // do nothing
@@ -295,13 +414,10 @@ impl Debug for Letter {
         match self {
             Letter::Resp3(resp) => write!(f, "Letter::Resp3({:?})", resp),
             Letter::ShutdownServer => write!(f, "Letter::ShutdownServer"),
-            Letter::BlockServer {
-                unblock_event: event,
-            } => write!(f, "Letter::BlockServer({:?})", event),
+            Letter::Reset => write!(f, "Letter::Reset"),
             Letter::BlockAll {
                 unblock_event: event,
             } => write!(f, "Letter::BlockAll({:?})", event),
-            Letter::ShutdownReplicas => write!(f, "Letter::ShutdownReplicas"),
             Letter::Wcmd(cmd) => write!(f, "Letter::Wcmd({:?})", cmd),
             Letter::Psync {
                 repl_id,
@@ -309,7 +425,7 @@ impl Debug for Letter {
                 ..
             } => write!(f, "Letter::Psync({:?}, {:?})", repl_id, repl_offset),
             // Letter::RemoveReplica => write!(f, "Letter::RemoveReplica"),
-            Letter::ShutdownClient => write!(f, "Letter::ShutdownClient"),
+            Letter::ShutdownTask => write!(f, "Letter::ShutdownClient"),
         }
     }
 }
@@ -319,19 +435,16 @@ impl Clone for Letter {
         match self {
             Letter::Resp3(resp) => Letter::Resp3(resp.clone()),
             Letter::ShutdownServer => Letter::ShutdownServer,
-            Letter::BlockServer { unblock_event } => Letter::BlockServer {
-                unblock_event: unblock_event.clone(),
-            },
+            Letter::Reset => Letter::Reset,
             Letter::BlockAll {
                 unblock_event: event,
             } => Letter::BlockAll {
                 unblock_event: event.clone(),
             },
-            Letter::ShutdownReplicas => Letter::ShutdownReplicas,
             Letter::Wcmd(cmd) => Letter::Wcmd(cmd.clone()),
             Letter::Psync { .. } => unreachable!(),
             // Letter::RemoveReplica => Letter::RemoveReplica,
-            Letter::ShutdownClient => Letter::ShutdownClient,
+            Letter::ShutdownTask => Letter::ShutdownTask,
         }
     }
 }
@@ -346,7 +459,7 @@ impl Letter {
     }
 }
 
-pub type OutBox = Sender<Letter>;
+pub type Outbox = Sender<Letter>;
 
 pub struct Inbox {
     pub inner: Receiver<Letter>,

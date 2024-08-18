@@ -7,7 +7,6 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::{AsyncStream, Handler},
-    shared::Letter,
     util,
 };
 use bytes::Bytes;
@@ -30,17 +29,17 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
             return Err(RutinError::NoPermission);
         }
 
-        let wcmd_and_tx = if let Some(wcmd_tx) = &handler.shared.post_office().wcmd_outbox
-            && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG)
-        {
-            let resp3 = Resp3::from(args);
-            let wcmd = resp3.encode_local_buf();
+        let post_office = handler.shared.post_office();
+        let wcmd =
+            if post_office.need_send_wcmd() && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG) {
+                let resp3 = Resp3::from(args);
+                let wcmd = resp3.encode_local_buf();
 
-            args = resp3.try_into()?;
-            Some((wcmd_tx, wcmd))
-        } else {
-            None
-        };
+                args = resp3.try_into()?;
+                Some(wcmd)
+            } else {
+                None
+            };
 
         let cmd = Self::parse(args, &handler.context.ac)?;
 
@@ -49,15 +48,15 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         // 如果使用了pipline则该批命令视为一个整体命令。当最后一个命令执行完毕后，才发送写命令，
         // 避免性能瓶颈。如果执行过程中程序崩溃，则客户端会报错，用户会视为该批命令没有执行成
         // 功，也不会传播该批命令，符合一致性。
-        if let Some((tx, wcmd)) = wcmd_and_tx {
+        if let Some(wcmd) = wcmd {
             let wcmd_buf = &mut handler.context.wcmd_buf;
 
-            if handler.conn.unhandled_count() == 1 {
+            if handler.conn.unhandled_count() <= 1 {
                 if wcmd_buf.is_empty() {
-                    tx.send(Letter::Wcmd(wcmd)).unwrap();
+                    post_office.send_wcmd(wcmd).await;
                 } else {
                     wcmd_buf.unsplit(wcmd);
-                    tx.send(Letter::Wcmd(wcmd_buf.split())).unwrap();
+                    post_office.send_wcmd(wcmd_buf.split()).await;
                 }
             } else {
                 wcmd_buf.unsplit(wcmd);

@@ -36,11 +36,9 @@ test = { enable = true, password = "test", allow_commands = [
 ] }
 
 
-# 用户名为"admin"，密码为空，代表无密码
 [replica]
 # replicaof = "127.0.0.1:6380" # 主服务器地址
 max_replica = 10 # 最多允许多少个从服务器连接到当前服务器
-# masterauth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
 read_only = true
 
 # [rdb]

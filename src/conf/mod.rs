@@ -1,4 +1,5 @@
 mod aof;
+mod master;
 mod memory;
 mod rdb;
 mod replica;
@@ -7,8 +8,7 @@ mod server;
 mod tls;
 
 pub use aof::*;
-use bytes::Bytes;
-use figment::providers::{Format, Toml};
+pub use master::*;
 pub use memory::*;
 pub use rdb::*;
 pub use replica::*;
@@ -17,27 +17,24 @@ pub use server::*;
 pub use tls::*;
 
 use crate::cli::{merge_cli, Cli};
+use bytes::Bytes;
 use clap::Parser;
+use figment::providers::{Format, Toml};
 use rand::Rng;
 use serde::Deserialize;
 use std::{fs::File, io::BufReader};
 use tokio_rustls::rustls;
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub struct Conf {
-    #[serde(rename = "server")]
     pub server: ServerConf,
-    #[serde(rename = "security")]
     pub security: SecurityConf,
-    #[serde(rename = "replica")]
+    pub master: Option<MasterConf>,
     pub replica: ReplicaConf,
-    #[serde(rename = "rdb")]
     pub rdb: Option<RdbConf>,
-    #[serde(rename = "aof")]
     pub aof: Option<AofConf>,
-    #[serde(rename = "memory")]
     pub memory: Option<MemoryConf>,
-    #[serde(rename = "tls")]
     pub tls: Option<TLSConf>,
 }
 
@@ -60,10 +57,6 @@ impl Conf {
 
         Ok(conf)
     }
-
-    // pub fn as_static(&self) -> &'static Self {
-    //     unsafe { transmute(self) }
-    // }
 
     pub fn get_tls_config(&self) -> Option<rustls::ServerConfig> {
         let tls = self.tls.as_ref()?;

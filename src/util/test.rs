@@ -1,8 +1,8 @@
 use crate::{
     cmd::commands::{Flag, EXISTS_CMD_FLAG},
     conf::{
-        gen_run_id, AccessControl, Acl, AofConf, Conf, MemoryConf, RdbConf, ReplicaConf,
-        SecurityConf, ServerConf,
+        gen_run_id, AccessControl, Acl, AofConf, Conf, MasterConf, MemoryConf, RdbConf,
+        ReplicaConf, SecurityConf, ServerConf,
     },
     persist::aof::AppendFSync,
     shared::{
@@ -46,7 +46,7 @@ pub fn get_test_config() -> Conf {
 
     Conf {
         server: ServerConf {
-            addr: "127.0.0.1".into(),
+            host: "127.0.0.1".into(),
             port: 6379,
             run_id: gen_run_id(),
             expire_check_interval_secs: 1,
@@ -61,15 +61,16 @@ pub fn get_test_config() -> Conf {
             default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
             acl: Some(acl),
         },
-        replica: ReplicaConf {
-            repl_ping_replica_period: 10,
-            repl_timeout: 60,
-            repl_backlog_size: 1 << 10,
-
-            master_info: Mutex::new(None),
-            read_only: true,
+        master: Some(MasterConf {
             max_replica: 6,
+            backlog_size: 1 << 10,
+            ping_replica_period: 10,
+            timeout: 60,
+        }),
+        replica: ReplicaConf {
+            master_info: Mutex::new(None),
             master_auth: None,
+            read_only: true,
         },
         rdb: Some(RdbConf {
             file_path: "dump.rdb".to_string(),

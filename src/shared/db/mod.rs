@@ -9,7 +9,7 @@ use crate::{
     conf::MemoryConf,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    shared::OutBox,
+    shared::Outbox,
     util::UnsafeLazy,
     Id, Key,
 };
@@ -39,7 +39,7 @@ pub struct Db {
 
     // Key代表频道名，每个频道名映射着一组Sender，通过这些Sender可以发送消息给订阅频道
     // 的客户端
-    pub_sub: DashMap<Key, Vec<OutBox>, RandomState>,
+    pub_sub: DashMap<Key, Vec<Outbox>, RandomState>,
 
     // // 记录已经连接的客户端，并且映射到该连接的`BgTaskSender`，使用该sender可以向该连接
     // // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
@@ -287,19 +287,19 @@ impl Db {
 impl Db {
     // 获取该频道的所有监听者
     #[instrument(level = "debug", skip(self))]
-    pub fn get_channel_all_listener(&self, topic: &Key) -> Option<Vec<OutBox>> {
+    pub fn get_channel_all_listener(&self, topic: &Key) -> Option<Vec<Outbox>> {
         self.pub_sub.get(topic).map(|listener| listener.clone())
     }
 
     // 向频道添加一个监听者
     #[instrument(level = "debug", skip(self, listener))]
-    pub fn add_channel_listener(&self, topic: Key, listener: OutBox) {
+    pub fn add_channel_listener(&self, topic: Key, listener: Outbox) {
         self.pub_sub.entry(topic).or_default().push(listener);
     }
 
     // 移除频道的一个监听者
     #[instrument(level = "debug", skip(self, listener))]
-    pub fn remove_channel_listener(&self, topic: &Key, listener: &OutBox) -> Option<OutBox> {
+    pub fn remove_channel_listener(&self, topic: &Key, listener: &Outbox) -> Option<Outbox> {
         if let Some(mut pubs) = self.pub_sub.get_mut(topic) {
             // 如果找到匹配的listener，则移除
             if let Some(index) = pubs.iter().position(|l| l.same_channel(listener)) {

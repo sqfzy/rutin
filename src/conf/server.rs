@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConf {
-    pub addr: ByteString,
+    pub host: ByteString,
     pub port: u16,
     #[serde(skip)]
     pub run_id: Bytes, // 服务器的运行ID。由40个随机字符组成

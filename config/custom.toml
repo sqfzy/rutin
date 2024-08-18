@@ -4,20 +4,22 @@ port = 6379                     # 服务器端口
 expire_check_interval_secs = 60 # 检查过期键的频率，单位为秒
 log_level = "off"               # 日志级别
 max_connections = 256           # 最大连接数
+standalone = true               # 是否为单机模式
 # max_batch = 10240               # 最大批量操作数
 
 [security]
 # requirepass = "passwd" # 主服务器密码。当设置该值之后，客户端连接到服务器时需要发送AUTH命令进行认证
 
 
-[replica]
-repl_ping_replica_period = 10 # 主服务器ping从服务器的时间间隔，单位为秒
-repl_timeout = 10             # 从服务器连接超时时间，单位为秒
-repl_backlog_size = 1         # 复制积压缓冲区大小，单位为KB
+# [master]
+# max_replica = 10         # 最多允许多少个从服务器连接到当前服务器
+# backlog_size = 1         # 复制积压缓冲区大小，单位为KB
+# ping_replica_period = 10 # 主服务器ping从服务器的时间间隔，单位为秒
+# timeout = 10             # 从服务器连接超时时间，单位为秒
 
+[replica]
+# master_auth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
 # replicaof = "127.0.0.1:6380" # 主服务器地址
-max_replicate = 10 # 最多允许多少个从服务器连接到当前服务器
-# masterauth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
 read_only = true
 
 # [rdb]

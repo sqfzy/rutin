@@ -1,5 +1,8 @@
 use std::process::Command;
 
+use rutin::util::test_init;
+use tracing::info;
+
 fn check_command_installed(command: &str) -> bool {
     Command::new("which")
         .arg(command)
@@ -10,6 +13,8 @@ fn check_command_installed(command: &str) -> bool {
 
 #[test]
 fn replica_redis_test() {
+    test_init();
+
     if !check_command_installed("redis-server") || !check_command_installed("redis-cli") {
         return;
     }
@@ -23,6 +28,7 @@ fn replica_redis_test() {
         .arg("./tests/rdb")
         .spawn()
         .expect("Failed to start redis-server on port 6378");
+    info!("redis-server started on port 6378");
 
     let mut rutin_server = Command::new("cargo")
         .arg("run")
@@ -33,12 +39,14 @@ fn replica_redis_test() {
         .arg("127.0.0.1:6378")
         .spawn()
         .expect("Failed to start rutin on port 6379");
+    info!("rutin started on port 6379");
 
     let get_foo = Command::new("redis-cli")
         .arg("get")
         .arg("foo")
         .output()
         .expect("Failed to get foo");
+    info!("get foo: {:?}", get_foo);
 
     assert_eq!(
         String::from_utf8_lossy(&get_foo.stdout).trim(),
@@ -54,6 +62,7 @@ fn replica_redis_test() {
         .arg("bar2")
         .output()
         .expect("Failed to set foo2 on master");
+    info!("set foo2: {:?}", set_foo2);
 
     assert!(set_foo2.status.success(), "Failed to set foo2 on master");
 
@@ -62,6 +71,7 @@ fn replica_redis_test() {
         .arg("foo2")
         .output()
         .expect("Failed to get foo2");
+    info!("get foo2: {:?}", get_foo2);
 
     assert_eq!(
         String::from_utf8_lossy(&get_foo2.stdout).trim(),

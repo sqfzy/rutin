@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
@@ -5,12 +7,14 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     persist::rdb::Rdb,
-    server::{AsyncStream, Handler},
+    server::{AsyncStream, Handler, HandlerContext},
+    shared::{Letter, NULL_ID, SET_MASTER_ID},
     util::{set_server_to_replica, set_server_to_standalone},
 };
 use bytes::Bytes;
 use bytestring::ByteString;
 use itertools::Itertools;
+use tokio::net::TcpStream;
 
 /// # Reply:
 ///
@@ -335,7 +339,7 @@ impl CmdExecutor for BgSave {
             Rdb::new(handler.shared, "./dump.rdb".into(), false)
         };
         // let mut rdb = RDB::new(shared, rdb_conf.unwrap_or("").file_path.clone(), rdb_conf.enable_checksum);
-        tokio::spawn(async move {
+        handler.shared.pool().spawn_pinned(move || async move {
             if let Err(e) = rdb.save().await {
                 tracing::error!("save rdb error: {:?}", e);
             } else {
@@ -362,8 +366,8 @@ impl CmdExecutor for BgSave {
 /// **Simple string reply**: OK.
 #[derive(Debug)]
 pub struct PSync {
-    pub replication_id: Bytes,
-    pub offset: u64,
+    pub repl_id: Bytes,
+    pub repl_offset: u64,
 }
 
 impl CmdExecutor for PSync {
@@ -371,7 +375,40 @@ impl CmdExecutor for PSync {
     const CATS_FLAG: Flag = PSYNC_CATS_FLAG;
     const CMD_FLAG: Flag = PSYNC_CMD_FLAG;
 
-    async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+        let post_office = handler.shared.post_office();
+        if let Some(handler) = (handler as &mut dyn Any).downcast_mut::<Handler<TcpStream>>()
+            && let Some(outbox) = post_office.get_outbox(SET_MASTER_ID)
+        {
+            let conf = handler.shared.conf();
+
+            let whatever_handler = {
+                let stream = TcpStream::connect((conf.server.host.to_string(), conf.server.port))
+                    .await
+                    .map_err(|e| RutinError::from(e.to_string()))?;
+
+                let (outbox, inbox) = post_office.new_mailbox_with_special_id(NULL_ID);
+                // 用于通知关闭whatever_handler
+                outbox.send(Letter::ShutdownTask).ok();
+
+                let context = HandlerContext::new(handler.shared, NULL_ID, outbox, inbox);
+
+                Handler::new(handler.shared, stream, context)
+            };
+
+            // 换出handler
+            let handle_replica = std::mem::replace(handler, whatever_handler);
+
+            // 因为BackLog在SetMaster任务中，因此需要由SetMaster任务处理Psync命令
+            outbox
+                .send_async(Letter::Psync {
+                    handle_replica,
+                    repl_id: self.repl_id,
+                    repl_offset: self.repl_offset,
+                })
+                .await
+                .ok();
+        }
         todo!()
     }
 
@@ -381,8 +418,8 @@ impl CmdExecutor for PSync {
         }
 
         Ok(PSync {
-            replication_id: args.next().unwrap(),
-            offset: util::atoi(&args.next().unwrap())?,
+            repl_id: args.next().unwrap(),
+            repl_offset: util::atoi(&args.next().unwrap())?,
         })
     }
 }

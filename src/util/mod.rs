@@ -13,7 +13,7 @@ use snafu::OptionExt;
 
 use crate::{
     error::{A2IParseSnafu, RutinError, RutinResult},
-    shared::{Letter, Shared},
+    shared::{Letter, Shared, SET_MASTER_ID},
     Int,
 };
 use atoi::FromRadix10SignedChecked;
@@ -193,10 +193,9 @@ pub async fn set_server_to_standalone(shared: Shared) {
     }
 
     // 断开Psync中的连接
-    shared
-        .post_office()
-        .send_all(Letter::ShutdownReplicas)
-        .await;
+    if let Some(outbox) = shared.post_office().get_outbox(SET_MASTER_ID) {
+        outbox.send(Letter::ShutdownTask).ok();
+    }
 }
 
 #[test]
