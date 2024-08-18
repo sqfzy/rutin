@@ -3,12 +3,12 @@ use crate::{
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
     server::Handler,
-    shared::{Letter, Shared, AOF_ID, SET_MASTER_ID},
+    shared::{Letter, Shared, UnblockEvent, AOF_ID, SET_MASTER_ID},
 };
 use bytes::BytesMut;
-use event_listener::listener;
+use event_listener::{listener, Event};
 use serde::Deserialize;
-use std::{os::unix::fs::MetadataExt, path::Path, time::Duration};
+use std::{os::unix::fs::MetadataExt, path::Path, sync::Arc, time::Duration};
 use tokio::{
     fs::File,
     io::{self, AsyncReadExt, AsyncWriteExt},
@@ -72,16 +72,23 @@ impl Aof {
 impl Aof {
     pub async fn save(&mut self, shared: Shared) -> anyhow::Result<()> {
         let aof_conf = shared.conf().aof.as_ref().unwrap();
+        let post_office = shared.post_office();
+
+        let (aof_outbox, aof_inbox) = post_office.new_mailbox_with_special_id(AOF_ID);
+
+        let unblock_event = UnblockEvent(Arc::new(Event::new()));
+        post_office.send_block_all(AOF_ID, &unblock_event).await;
+
+        // Safety: BlockAll之后不会有其它任务使用post_office
+        unsafe {
+            *shared.post_office().aof_outbox.get() = Some(aof_outbox);
+        }
+
+        // 解除阻塞
+        drop(unblock_event);
 
         let mut curr_aof_size = 0_u128; // 单位为byte
         let auto_aof_rewrite_min_size = aof_conf.auto_aof_rewrite_min_size;
-
-        let aof_inbox = shared
-            .post_office()
-            .get_inbox(AOF_ID)
-            .ok_or(anyhow::anyhow!(
-                "AOF_ID mailbox should exist when aof is enabled",
-            ))?;
 
         let set_master_outbox = shared.post_office().get_outbox(SET_MASTER_ID);
 
@@ -89,7 +96,7 @@ impl Aof {
         match aof_conf.append_fsync {
             AppendFSync::Always => loop {
                 match aof_inbox.recv_async().await {
-                    Letter::ShutdownServer | Letter::ShutdownTask | Letter::Reset => {
+                    Letter::ShutdownServer | Letter::Reset => {
                         break;
                     }
                     Letter::BlockAll { unblock_event } => {
@@ -121,7 +128,7 @@ impl Aof {
                     biased;
 
                     letter = aof_inbox.recv_async() => match letter {
-                        Letter::ShutdownServer | Letter::ShutdownTask | Letter::Reset => {
+                        Letter::ShutdownServer | Letter::Reset => {
                             break;
                         }
                         Letter::BlockAll { unblock_event } => {
@@ -153,7 +160,7 @@ impl Aof {
 
             AppendFSync::No => loop {
                 match aof_inbox.recv_async().await {
-                    Letter::ShutdownServer | Letter::ShutdownTask | Letter::Reset => {
+                    Letter::ShutdownServer | Letter::Reset => {
                         break;
                     }
                     Letter::BlockAll { unblock_event } => {
@@ -229,7 +236,6 @@ async fn aof_test() {
         cmd::dispatch,
         frame::Resp3,
         server::Handler,
-        shared::Letter,
         util::{get_test_shared, test_init},
     };
     use std::io::Write;
@@ -333,5 +339,5 @@ async fn aof_test() {
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    shared.post_office().send_all(Letter::ShutdownServer).await;
+    shared.post_office().send_shutdown_server().await;
 }

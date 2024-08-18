@@ -4,7 +4,7 @@ use crate::{
     frame::Resp3,
     persist::{aof::Aof, rdb::rdb_load},
     server::{Handler, HandlerContext},
-    shared::{Letter, Shared, SET_MASTER_ID, SET_REPLICA_ID},
+    shared::{Shared, SET_REPLICA_ID},
     util::atoi,
 };
 use bytes::Buf;
@@ -43,23 +43,18 @@ pub fn set_server_to_replica(
         static OFFSET: Mutex<u64> = Mutex::const_new(0);
 
         let conf = shared.conf();
+        let post_office = shared.post_office();
 
+        println!("debug2");
         // 如果已经有一个异步任务在执行该函数(未执行到run_replica())，则直接返回错误
         let mut ms_info =
             conf.replica.master_info.try_lock().map_err(|_| {
                 "ERR another replica operation is in progress, please try again later"
             })?;
 
-        /* step1: 关闭SetMaster任务并阻塞所有任务 */
-
-        let post_office = shared.post_office();
-        if let Some(outbox) = post_office.get_outbox(SET_MASTER_ID) {
-            outbox.send(Letter::ShutdownTask).ok();
-            post_office.remove(SET_MASTER_ID);
-        }
-
         /* step2: 与主节点握手建立连接 */
 
+        println!("debug3");
         let to_master = TcpStream::connect((master_host.as_ref(), master_port))
             .timeout(Duration::from_secs(3))
             .await
@@ -80,6 +75,7 @@ pub fn set_server_to_replica(
             Handler::new(shared, to_master, context)
         };
 
+        println!("debug4");
         // 发送PING测试主节点是否可达
         handle_master
             .conn
@@ -87,17 +83,18 @@ pub fn set_server_to_replica(
                 Resp3::new_blob_string(b"PING"),
             ]))
             .await?;
+        println!("debug4");
 
-        if !handle_master.conn.read_frame().await?.is_some_and(|frame| {
-            frame
-                .try_simple_string()
-                .is_some_and(|frame| frame == "PONG")
-        }) {
-            return Err(RutinError::from(format!(
-                "ERR master {}:{} is unreachable or busy",
-                master_host, master_port
-            )));
-        };
+        // 主节点应当返回"+PONG\r\n"
+        if let Some(err) = handle_master
+            .conn
+            .read_frame_force()
+            .await?
+            .try_simple_error()
+        {
+            return Err(RutinError::from(err.to_string()));
+        }
+        println!("debug5");
 
         // 身份验证(可选)
         if let Some(password) = conf.replica.master_auth.as_ref() {
@@ -129,6 +126,17 @@ pub fn set_server_to_replica(
             ]))
             .await?;
 
+        // 主节点应当返回+OK\r\n
+        if let Some(err) = handle_master
+            .conn
+            .read_frame_force()
+            .await?
+            .try_simple_error()
+        {
+            return Err(RutinError::from(err.to_string()));
+        }
+        println!("debug6");
+
         // 等待旧的run_replica()任务结束并获取offset
         let mut offset = OFFSET.lock().await;
 
@@ -155,8 +163,6 @@ pub fn set_server_to_replica(
                 ]))
                 .await?;
         };
-
-        let _ok = handle_master.conn.read_frame_force().await?;
 
         let response = handle_master.conn.read_frame_force().await?;
 
@@ -197,14 +203,16 @@ pub fn set_server_to_replica(
                 });
                 *offset = master_offset;
 
-                // 清除旧数据并执行全量同步
-                post_office.send_all(Letter::Reset).await;
+                // 重置服务(清除旧数据，关闭所有记录的任务)并执行全量同步
+                println!("debug4");
+                post_office.send_reset(SET_REPLICA_ID).await;
                 full_sync(&mut handle_master).await.unwrap();
             }
 
             // 释放锁，重新允许执行set_server_to_replica函数
             drop(ms_info);
 
+            println!(" reader_buf: {:?}", handle_master.conn.reader_buf);
             /* step4: 接收并处理传播的写命令 */
             if let Err(e) = handle_master.run_replica(offset).await {
                 error!(cause = %e, "replica run error");
@@ -225,11 +233,13 @@ async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
     Resp3::need_bytes_async(&mut handler.conn.stream, &mut handler.conn.reader_buf, len).await?;
     let mut rdb = handler.conn.reader_buf.split_to(len);
 
+    println!("debug2: rdb: {:?}", rdb);
+    println!("debug3: reader_buf: {:?}", handler.conn.reader_buf);
+
     rdb_load(&mut rdb, handler.shared.db(), false)
         .await
         .map_err(|e| RutinError::new_server_error(e.to_string()))?;
 
-    // 已经BlockALl，因此不会有其它任务向aof写入数据，可以rewrite
     if let Some(aof_conf) = &handler.shared.conf().aof {
         let mut aof = Aof::new(handler.shared, aof_conf.file_path.clone()).await?;
         aof.rewrite()

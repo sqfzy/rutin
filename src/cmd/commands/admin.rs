@@ -377,6 +377,7 @@ impl CmdExecutor for PSync {
 
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let post_office = handler.shared.post_office();
+
         if let Some(handler) = (handler as &mut dyn Any).downcast_mut::<Handler<TcpStream>>()
             && let Some(outbox) = post_office.get_outbox(SET_MASTER_ID)
         {
@@ -389,7 +390,7 @@ impl CmdExecutor for PSync {
 
                 let (outbox, inbox) = post_office.new_mailbox_with_special_id(NULL_ID);
                 // 用于通知关闭whatever_handler
-                outbox.send(Letter::ShutdownTask).ok();
+                outbox.send(Letter::ShutdownServer).ok();
 
                 let context = HandlerContext::new(handler.shared, NULL_ID, outbox, inbox);
 
@@ -408,8 +409,13 @@ impl CmdExecutor for PSync {
                 })
                 .await
                 .ok();
+
+            Ok(None)
+        } else {
+            Err(RutinError::from(
+                "ERR server cann't be a master without `master` config",
+            ))
         }
-        todo!()
     }
 
     fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
@@ -422,6 +428,88 @@ impl CmdExecutor for PSync {
             repl_offset: util::atoi(&args.next().unwrap())?,
         })
     }
+}
+
+/// # Reply:
+///
+/// **Simple string reply**: OK.
+#[derive(Debug)]
+pub struct ReplConf {
+    pub sub_cmd: ReplConfSubCmd,
+}
+
+impl CmdExecutor for ReplConf {
+    const NAME: &'static str = "REPLCONF";
+    const CATS_FLAG: Flag = REPLCONF_CATS_FLAG;
+    const CMD_FLAG: Flag = REPLCONF_CMD_FLAG;
+
+    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+        // TODO:
+        match self.sub_cmd {
+            ReplConfSubCmd::ListeningPort { port } => {
+                // handler.shared.conf().replica.listening_port.store(port);
+            }
+            ReplConfSubCmd::Ack { offset } => {
+                // handler.shared.conf().replica.ack.store(offset);
+            }
+        }
+
+        Ok(Some(Resp3::new_simple_string("OK".into())))
+    }
+
+    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+        if args.len() != 2 {
+            return Err(RutinError::WrongArgNum);
+        }
+
+        let sub_cmd = match args.next().unwrap().as_ref() {
+            b"listening-port" => ReplConfSubCmd::ListeningPort {
+                port: util::atoi(&args.next().unwrap())?,
+            },
+            b"ack" => ReplConfSubCmd::Ack {
+                offset: util::atoi(&args.next().unwrap())?,
+            },
+            _ => return Err(RutinError::Syntax),
+        };
+
+        Ok(ReplConf { sub_cmd })
+    }
+}
+
+// REPLCONF listening-port <port>
+// 用于从节点通知主节点其当前监听的端口号。这有助于主节点在需要时与从节点建立新的连接。
+//
+// REPLCONF ip-address <ip>
+// 用于从节点通知主节点其当前的 IP 地址。这在从节点的 IP 地址发生变化时尤为重要，以确保主节点能正确识别并与从节点通信。
+//
+// REPLCONF capa <capability>
+// 用于从节点向主节点声明其支持的功能（capability）。常见的功能声明包括：
+// capa eof: 表示从节点支持 PSYNC 协议中的 EOF 标记，用于在主节点完成 RDB 文件传输时告知从节点。
+// capa psync2: 表示从节点支持 PSYNC2 协议（Redis 4.0+ 中引入的改进版 PSYNC 协议）。
+//
+// REPLCONF ack <offset>
+// 用于从节点定期向主节点报告其已复制的数据的偏移量（offset）。主节点通过这个信息来判断从节点的同步进度，并决定哪些数据可以安全地从内存中清除。
+//
+// REPLCONF getack
+// 这个命令由主节点发送给从节点，要求从节点立即发送一个 REPLCONF ack 消息。这通常在主节点需要立即确认从节点的同步状态时使用。
+//
+// REPLCONF client-id <id>
+// 用于从节点通知主节点其客户端 ID，这在 Redis 集群中可以用来跟踪特定从节点。
+//
+// REPLCONF current-flush-position <position>
+// 用于通知主节点从节点的当前写入位置，这有助于管理主从之间的数据同步流量，特别是在高并发环境下。
+//
+// REPLCONF rdb-only <yes|no>
+// 从节点可以使用这个命令通知主节点它是否仅希望接收 RDB 文件（通常在初始同步过程中），而不接收后续的增量数据。这在某些只需要初始数据快照的场景下使用。
+#[derive(Debug)]
+pub enum ReplConfSubCmd {
+    Ack { offset: u64 },
+    // Capa,
+    // Get,
+    ListeningPort { port: u16 },
+    // NoOne,
+    // Offset,
+    // Set,
 }
 
 /// # Reply:

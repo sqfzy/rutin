@@ -4,10 +4,10 @@ use crate::{
     frame::Resp3,
     persist::rdb::rdb_save,
     server::Handler,
-    shared::{Letter, Shared, SET_MASTER_ID},
+    shared::{Letter, Shared, UnblockEvent, SET_MASTER_ID},
 };
 use bytes::{Buf, BytesMut};
-use event_listener::listener;
+use event_listener::{listener, Event};
 use futures::{future::select_all, FutureExt};
 use std::{sync::Arc, time::Duration};
 use tokio::{net::TcpStream, time::error::Elapsed};
@@ -44,8 +44,11 @@ impl BackLog {
 
     pub fn get_gap_data(&self, repl_offset: u64) -> Option<&[u8]> {
         let gap = self.offset.saturating_sub(repl_offset);
-        if repl_offset <= self.cap {
-            self.buf.get(gap as usize..)
+
+        if gap == 0 {
+            Some(&[])
+        } else if gap <= self.cap {
+            self.buf.get((self.cap - gap) as usize..)
         } else {
             None
         }
@@ -59,13 +62,21 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
     let conf = shared.conf();
     let post_office = shared.post_office();
 
-    let set_master_inbox =
-        shared
-            .post_office()
-            .get_inbox(SET_MASTER_ID)
-            .ok_or(RutinError::from(
-                "SET_MASTER_ID mailbox should exist when master config is set",
-            ))?;
+    let (set_master_outbox, set_master_inbox) =
+        post_office.new_mailbox_with_special_id(SET_MASTER_ID);
+
+    let unblock_event = UnblockEvent(Arc::new(Event::new()));
+    post_office
+        .send_block_all(SET_MASTER_ID, &unblock_event)
+        .await;
+
+    // Safety: BlockAll之后不会有其它任务使用post_office
+    unsafe {
+        *shared.post_office().set_master_outbox.get() = Some(set_master_outbox);
+    }
+
+    // 解除阻塞
+    drop(unblock_event);
 
     // 记录最近的写命令
     let mut back_log = BackLog::new(master_conf.backlog_size);
@@ -86,10 +97,11 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
     .boxed()]);
 
     loop {
+        println!("debug3: len={:?}", replica_handlers.len());
         tokio::select! {
             letter = set_master_inbox.recv_async() => {
                 match letter {
-                    Letter::ShutdownServer | Letter::ShutdownTask | Letter::Reset => {
+                    Letter::ShutdownServer | Letter::Reset => {
                         return Ok(());
                     }
                     Letter::BlockAll { unblock_event } => {
@@ -108,9 +120,31 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                         back_log.push(wcmd);
                     }
                     Letter::Psync { mut handle_replica, repl_id, repl_offset } => {
-                        if repl_id == conf.server.run_id && let Some(gap_data) = back_log.get_gap_data(repl_offset) {
+                        println!("debug1");
+                        let run_id = conf.server.run_id.clone();
+                        let master_offset = back_log.offset;
+
+                        if conf.security.requirepass.is_some() {
+                            let auth = handle_replica.conn.read_frame().await?.ok_or(RutinError::from("ERR require auth"))?;
+                            if let Some(resp) = handle_replica.dispatch(auth).await? {
+                                handle_replica.conn.write_frame(&resp).await?;
+
+                                if resp.is_simple_error() {
+                                    // 认证失败
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if repl_id == run_id && let Some(gap_data) = back_log.get_gap_data(repl_offset) {
                             // 如果id匹配且BackLog中有足够的数据，则进行增量复制
-                            handle_replica.conn.write_frame(&Resp3::<&[u8], _>::new_simple_string("CONTINUE")).await?;
+
+                            // 返回"+CONTINUE"
+                            handle_replica
+                                .conn
+                                .write_frame(&Resp3::<&[u8], _>::new_simple_string("CONTINUE"))
+                                .await?;
+
                             handle_replica.conn.write_all(gap_data).await?;
 
                             // 允许接收从节点的所有命令
@@ -125,8 +159,16 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                                     .map(|handler| handler.conn.read_frame().timeout(timeout).boxed()),
                             );
                         } else {
-                            let repl_id = conf.server.run_id.clone();
-                            let repl_offset = back_log.offset;
+                            // 如果id不匹配或者BackLog中没有足够的数据，则进行全量复制
+
+                            // 返回"+FULLRESYNC <run_id> <master_offset>"
+                            handle_replica
+                                .conn
+                                .write_frame(&Resp3::<&[u8], _>::new_simple_string(format!(
+                                    "FULLRESYNC {:?} {}",
+                                    conf.server.run_id, master_offset
+                                )))
+                                .await?;
 
                             // 全量复制可能非常耗时，因此放到新线程中执行，执行完毕后
                             // 再次发送Psync请求，直到可以进行增量复制。为了避免重复
@@ -141,13 +183,15 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                                         .unwrap()
                                         .send(Letter::Psync {
                                             handle_replica,
-                                            repl_id,
-                                            repl_offset,
+                                            repl_id: run_id,
+                                            repl_offset: master_offset,
                                         })
                                         .ok();
                                 });
                             });
                         }
+
+                        println!("debug2");
 
                     }
                     // TODO:

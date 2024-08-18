@@ -5,20 +5,15 @@
 // Handler需要处理ShutdownServer和BlockAllClients消息。
 
 use core::panic;
-use std::{fmt::Debug, sync::Arc};
+use std::{cell::UnsafeCell, fmt::Debug, sync::Arc};
 
-use crate::{
-    conf::Conf,
-    frame::Resp3,
-    server::{AsyncStream, Handler, ID},
-    Id,
-};
+use crate::{frame::Resp3, server::Handler, Id};
 use bytes::{Bytes, BytesMut};
 use dashmap::{DashMap, Entry};
 use event_listener::Event;
 use flume::{Receiver, Sender};
-use tokio::net::{TcpSocket, TcpStream};
-use tracing::{debug, instrument};
+use tokio::net::TcpStream;
+use tracing::{debug, info, instrument};
 
 pub const NULL_ID: Id = 0; // 用于测试以及创建FakeHandler。该ID没有统一对应的mailbox
 pub const DELAY_ID: Id = 1; // 用于延迟任务
@@ -50,16 +45,21 @@ pub struct PostOffice {
     /// 理，因此aof和replica需要在同一个task中处理。但是replica的数目是运行时可
     /// 变的，为避免额外得同步措施，wcmd_propagator既可以传播wcmd，也可以发送一个
     /// replica的handler
-    aof_outbox: Option<Outbox>,
-    set_master_outbox: Option<Outbox>,
+    //
+    // 修改之前可以使用BlockAll阻止其它任务访问
+    pub aof_outbox: UnsafeCell<Option<Outbox>>,
+    pub set_master_outbox: UnsafeCell<Option<Outbox>>,
 }
 
+unsafe impl Sync for PostOffice {}
+unsafe impl Send for PostOffice {}
+
 impl PostOffice {
-    pub fn new(aof_outbox: Option<Outbox>, set_master_outbox: Option<Outbox>) -> Self {
+    pub fn new() -> Self {
         Self {
             inner: DashMap::with_hasher(nohash::BuildNoHashHasher::default()),
-            aof_outbox,
-            set_master_outbox,
+            aof_outbox: UnsafeCell::new(None),
+            set_master_outbox: UnsafeCell::new(None),
         }
     }
 
@@ -93,83 +93,7 @@ impl PostOffice {
         (id, tx, rx)
     }
 
-    pub fn reset(&'static mut self, conf: &Conf) {
-        match (
-            conf.aof.is_some() && self.aof_outbox.is_none(),
-            conf.master.is_some() && self.set_master_outbox.is_none(),
-        ) {
-            (true, true) => {
-                let (aof_outbox, aof_inbox) = flume::unbounded();
-                let (set_master_outbox, set_master_inbox) = flume::unbounded();
-
-                self.aof_outbox = Some(aof_outbox.clone());
-                self.set_master_outbox = Some(set_master_outbox.clone());
-
-                self.inner.insert(
-                    AOF_ID,
-                    (
-                        aof_outbox,
-                        Inbox {
-                            inner: aof_inbox,
-                            post_office: self as &'static Self,
-                            id: AOF_ID,
-                        },
-                    ),
-                );
-
-                self.inner.insert(
-                    SET_MASTER_ID,
-                    (
-                        set_master_outbox,
-                        Inbox {
-                            inner: set_master_inbox,
-                            post_office: self as &'static Self,
-                            id: SET_MASTER_ID,
-                        },
-                    ),
-                );
-            }
-            (true, false) => {
-                let (outbox, inbox) = flume::unbounded();
-
-                self.aof_outbox = Some(outbox.clone());
-                self.inner.insert(
-                    AOF_ID,
-                    (
-                        outbox,
-                        Inbox {
-                            inner: inbox,
-                            post_office: self as &'static Self,
-                            id: AOF_ID,
-                        },
-                    ),
-                );
-            }
-            (false, true) => {
-                let (outbox, inbox) = flume::unbounded();
-
-                self.set_master_outbox = Some(outbox.clone());
-                self.inner.insert(
-                    SET_MASTER_ID,
-                    (
-                        outbox,
-                        Inbox {
-                            inner: inbox,
-                            post_office: self as &'static Self,
-                            id: SET_MASTER_ID,
-                        },
-                    ),
-                );
-            }
-            _ => {}
-        }
-    }
-
-    #[inline]
-    pub fn delay_token(&'static self) -> Inbox {
-        self.new_mailbox_with_special_id(DELAY_ID).1.clone()
-    }
-
+    #[instrument(level = "debug", skip(self))]
     pub fn new_mailbox_with_special_id(&'static self, id: Id) -> (Outbox, Inbox) {
         debug_assert!(SPECIAL_ID_RANGE.contains(&id));
 
@@ -197,6 +121,21 @@ impl PostOffice {
     }
 
     #[inline]
+    pub fn aof_outbox(&self) -> Option<&Outbox> {
+        unsafe { (*self.aof_outbox.get()).as_ref() }
+    }
+
+    #[inline]
+    pub fn set_master_outbox(&self) -> Option<&Outbox> {
+        unsafe { (*self.set_master_outbox.get()).as_ref() }
+    }
+
+    #[inline]
+    pub fn delay_token(&'static self) -> Inbox {
+        self.new_mailbox_with_special_id(DELAY_ID).1.clone()
+    }
+
+    #[inline]
     pub fn get_clients_count(&self) -> usize {
         self.inner.len() - USED_SPECIAL_ID_COUNT
     }
@@ -213,7 +152,7 @@ impl PostOffice {
 
     #[inline]
     pub fn need_send_wcmd(&self) -> bool {
-        self.aof_outbox.is_some() || self.set_master_outbox.is_some()
+        self.aof_outbox().is_some() || self.set_master_outbox().is_some()
     }
 
     #[inline]
@@ -225,9 +164,9 @@ impl PostOffice {
     pub async fn send_wcmd(&self, wcmd: BytesMut) {
         // Aof和SetMaster任务都需要处理写命令，但Aof只需要&wcmd，为了避免clone，
         // 如果存在Aof任务，则由Aof任务在使用完&wcmd后发送给SetMaster任务
-        if let Some(outbox) = &self.aof_outbox {
+        if let Some(outbox) = self.aof_outbox() {
             outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
-        } else if let Some(outbox) = &self.set_master_outbox {
+        } else if let Some(outbox) = self.set_master_outbox() {
             outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
         }
     }
@@ -238,105 +177,114 @@ impl PostOffice {
                 break;
             }
 
-            if tracing::enabled!(tracing::Level::DEBUG) {
-                for entry in self.inner.iter() {
-                    debug!("wait id={} shutdown", entry.key());
-                }
+            // if tracing::enabled!(tracing::Level::DEBUG) {
+            for entry in self.inner.iter() {
+                info!("wait id={} shutdown", entry.key());
             }
+            // }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
     }
 
-    // 广播消息。如果想要单播，可以使用get_outbox
     #[instrument(level = "debug", skip(self))]
-    pub async fn send_all(&self, msg: Letter) {
-        match &msg {
-            Letter::ShutdownServer => {
-                for entry in self.inner.iter() {
-                    entry.0.send_async(msg.clone()).await.ok();
-                }
-            }
-            Letter::Reset => {
-                // 服务还未初始化
-                if !self.inner.contains_key(&MAIN_ID) {
-                    return;
-                }
-
-                // 重置服务，关闭除主任务以外的所有任务
-                for entry in self.inner.iter() {
-                    if *entry.key() == MAIN_ID {
-                        continue;
-                    }
-
-                    entry.0.send_async(msg.clone()).await.ok();
-                }
-
-                // 循环等待主任务以外的任务关闭
-                loop {
-                    if self.inner.len() == 1 {
-                        break;
-                    }
-
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-
-                // 向主任务发送Reset，由主任务重置Shared
-                self.get_outbox(MAIN_ID)
-                    .unwrap()
-                    .send_async(msg.clone())
-                    .await
-                    .ok();
-            }
-            Letter::BlockAll {
-                unblock_event: event,
-            } => {
-                // 不存在任何任务
-                if self.inner.is_empty() {
-                    return;
-                }
-
-                // 阻塞服务，不允许新连接
-                self.inner
-                    .get(&MAIN_ID)
-                    .unwrap()
-                    .0
-                    .send_async(msg.clone())
-                    .await
-                    .ok();
-
-                // 循环等待服务准备好监听
-                loop {
-                    if event.total_listeners() == 1 {
-                        break;
-                    }
-
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-
-                let src_id = ID.get();
-                let len = self.inner.len();
-
-                // 向除自己以外的task发送
-                for entry in self.inner.iter() {
-                    if *entry.key() == src_id {
-                        continue;
-                    }
-
-                    entry.0.send_async(msg.clone()).await.ok();
-                }
-
-                // 循环等待它们(主服务以及除自己以外的连接)准备好监听
-                loop {
-                    if event.total_listeners() == len - 1 {
-                        break;
-                    }
-
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-            }
-            _ => unreachable!(),
+    pub async fn send_shutdown_server(&self) {
+        for entry in self.inner.iter() {
+            entry.0.send_async(Letter::ShutdownServer).await.ok();
         }
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    pub async fn send_reset(&self, src_id: Id) {
+        if !self.inner.contains_key(&MAIN_ID) {
+            return;
+        }
+
+        // 重置服务，关闭除主任务以外的所有任务
+        for entry in self.inner.iter() {
+            if *entry.key() == MAIN_ID || *entry.key() == src_id {
+                continue;
+            }
+
+            entry.0.send_async(Letter::Reset).await.ok();
+        }
+
+        // 循环等待主任务以及当前任务以外的任务关闭
+        loop {
+            if self.inner.len() == 2 {
+                break;
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        // 向主任务发送Reset，由主任务重置Shared
+        self.get_outbox(MAIN_ID)
+            .unwrap()
+            .send_async(Letter::Reset)
+            .await
+            .ok();
+    }
+
+    #[instrument(level = "debug", skip(self, unblock_event))]
+    pub async fn send_block_all(&self, src_id: Id, unblock_event: &UnblockEvent) {
+        let unblock_event = &unblock_event.0;
+
+        // 阻塞服务，不允许新连接
+        if let Some(outbox) = self.get_outbox(MAIN_ID) {
+            outbox
+                .send_async(Letter::BlockAll {
+                    unblock_event: unblock_event.clone(),
+                })
+                .await
+                .ok();
+            println!("debug9");
+        } else {
+            println!("debug8");
+            // 服务还未初始化
+            return;
+        }
+
+        // 循环等待服务准备好监听
+        loop {
+            if unblock_event.total_listeners() == 1 {
+                break;
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        let len = self.inner.len();
+
+        // 向除自己和主任务以外的task发送
+        for entry in self.inner.iter() {
+            if *entry.key() == MAIN_ID || *entry.key() == src_id {
+                continue;
+            }
+
+            entry
+                .0
+                .send_async(Letter::BlockAll {
+                    unblock_event: unblock_event.clone(),
+                })
+                .await
+                .ok();
+        }
+
+        // 循环等待它们(主服务以及除自己以外的连接)准备好监听
+        loop {
+            if unblock_event.total_listeners() == len - 1 {
+                break;
+            }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    }
+}
+
+impl Default for PostOffice {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -401,8 +349,6 @@ pub enum Letter {
     },
     // RemoveReplica,
 
-    // 关闭某个任务
-    ShutdownTask,
     // Block
 
     // // do nothing
@@ -425,7 +371,6 @@ impl Debug for Letter {
                 ..
             } => write!(f, "Letter::Psync({:?}, {:?})", repl_id, repl_offset),
             // Letter::RemoveReplica => write!(f, "Letter::RemoveReplica"),
-            Letter::ShutdownTask => write!(f, "Letter::ShutdownClient"),
         }
     }
 }
@@ -444,7 +389,6 @@ impl Clone for Letter {
             Letter::Wcmd(cmd) => Letter::Wcmd(cmd.clone()),
             Letter::Psync { .. } => unreachable!(),
             // Letter::RemoveReplica => Letter::RemoveReplica,
-            Letter::ShutdownTask => Letter::ShutdownTask,
         }
     }
 }
@@ -503,6 +447,7 @@ pub struct UnblockEvent(pub Arc<Event>);
 // WARN: 必须执行该步骤否则阻塞的服务无法正常关闭，因此不能设置panic="abort"
 impl Drop for UnblockEvent {
     fn drop(&mut self) {
+        println!("drop UnblockEvent");
         self.0.notify(usize::MAX);
     }
 }

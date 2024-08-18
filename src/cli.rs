@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::conf::MasterInfo;
 use bytestring::ByteString;
 use clap::Parser;
@@ -23,6 +25,7 @@ pub fn merge_cli(conf: &mut crate::conf::Conf, cli: Cli) {
     }
 
     if let Some(log_level) = cli.log_level {
+        tracing::Level::from_str(&log_level).unwrap();
         conf.server.log_level = log_level.into();
     }
 }

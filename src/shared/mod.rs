@@ -20,7 +20,7 @@ pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Shared {
-    inner: &'static UnsafeCell<SharedInner>,
+    pub inner: &'static UnsafeCell<SharedInner>,
 }
 
 unsafe impl Send for Shared {}
@@ -42,65 +42,21 @@ impl Shared {
 
         let db = Db::new(conf.memory.clone());
         let script = Script::new();
+        let post_office = PostOffice::new();
 
-        let aof_mailbox = if conf.aof.is_some() {
-            Some(flume::unbounded())
-        } else {
-            None
+        let inner = SharedInner {
+            pool: LocalPoolHandle::new(num_cpus::get()),
+            db,
+            conf,
+            script,
+            post_office,
+            // back_log: Mutex::new(BytesMut::new()),
+            // offset: AtomicU64::new(0),
         };
 
-        let set_master_mailbox = if conf.master.is_some() {
-            Some(flume::unbounded())
-        } else {
-            None
-        };
-
-        let post_office = PostOffice::new(
-            aof_mailbox.as_ref().map(|mailbox| mailbox.0.clone()),
-            set_master_mailbox.as_ref().map(|mailbox| mailbox.0.clone()),
-        );
-
-        let shared = Self {
-            inner: Box::leak(Box::new(UnsafeCell::new(SharedInner {
-                pool: LocalPoolHandle::new(num_cpus::get()),
-                db,
-                conf,
-                script,
-                post_office,
-                // back_log: Mutex::new(BytesMut::new()),
-                // offset: AtomicU64::new(0),
-            }))),
-        };
-
-        if let Some((outbox, inbox)) = aof_mailbox {
-            shared.post_office().inner.insert(
-                AOF_ID,
-                (
-                    outbox,
-                    Inbox {
-                        inner: inbox,
-                        post_office: shared.post_office(),
-                        id: AOF_ID,
-                    },
-                ),
-            );
+        Self {
+            inner: Box::leak(Box::new(UnsafeCell::new(inner))),
         }
-
-        if let Some((outbox, inbox)) = set_master_mailbox {
-            shared.post_office().inner.insert(
-                SET_MASTER_ID,
-                (
-                    outbox,
-                    Inbox {
-                        inner: inbox,
-                        post_office: shared.post_office(),
-                        id: SET_MASTER_ID,
-                    },
-                ),
-            );
-        }
-
-        shared
     }
 
     #[inline]
@@ -128,26 +84,18 @@ impl Shared {
         unsafe { &(*self.inner.get()).post_office }
     }
 
-    /// Returns the reset of this [`Shared`].
-    ///
-    /// # Safety
-    ///
-    /// 调用该函数时，不允许其它线程持有post_office.aof_outbox和post_office.set_master_outbox
-    pub unsafe fn reset(&self) {
+    pub fn reset(&self) {
         self.db().clear();
         self.script().clear();
-        unsafe {
-            (*self.inner.get()).post_office.reset(self.conf());
-        }
     }
 }
 
 pub struct SharedInner {
-    pool: LocalPoolHandle,
-    db: Db,
-    conf: Conf,
-    script: Script,
-    post_office: PostOffice,
+    pub pool: LocalPoolHandle,
+    pub db: Db,
+    pub conf: Conf,
+    pub script: Script,
+    pub post_office: PostOffice,
     // back_log: Mutex<BytesMut>,
     // offset: AtomicU64,
 }

@@ -35,6 +35,7 @@ pub const ADMIN_CAT_FLAG: Flag = ACLCAT_CMD_FLAG
     | ACLUSERS_CMD_FLAG
     | BGSAVE_CMD_FLAG
     | PSYNC_CMD_FLAG
+    | REPLCONF_CMD_FLAG
     | REPLICAOF_CMD_FLAG;
 
 pub const CONNECTION_CAT_FLAG: Flag =
@@ -210,6 +211,7 @@ gen_cmd_and_cats_flag!(
     AclWhoAmI(admin, dangerous),
     BgSave(admin, dangerous),
     PSync(admin, dangerous),
+    ReplConf(admin, dangerous),
     ReplicaOf(admin, dangerous),
     /**************/
     /* connection */

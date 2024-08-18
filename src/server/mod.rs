@@ -13,7 +13,7 @@ use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
-    shared::{post_office::Letter, Shared, MAIN_ID},
+    shared::{post_office::Letter, Shared, AOF_ID, MAIN_ID},
     util::{set_server_to_master, set_server_to_replica},
     Id,
 };
@@ -47,33 +47,35 @@ pub async fn run() {
 
     init(shared).await.unwrap();
 
+    let inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
+
     let mut server = Listener::new(shared).await;
 
-    let inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
     loop {
         tokio::select! {
-            res = server.run() => {
-                if let Err(err) = res {
-                    error!(cause = %err, "server run error");
-                    post_office.send_all(Letter::ShutdownServer).await;
-                }
-            }
             letter = inbox.recv_async() => match letter {
                 Letter::ShutdownServer => {
                     break;
                 }
                 Letter::Reset => {
-                    unsafe { shared.reset(); }
-                    init(shared).await.unwrap();
+                    shared.reset();
 
                     drop(server);
                     server = Listener::new(shared).await;
                 }
                 Letter::BlockAll { unblock_event } => {
-                    listener!(unblock_event  => listener);
+                    println!("debug11 blockall");
+                    listener!(unblock_event => listener);
                     listener.await;
+                    println!("debug12 unblock");
                 }
-                Letter::Resp3(_) | Letter::Wcmd(_) | Letter::Psync {..} | Letter::ShutdownTask => {}
+                Letter::Resp3(_) | Letter::Wcmd(_) | Letter::Psync {..} => {}
+            },
+            res = server.run() => {
+                if let Err(err) = res {
+                    error!(cause = %err, "server run error");
+                    post_office.send_shutdown_server().await;
+                }
             }
         }
     }
@@ -84,19 +86,19 @@ pub async fn run() {
 }
 
 pub async fn init(shared: Shared) -> anyhow::Result<()> {
-    static ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
     let post_office = shared.post_office();
     let conf = shared.conf();
 
-    if ONCE.load(Ordering::Relaxed) {
+    if ONCE.load(Ordering::SeqCst) {
         shared.pool().spawn_pinned(|| async {
             if let Err(e) = tokio::signal::ctrl_c().await {
                 eprintln!("Failed to wait for CTRL+C: {}", e);
                 std::process::exit(1);
             } else {
                 eprintln!("\nShutting down server...");
-                post_office.send_all(Letter::ShutdownServer).await;
+                post_office.send_shutdown_server().await;
             }
         });
 
@@ -192,7 +194,7 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
             }
         });
 
-        ONCE.store(true, Ordering::Relaxed);
+        ONCE.store(false, Ordering::SeqCst);
     }
 
     /*********************/
@@ -214,6 +216,7 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
         /* 是否开启了主从复制 */
         /**********************/
 
+        println!("debug1");
         set_server_to_replica(shared, ms_info.host, ms_info.port).await?;
     } else if let Some(master_conf) = conf.master.clone() {
         /**********************/

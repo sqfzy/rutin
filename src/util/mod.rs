@@ -194,7 +194,7 @@ pub async fn set_server_to_standalone(shared: Shared) {
 
     // 断开Psync中的连接
     if let Some(outbox) = shared.post_office().get_outbox(SET_MASTER_ID) {
-        outbox.send(Letter::ShutdownTask).ok();
+        outbox.send(Letter::ShutdownServer).ok();
     }
 }
 

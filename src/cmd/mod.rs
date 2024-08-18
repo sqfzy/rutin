@@ -144,6 +144,7 @@ pub async fn dispatch(
         AclWhoAmI,
         BgSave,
         PSync,
+        ReplConf,
         ReplicaOf,
         /**************/
         /* connection */

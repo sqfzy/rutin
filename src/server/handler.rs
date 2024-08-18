@@ -39,7 +39,7 @@ impl<S: AsyncStream> Handler<S> {
                     biased; // 有序轮询
 
                     letter = self.context.inbox.recv_async() => match letter {
-                        Letter::ShutdownTask | Letter::ShutdownServer | Letter::Reset => {
+                        Letter::ShutdownServer | Letter::Reset => {
                             return Ok(());
                         }
                         Letter::Resp3(resp) => {
@@ -73,6 +73,7 @@ impl<S: AsyncStream> Handler<S> {
         mut self,
         mut offset: tokio::sync::MutexGuard<'_, u64>,
     ) -> RutinResult<()> {
+        println!("debug6");
         ID.scope(self.context.id, async {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
 
@@ -88,7 +89,7 @@ impl<S: AsyncStream> Handler<S> {
                     biased;
 
                     letter = self.context.inbox.recv_async() => match letter {
-                        Letter::ShutdownTask | Letter::ShutdownServer | Letter::Reset => {
+                        Letter::ShutdownServer | Letter::Reset => {
                             return Ok(());
                         }
                         Letter::BlockAll { unblock_event } => {
