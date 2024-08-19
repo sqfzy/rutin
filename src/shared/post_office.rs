@@ -13,7 +13,7 @@ use dashmap::{DashMap, Entry};
 use event_listener::Event;
 use flume::{Receiver, Sender};
 use tokio::net::TcpStream;
-use tracing::{debug, info, instrument};
+use tracing::{info, instrument};
 
 pub const NULL_ID: Id = 0; // 用于测试以及创建FakeHandler。该ID没有统一对应的mailbox
 pub const DELAY_ID: Id = 1; // 用于延迟任务
@@ -238,9 +238,7 @@ impl PostOffice {
                 })
                 .await
                 .ok();
-            println!("debug9");
         } else {
-            println!("debug8");
             // 服务还未初始化
             return;
         }
@@ -423,6 +421,7 @@ impl Drop for Inbox {
         if self.inner.receiver_count() <= 2 {
             self.post_office.inner.remove(&self.id);
         }
+        // TODO: 如果是SET_MASTER_ID则BlockAll后设置set_master_outbox为None
     }
 }
 
@@ -447,7 +446,6 @@ pub struct UnblockEvent(pub Arc<Event>);
 // WARN: 必须执行该步骤否则阻塞的服务无法正常关闭，因此不能设置panic="abort"
 impl Drop for UnblockEvent {
     fn drop(&mut self) {
-        println!("drop UnblockEvent");
         self.0.notify(usize::MAX);
     }
 }

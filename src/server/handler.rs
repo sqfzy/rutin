@@ -12,7 +12,7 @@ use crate::{
 use bytes::BytesMut;
 use event_listener::listener;
 use std::{sync::Arc, time::Duration};
-use tracing::instrument;
+use tracing::{error, instrument};
 
 pub struct Handler<S: AsyncStream> {
     pub shared: Shared,
@@ -73,7 +73,11 @@ impl<S: AsyncStream> Handler<S> {
         mut self,
         mut offset: tokio::sync::MutexGuard<'_, u64>,
     ) -> RutinResult<()> {
-        println!("debug6");
+        // back_log仅用于记录offset
+        let mut back_log = BackLog::new(0);
+        back_log.offset = *offset;
+        self.context.back_log = Some(back_log);
+
         ID.scope(self.context.id, async {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
 
@@ -90,7 +94,7 @@ impl<S: AsyncStream> Handler<S> {
 
                     letter = self.context.inbox.recv_async() => match letter {
                         Letter::ShutdownServer | Letter::Reset => {
-                            return Ok(());
+                            break;
                         }
                         Letter::BlockAll { unblock_event } => {
                             listener!(unblock_event  => listener);
@@ -105,25 +109,37 @@ impl<S: AsyncStream> Handler<S> {
                     frames = self.conn.read_frames() => {
                         if let Some(frames) = frames? {
                             for f in frames.into_iter() {
-                                // 更新偏移量
-                                *offset += f.size() as u64;
-                                // 不返回响应
+                                // 如果从节点返回响应的话，主节点为了区分响应和请求
+                                // 就需要同步等待响应，为了避免等待，从节点只发送请
+                                // 求，不会发送响应
                                 dispatch(f, &mut self).await?;
                             }
                         } else {
                             return Ok(());
                         }
                     },
-                    // 每秒向master发送REPLCONF ACK <offset>，以便master知道当前同步进度。
-                    // 如果offset小于master offset，则主节点会补发相差的数据
+                    // 每秒向master发送REPLCONF ACK <offset>命令，以便master知道当前
+                    // 同步进度。如果offset小于master offset，则主节点会补发相差的数据
                     _ = interval.tick() => {
                         // 更新offset frame
-                        resp3.try_array_mut().unwrap()[2] = Resp3::new_blob_string(buf.format(*offset).into());
+                        resp3.try_array_mut().unwrap()[2] = Resp3::new_blob_string(
+                            buf.format(self.context.back_log.as_ref().unwrap().offset)
+                                .into(),
+                        );
 
                         self.conn.write_frame(&resp3).await?;
+                        let resp = self.conn.read_frame_force().await?;
+                        if resp.is_simple_error() {
+                            error!("REPLCONF ACK error: {}", resp);
+                        }
                     },
                 };
             }
+
+            // 保存offset，以便PSYNC时使用
+            *offset = self.context.back_log.unwrap().offset;
+
+            Ok(())
         })
         .await
     }

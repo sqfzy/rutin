@@ -621,7 +621,7 @@ impl TryFrom<&[u8]> for Where {
     }
 }
 
-async fn first_round<S: AsRef<str> + PartialEq>(
+async fn first_round<S: AsRef<str> + PartialEq + std::fmt::Debug>(
     keys: &[Key],
     shared: Shared,
 ) -> RutinResult<Option<Resp3<Bytes, S>>> {

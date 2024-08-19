@@ -13,7 +13,7 @@ use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
-    shared::{post_office::Letter, Shared, AOF_ID, MAIN_ID},
+    shared::{post_office::Letter, Shared, MAIN_ID},
     util::{set_server_to_master, set_server_to_replica},
     Id,
 };
@@ -64,10 +64,8 @@ pub async fn run() {
                     server = Listener::new(shared).await;
                 }
                 Letter::BlockAll { unblock_event } => {
-                    println!("debug11 blockall");
                     listener!(unblock_event => listener);
                     listener.await;
-                    println!("debug12 unblock");
                 }
                 Letter::Resp3(_) | Letter::Wcmd(_) | Letter::Psync {..} => {}
             },
@@ -216,7 +214,6 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
         /* 是否开启了主从复制 */
         /**********************/
 
-        println!("debug1");
         set_server_to_replica(shared, ms_info.host, ms_info.port).await?;
     } else if let Some(master_conf) = conf.master.clone() {
         /**********************/

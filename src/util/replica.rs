@@ -45,7 +45,6 @@ pub fn set_server_to_replica(
         let conf = shared.conf();
         let post_office = shared.post_office();
 
-        println!("debug2");
         // 如果已经有一个异步任务在执行该函数(未执行到run_replica())，则直接返回错误
         let mut ms_info =
             conf.replica.master_info.try_lock().map_err(|_| {
@@ -54,7 +53,6 @@ pub fn set_server_to_replica(
 
         /* step2: 与主节点握手建立连接 */
 
-        println!("debug3");
         let to_master = TcpStream::connect((master_host.as_ref(), master_port))
             .timeout(Duration::from_secs(3))
             .await
@@ -75,7 +73,6 @@ pub fn set_server_to_replica(
             Handler::new(shared, to_master, context)
         };
 
-        println!("debug4");
         // 发送PING测试主节点是否可达
         handle_master
             .conn
@@ -83,7 +80,6 @@ pub fn set_server_to_replica(
                 Resp3::new_blob_string(b"PING"),
             ]))
             .await?;
-        println!("debug4");
 
         // 主节点应当返回"+PONG\r\n"
         if let Some(err) = handle_master
@@ -94,7 +90,6 @@ pub fn set_server_to_replica(
         {
             return Err(RutinError::from(err.to_string()));
         }
-        println!("debug5");
 
         // 身份验证(可选)
         if let Some(password) = conf.replica.master_auth.as_ref() {
@@ -135,7 +130,6 @@ pub fn set_server_to_replica(
         {
             return Err(RutinError::from(err.to_string()));
         }
-        println!("debug6");
 
         // 等待旧的run_replica()任务结束并获取offset
         let mut offset = OFFSET.lock().await;
@@ -164,8 +158,6 @@ pub fn set_server_to_replica(
                 .await?;
         };
 
-        let response = handle_master.conn.read_frame_force().await?;
-
         shared.pool().spawn_pinned(move || async move {
             // read_only模式下，所有ac都只允许读命令
             if conf.replica.read_only {
@@ -184,35 +176,51 @@ pub fn set_server_to_replica(
 
             /* step3: 进行同步 */
 
-            // 如果响应为+FULLRESYNC run_id offset，执行全量同步
-            // 如果响应为+CONTINUE，执行增量同步(什么都不做，等之后向主节点发送REPLCONF ACK
-            // <offset>时会进行同步)
-            let response = response.into_simple_string().unwrap();
-            let mut splits = response.split_whitespace().map(|s| s.to_string());
+            loop {
+                let resp = handle_master.conn.read_frame_force().await.unwrap();
+                match resp {
+                    // 如果响应为+FULLRESYNC run_id offset，执行全量同步
+                    // 如果响应为+CONTINUE，执行增量同步(什么都不做，等之后向主节点发送REPLCONF ACK
+                    // <offset>时会进行同步)
+                    Resp3::SimpleString { inner, .. } => {
+                        let mut splits = inner.split_whitespace().map(|s| s.to_string());
 
-            if let Some(fullresync) = splits.next()
-                && fullresync == "FULLRESYNC"
-            {
-                let run_id = splits.next().unwrap();
-                let master_offset = splits.next().unwrap().parse::<u64>().unwrap();
+                        if let Some(fullresync) = splits.next()
+                            && fullresync == "FULLRESYNC"
+                        {
+                            let run_id = splits.next().unwrap();
+                            let master_offset = splits.next().unwrap().parse::<u64>().unwrap();
 
-                *ms_info = Some(MasterInfo {
-                    host: master_host,
-                    port: master_port,
-                    run_id: run_id.into(),
-                });
-                *offset = master_offset;
+                            *ms_info = Some(MasterInfo {
+                                host: master_host.clone(),
+                                port: master_port,
+                                run_id: run_id.into(),
+                            });
+                            *offset = master_offset;
 
-                // 重置服务(清除旧数据，关闭所有记录的任务)并执行全量同步
-                println!("debug4");
-                post_office.send_reset(SET_REPLICA_ID).await;
-                full_sync(&mut handle_master).await.unwrap();
+                            // 重置服务(清除旧数据，关闭所有记录的任务)并执行全量同步
+                            post_office.send_reset(SET_REPLICA_ID).await;
+                            full_sync(&mut handle_master).await.unwrap();
+                        }
+                    }
+                    // 如果响应为ping命令，则代表同步成功
+                    Resp3::Array { inner, .. }
+                        if inner.last().is_some_and(|resp3| {
+                            resp3.to_string().eq_ignore_ascii_case("PING")
+                        }) =>
+                    {
+                        break;
+                    }
+                    _ => panic!(
+                        "expect +FULLRESYNC <run_id> <offset>, +CONTINUE or ping, but got {:?}",
+                        resp
+                    ),
+                }
             }
 
-            // 释放锁，重新允许执行set_server_to_replica函数
+            // 同步成功后释放锁，重新允许执行set_server_to_replica函数
             drop(ms_info);
 
-            println!(" reader_buf: {:?}", handle_master.conn.reader_buf);
             /* step4: 接收并处理传播的写命令 */
             if let Err(e) = handle_master.run_replica(offset).await {
                 error!(cause = %e, "replica run error");
@@ -232,9 +240,6 @@ async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
 
     Resp3::need_bytes_async(&mut handler.conn.stream, &mut handler.conn.reader_buf, len).await?;
     let mut rdb = handler.conn.reader_buf.split_to(len);
-
-    println!("debug2: rdb: {:?}", rdb);
-    println!("debug3: reader_buf: {:?}", handler.conn.reader_buf);
 
     rdb_load(&mut rdb, handler.shared.db(), false)
         .await

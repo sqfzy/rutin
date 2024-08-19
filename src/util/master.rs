@@ -15,13 +15,13 @@ use tokio_util::time::FutureExt as _;
 
 #[derive(Debug)]
 pub struct BackLog {
-    buf: BytesMut,
+    pub buf: BytesMut,
     cap: u64,
-    offset: u64,
+    pub offset: u64,
 }
 
 impl BackLog {
-    fn new(cap: u64) -> Self {
+    pub fn new(cap: u64) -> Self {
         Self {
             buf: BytesMut::zeroed(cap as usize),
             cap,
@@ -58,25 +58,32 @@ impl BackLog {
 // 执行该函数后，服务应满足：
 // 1. 不存在SET_REPLICA任务
 // 2. post_office中存在SET_MASTER_ID mailbox以及set_master_outbox
+// 3. 服务会定期向从节点发送PING命令，以便从节点知道主节点是否存活
 pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> RutinResult<()> {
     let conf = shared.conf();
     let post_office = shared.post_office();
 
-    let (set_master_outbox, set_master_inbox) =
-        post_office.new_mailbox_with_special_id(SET_MASTER_ID);
+    let set_master_inbox = if let Some(inbox) = post_office.get_inbox(SET_MASTER_ID) {
+        inbox
+    } else {
+        let (set_master_outbox, set_master_inbox) =
+            post_office.new_mailbox_with_special_id(SET_MASTER_ID);
 
-    let unblock_event = UnblockEvent(Arc::new(Event::new()));
-    post_office
-        .send_block_all(SET_MASTER_ID, &unblock_event)
-        .await;
+        let unblock_event = UnblockEvent(Arc::new(Event::new()));
+        post_office
+            .send_block_all(SET_MASTER_ID, &unblock_event)
+            .await;
 
-    // Safety: BlockAll之后不会有其它任务使用post_office
-    unsafe {
-        *shared.post_office().set_master_outbox.get() = Some(set_master_outbox);
-    }
+        // Safety: BlockAll之后不会有其它任务使用post_office
+        unsafe {
+            *shared.post_office().set_master_outbox.get() = Some(set_master_outbox);
+        }
 
-    // 解除阻塞
-    drop(unblock_event);
+        // 解除阻塞
+        drop(unblock_event);
+
+        set_master_inbox
+    };
 
     // 记录最近的写命令
     let mut back_log = BackLog::new(master_conf.backlog_size);
@@ -97,7 +104,6 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
     .boxed()]);
 
     loop {
-        println!("debug3: len={:?}", replica_handlers.len());
         tokio::select! {
             letter = set_master_inbox.recv_async() => {
                 match letter {
@@ -114,13 +120,14 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                         }
 
                         for handler in replica_handlers.iter_mut() {
+                            dbg!(&wcmd);
+                            handler.conn.write_all(&wcmd).await?;
                             handler.conn.write_all(&wcmd).await?;
                         }
 
                         back_log.push(wcmd);
                     }
                     Letter::Psync { mut handle_replica, repl_id, repl_offset } => {
-                        println!("debug1");
                         let run_id = conf.server.run_id.clone();
                         let master_offset = back_log.offset;
 
@@ -191,7 +198,6 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                             });
                         }
 
-                        println!("debug2");
 
                     }
                     // TODO:
@@ -200,6 +206,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                     Letter::Resp3(_) => {}
                 }
             },
+            // 接收从节点的命令
             (res, i, mut rest) = &mut futs, if !replica_handlers.is_empty() => {
                 match res {
                     // 超时，连接出错，或者对方关闭连接，则移除该handler
@@ -229,9 +236,11 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
                 futs = select_all(rest);
             }
+            // 向从节点发送PING命令
             _ = interval.tick(), if !replica_handlers.is_empty() => {
                 for handler in replica_handlers.iter_mut() {
                     handler.conn.write_frame(&ping_frame).await?;
+                    // 不需要等待响应，因为从节点不会返回响应
                 }
             }
         }

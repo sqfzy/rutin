@@ -11,7 +11,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use bytestring::ByteString;
 use mlua::{prelude::*, Value};
 use num_bigint::BigInt;
-use std::{hash::Hash, io, iter::Iterator, ops::Range, ptr::slice_from_raw_parts};
+use std::{fmt::Display, hash::Hash, io, iter::Iterator, ops::Range, ptr::slice_from_raw_parts};
 use strum::{EnumDiscriminants, IntoStaticStr};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::{
@@ -41,14 +41,15 @@ const CHUNKED_STRING_LENGTH_PREFIX: u8 = b';';
 
 pub type Attributes<B, S> = AHashMap<Resp3<B, S>, Resp3<B, S>>;
 
+// TODO: Display
 #[derive(Clone, Debug, IntoStaticStr, EnumDiscriminants)]
 #[strum_discriminants(vis(pub))]
 #[strum_discriminants(name(Resp3Type))]
 #[strum_discriminants(derive(IntoStaticStr))]
 pub enum Resp3<B = Bytes, S = ByteString>
 where
-    B: AsRef<[u8]> + PartialEq,
-    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
     // +<str>\r\n
     SimpleString {
@@ -146,15 +147,15 @@ where
 
 impl<B, S> Resp3<B, S>
 where
-    B: AsRef<[u8]> + PartialEq,
-    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
     // TODO: test
     pub fn size(&self) -> usize {
         fn attributes_size<B, S>(attributes: &Option<Attributes<B, S>>) -> usize
         where
-            B: AsRef<[u8]> + PartialEq,
-            S: AsRef<str> + PartialEq,
+            B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+            S: AsRef<str> + PartialEq + std::fmt::Debug,
         {
             if let Some(attributes) = attributes {
                 let mut size = itoa::Buffer::new().format(attributes.len()).len() + 3;
@@ -1127,6 +1128,71 @@ where
     }
 }
 
+impl<B, S> Display for Resp3<B, S>
+where
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Resp3::SimpleString { inner, .. } => write!(f, "{}", inner.as_ref()),
+            Resp3::SimpleError { inner, .. } => write!(f, "{}", inner.as_ref()),
+            Resp3::Integer { inner, .. } => write!(f, "{}", inner),
+            Resp3::BlobString { inner, .. } => {
+                write!(f, "{}", String::from_utf8_lossy(inner.as_ref()))
+            }
+            Resp3::Array { inner, .. } => {
+                write!(f, "[")?;
+                for frame in inner {
+                    write!(f, "{}, ", frame)?;
+                }
+                write!(f, "]")
+            }
+            Resp3::Null => write!(f, "null"),
+            Resp3::Boolean { inner, .. } => write!(f, "{}", inner),
+            Resp3::Double { inner, .. } => write!(f, "{}", inner),
+            Resp3::BigNumber { inner, .. } => write!(f, "{}", inner),
+            Resp3::BlobError { inner, .. } => {
+                write!(f, "{}", String::from_utf8_lossy(inner.as_ref()))
+            }
+            Resp3::VerbatimString { data, .. } => {
+                write!(f, "{}", String::from_utf8_lossy(data.as_ref()))
+            }
+            Resp3::Map { inner, .. } => {
+                write!(f, "{{")?;
+                for (k, v) in inner {
+                    write!(f, "{}: {}, ", k, v)?;
+                }
+                write!(f, "}}")
+            }
+            Resp3::Set { inner, .. } => {
+                write!(f, "{{")?;
+                for frame in inner {
+                    write!(f, "{}, ", frame)?;
+                }
+                write!(f, "}}")
+            }
+            Resp3::Push { inner, .. } => {
+                write!(f, "[")?;
+                for frame in inner {
+                    write!(f, "{}, ", frame)?;
+                }
+                write!(f, "]")
+            }
+            Resp3::ChunkedString(chunks) => {
+                write!(f, "ChunkedString(")?;
+                for chunk in chunks {
+                    write!(f, "{}, ", String::from_utf8_lossy(chunk.as_ref()))?;
+                }
+                write!(f, ")")
+            }
+            Resp3::Hello { version, auth } => {
+                write!(f, "Hello({}, {:?})", version, auth)
+            }
+        }
+    }
+}
+
 // 解码
 impl Resp3<BytesMut, ByteString> {
     #[allow(clippy::multiple_bound_locations)]
@@ -1642,8 +1708,8 @@ pub struct Resp3Encoder;
 
 impl<B, S> Encoder<&Resp3<B, S>> for Resp3Encoder
 where
-    B: AsRef<[u8]> + PartialEq,
-    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
     type Error = RutinError;
 
@@ -1680,8 +1746,8 @@ impl Decoder for Resp3Decoder {
 
 impl<B, S> Hash for Resp3<B, S>
 where
-    B: AsRef<[u8]> + PartialEq,
-    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let attrs_hash = |attrs: &Attributes<B, S>, state: &mut H| {
@@ -1808,15 +1874,15 @@ where
 
 impl<B, S> Eq for Resp3<B, S>
 where
-    B: AsRef<[u8]> + PartialEq,
-    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
 }
 
 impl<B, S> PartialEq for Resp3<B, S>
 where
-    B: AsRef<[u8]> + PartialEq,
-    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1969,7 +2035,7 @@ where
     }
 }
 
-impl<S: AsRef<str> + PartialEq> mlua::IntoLua<'_> for Resp3<Bytes, S> {
+impl<S: AsRef<str> + PartialEq + std::fmt::Debug> mlua::IntoLua<'_> for Resp3<Bytes, S> {
     fn into_lua(self, lua: &'_ Lua) -> LuaResult<LuaValue<'_>> {
         match self {
             // SimpleString -> Lua Table { ok: Lua String }
@@ -2271,8 +2337,8 @@ impl FromLua<'_> for Resp3 {
 
 fn encode_attributes<B, S>(buf: &mut impl BufMut, attr: &Attributes<B, S>)
 where
-    B: AsRef<[u8]> + PartialEq,
-    S: AsRef<str> + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
     buf.put_u8(b'|');
     buf.put_slice(itoa::Buffer::new().format(attr.len()).as_bytes());

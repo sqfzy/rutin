@@ -9,7 +9,7 @@ use crate::{
     persist::rdb::Rdb,
     server::{AsyncStream, Handler, HandlerContext},
     shared::{Letter, NULL_ID, SET_MASTER_ID},
-    util::{set_server_to_replica, set_server_to_standalone},
+    util::{set_server_to_replica, set_server_to_standalone, uppercase},
 };
 use bytes::Bytes;
 use bytestring::ByteString;
@@ -458,15 +458,19 @@ impl CmdExecutor for ReplConf {
     }
 
     fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
-        if args.len() != 2 {
+        if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
 
-        let sub_cmd = match args.next().unwrap().as_ref() {
-            b"listening-port" => ReplConfSubCmd::ListeningPort {
+        let sub_cmd = args.next().unwrap();
+        let mut buf = [0; 32];
+        let sub_cmd = get_uppercase(&sub_cmd, &mut buf)?;
+
+        let sub_cmd = match sub_cmd {
+            b"LISTENING-PORT" => ReplConfSubCmd::ListeningPort {
                 port: util::atoi(&args.next().unwrap())?,
             },
-            b"ack" => ReplConfSubCmd::Ack {
+            b"ACK" => ReplConfSubCmd::Ack {
                 offset: util::atoi(&args.next().unwrap())?,
             },
             _ => return Err(RutinError::Syntax),

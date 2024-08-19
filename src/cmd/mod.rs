@@ -32,11 +32,31 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         let post_office = handler.shared.post_office();
         let wcmd =
             if post_office.need_send_wcmd() && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG) {
+                // 加上命令名
+                args.inner
+                    .push_front(Resp3::new_blob_string(Self::NAME.into()));
                 let resp3 = Resp3::from(args);
                 let wcmd = resp3.encode_local_buf();
 
                 args = resp3.try_into()?;
+                args.inner.pop_front(); // 去掉命令名
                 Some(wcmd)
+            } else if let Some(back_log) = &mut handler.context.back_log
+                && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG)
+            {
+                // handle_master执行主节点传来的写命令时需要记录offset，由于从节点永远不会传播
+                // 写命令给主节点，因此handle_replica即使有back_log也不会执行以下代码
+                args.inner
+                    .push_front(Resp3::new_blob_string(Self::NAME.into()));
+                let resp3 = Resp3::from(args);
+                resp3.encode_buf(&mut back_log.buf);
+                let wcmd = back_log.buf.split();
+
+                back_log.offset += wcmd.len() as u64;
+
+                args = resp3.try_into()?;
+                args.inner.pop_front(); // 去掉命令名
+                None
             } else {
                 None
             };
