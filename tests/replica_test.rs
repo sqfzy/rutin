@@ -80,8 +80,8 @@ fn replica_redis_test() {
     );
 
     redis_server.kill().expect("Failed to kill redis");
-    redis_server.wait().expect("Failed to wait for redis");
-
     rutin_server.kill().expect("Failed to kill rutin");
+
+    redis_server.wait().expect("Failed to wait for redis");
     rutin_server.wait().expect("Failed to wait for rutin");
 }

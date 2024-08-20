@@ -9,7 +9,7 @@ use crate::{
     persist::rdb::Rdb,
     server::{AsyncStream, Handler, HandlerContext},
     shared::{Letter, NULL_ID, SET_MASTER_ID},
-    util::{set_server_to_replica, set_server_to_standalone, uppercase},
+    util::{set_server_to_replica, set_server_to_standalone},
 };
 use bytes::Bytes;
 use bytestring::ByteString;

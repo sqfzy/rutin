@@ -4,10 +4,10 @@ use crate::{
     frame::Resp3,
     persist::rdb::rdb_save,
     server::Handler,
-    shared::{Letter, Shared, UnblockEvent, SET_MASTER_ID},
+    shared::{Letter, Shared, SET_MASTER_ID},
 };
 use bytes::{Buf, BytesMut};
-use event_listener::{listener, Event};
+use event_listener::listener;
 use futures::{future::select_all, FutureExt};
 use std::{sync::Arc, time::Duration};
 use tokio::{net::TcpStream, time::error::Elapsed};
@@ -66,23 +66,8 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
     let set_master_inbox = if let Some(inbox) = post_office.get_inbox(SET_MASTER_ID) {
         inbox
     } else {
-        let (set_master_outbox, set_master_inbox) =
-            post_office.new_mailbox_with_special_id(SET_MASTER_ID);
-
-        let unblock_event = UnblockEvent(Arc::new(Event::new()));
-        post_office
-            .send_block_all(SET_MASTER_ID, &unblock_event)
-            .await;
-
-        // Safety: BlockAll之后不会有其它任务使用post_office
-        unsafe {
-            *shared.post_office().set_master_outbox.get() = Some(set_master_outbox);
-        }
-
-        // 解除阻塞
-        drop(unblock_event);
-
-        set_master_inbox
+        // 创建SET_MASTER_ID mailbox但先不设置set_master_outbox，直到有从节点连接
+        post_office.new_mailbox_with_special_id(SET_MASTER_ID).1
     };
 
     // 记录最近的写命令
@@ -108,6 +93,11 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
             letter = set_master_inbox.recv_async() => {
                 match letter {
                     Letter::ShutdownServer | Letter::Reset => {
+                        // 如果set_master_outbox存在，则关闭SetMaster任务时，清除set_master_outbox
+                        if post_office.set_master_outbox().is_some() {
+                            post_office.set_set_master_outbox(None).await;
+                        }
+
                         return Ok(());
                     }
                     Letter::BlockAll { unblock_event } => {
@@ -158,6 +148,11 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                             handle_replica.context.ac = Arc::new(AccessControl::new_loose());
 
                             replica_handlers.push(handle_replica);
+
+                            // 有从节点连接但set_master_outbox不存在，则设置set_master_outbox
+                            if post_office.set_master_outbox().is_none() {
+                                post_office.set_set_master_outbox(post_office.get_outbox(SET_MASTER_ID)).await;
+                            }
 
                             // 丢弃之前的futs，重新构建futs，futs一定不为空
                             futs = select_all(
@@ -212,6 +207,11 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                     // 超时，连接出错，或者对方关闭连接，则移除该handler
                     Err(_) | Ok(Err(_)) | Ok(Ok(None)) => {
                         replica_handlers.remove(i);
+
+                        // 如果没有从节点但set_master_outbox存在，则清除set_master_outbox
+                        if post_office.set_master_outbox().is_some() {
+                            post_office.set_set_master_outbox(None).await;
+                        }
                     }
                     Ok(Ok(Some(frame))) => {
                         let handler = unsafe { &mut (*replica_handlers_ptr)[i] };

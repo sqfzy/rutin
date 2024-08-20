@@ -8,7 +8,7 @@ use tokio_util::task::LocalPoolHandle;
 
 use crate::{conf::Conf, server::Handler, shared::db::Db, util::UnsafeLazy};
 use bytes::BytesMut;
-use std::{cell::UnsafeCell, time::SystemTime};
+use std::time::SystemTime;
 use tokio::{net::TcpStream, time::Instant};
 
 pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
@@ -20,7 +20,7 @@ pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
 
 #[derive(Debug, Copy, Clone)]
 pub struct Shared {
-    pub inner: &'static UnsafeCell<SharedInner>,
+    pub inner: &'static SharedInner,
 }
 
 unsafe impl Send for Shared {}
@@ -55,33 +55,33 @@ impl Shared {
         };
 
         Self {
-            inner: Box::leak(Box::new(UnsafeCell::new(inner))),
+            inner: Box::leak(Box::new(inner)),
         }
     }
 
     #[inline]
     pub fn pool(&self) -> &LocalPoolHandle {
-        unsafe { &(*self.inner.get()).pool }
+        &self.inner.pool
     }
 
     #[inline]
     pub fn db(&self) -> &'static Db {
-        unsafe { &(*self.inner.get()).db }
+        &self.inner.db
     }
 
     #[inline]
     pub fn script(&self) -> &'static Script {
-        unsafe { &(*self.inner.get()).script }
+        &self.inner.script
     }
 
     #[inline]
     pub fn conf(&self) -> &'static Conf {
-        unsafe { &(*self.inner.get()).conf }
+        &self.inner.conf
     }
 
     #[inline]
     pub fn post_office(&self) -> &'static PostOffice {
-        unsafe { &(*self.inner.get()).post_office }
+        &self.inner.post_office
     }
 
     pub fn reset(&self) {

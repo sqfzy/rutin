@@ -32,22 +32,16 @@ pub const SET_REPLICA_ID: Id = 5;
 pub struct PostOffice {
     pub(super) inner: DashMap<Id, (Outbox, Inbox), nohash::BuildNoHashHasher<u64>>,
 
-    /// 传播写命令到aof或replica。由于需要频繁使用该OutBox，因此直接保存在字段中
-    ///
-    /// **编译期确定是否需要传播**：是否需要传播wcmd取决于是否有aof或replica。aof
-    /// 在编译期就确定了，而replica则是运行时(在多线程中)可变的。为了避免额外的
-    /// 同步开销(每次执行写命令都需要判断是否需要传播，这会使得开销变得很大)，增
-    /// 加了conf.server.standalone在编译期决定是否需要replica。当
-    /// **conf.server.standalone为true且没有开启aof时**，该字段为None，不允许添加从节
-    /// 点；否则为Some，无论是否存在从节点，都会传播wcmd。
-    ///
-    /// **wcmd仅传播一次**：考虑到性能原因，写命令最好是只发送一次到一个task中处
-    /// 理，因此aof和replica需要在同一个task中处理。但是replica的数目是运行时可
-    /// 变的，为避免额外得同步措施，wcmd_propagator既可以传播wcmd，也可以发送一个
-    /// replica的handler
+    // 传播写命令到aof或replica。由于需要频繁使用其OutBox，因此直接保存在字段中。
+    // 由于传播写命令是耗时操作，因此需要尽可能减少传播次数。
     //
-    // 修改之前可以使用BlockAll阻止其它任务访问
+    ///配置了AofConf后，会在inner中插入AOF_ID对应的mailbox，并设置aof_outbox
     pub aof_outbox: UnsafeCell<Option<Outbox>>,
+
+    /// 配置了MasterConf后，会在inner中插入SET_MASTER_ID对应的mailbox，但是暂时不
+    /// 会设置set_master_outbox，因为一旦设置了set_master_outbox，就会传播wcmd，而
+    /// 一开始SET MASTER任务并不存在replica，不需要传播wcmd。只有在设置了replica后，
+    /// 才会通过BlockAll阻止其它任务访问set_master_outbox，然后设置set_master_outbox
     pub set_master_outbox: UnsafeCell<Option<Outbox>>,
 }
 
@@ -130,6 +124,34 @@ impl PostOffice {
         unsafe { (*self.set_master_outbox.get()).as_ref() }
     }
 
+    pub async fn set_aof_outbox(&self, aof_outbox: Option<Outbox>) {
+        let unblock_event = UnblockEvent(Arc::new(Event::new()));
+
+        self.send_block_all(AOF_ID, &unblock_event).await;
+
+        // Safety: BlockAll之后不会有其它任务使用post_office
+        unsafe {
+            *self.set_master_outbox.get() = aof_outbox;
+        }
+
+        // 解除阻塞
+        drop(unblock_event);
+    }
+
+    pub async fn set_set_master_outbox(&self, set_master_outbox: Option<Outbox>) {
+        let unblock_event = UnblockEvent(Arc::new(Event::new()));
+
+        self.send_block_all(SET_MASTER_ID, &unblock_event).await;
+
+        // Safety: BlockAll之后不会有其它任务使用post_office
+        unsafe {
+            *self.set_master_outbox.get() = set_master_outbox;
+        }
+
+        // 解除阻塞
+        drop(unblock_event);
+    }
+
     #[inline]
     pub fn delay_token(&'static self) -> Inbox {
         self.new_mailbox_with_special_id(DELAY_ID).1.clone()
@@ -162,8 +184,8 @@ impl PostOffice {
 
     #[inline]
     pub async fn send_wcmd(&self, wcmd: BytesMut) {
-        // Aof和SetMaster任务都需要处理写命令，但Aof只需要&wcmd，为了避免clone，
-        // 如果存在Aof任务，则由Aof任务在使用完&wcmd后发送给SetMaster任务
+        // AOF和SET MASTER任务都需要处理写命令，但AOF只需要&wcmd，为了避免clone，
+        // 如果存在AOF任务，则由AOF任务在使用完&wcmd后尝试发送给SetMaster任务
         if let Some(outbox) = self.aof_outbox() {
             outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
         } else if let Some(outbox) = self.set_master_outbox() {
@@ -421,7 +443,7 @@ impl Drop for Inbox {
         if self.inner.receiver_count() <= 2 {
             self.post_office.inner.remove(&self.id);
         }
-        // TODO: 如果是SET_MASTER_ID则BlockAll后设置set_master_outbox为None
+        // TODO: 也许如果是SET_MASTER_ID则BlockAll后设置set_master_outbox为None
     }
 }
 
