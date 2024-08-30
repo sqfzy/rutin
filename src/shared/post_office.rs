@@ -125,6 +125,14 @@ impl PostOffice {
     }
 
     pub async fn set_aof_outbox(&self, aof_outbox: Option<Outbox>) {
+        // 如果self.aof_outbox与aof_outbox同为None或Some，则不需要设置
+        if matches!(
+            (self.aof_outbox(), aof_outbox.as_ref()),
+            (Some(_), Some(_)) | (None, None)
+        ) {
+            return;
+        }
+
         let unblock_event = UnblockEvent(Arc::new(Event::new()));
 
         self.send_block_all(AOF_ID, &unblock_event).await;
@@ -139,6 +147,14 @@ impl PostOffice {
     }
 
     pub async fn set_set_master_outbox(&self, set_master_outbox: Option<Outbox>) {
+        // 如果self.aof_outbox与aof_outbox同为None或Some，则不需要设置
+        if matches!(
+            (self.set_master_outbox(), set_master_outbox.as_ref()),
+            (Some(_), Some(_)) | (None, None)
+        ) {
+            return;
+        }
+
         let unblock_event = UnblockEvent(Arc::new(Event::new()));
 
         self.send_block_all(SET_MASTER_ID, &unblock_event).await;

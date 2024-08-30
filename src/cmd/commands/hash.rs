@@ -26,8 +26,8 @@ pub struct HDel {
 
 impl CmdExecutor for HDel {
     const NAME: &'static str = "HDEL";
-    const CATS_FLAG: Flag = HDEL_CATS_FLAG;
-    const CMD_FLAG: Flag = HDEL_CMD_FLAG;
+    const CATS_FLAG: CatFlag = HDEL_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = HDEL_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -57,7 +57,7 @@ impl CmdExecutor for HDel {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -78,8 +78,8 @@ pub struct HExists {
 
 impl CmdExecutor for HExists {
     const NAME: &'static str = "HEXISTS";
-    const CATS_FLAG: Flag = HEXISTS_CATS_FLAG;
-    const CMD_FLAG: Flag = HEXISTS_CMD_FLAG;
+    const CATS_FLAG: CatFlag = HEXISTS_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = HEXISTS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -105,7 +105,7 @@ impl CmdExecutor for HExists {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -126,8 +126,8 @@ pub struct HGet {
 
 impl CmdExecutor for HGet {
     const NAME: &'static str = "HGET";
-    const CATS_FLAG: Flag = HGET_CATS_FLAG;
-    const CMD_FLAG: Flag = HGET_CMD_FLAG;
+    const CATS_FLAG: CatFlag = HGET_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = HGET_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -153,7 +153,7 @@ impl CmdExecutor for HGet {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -173,8 +173,8 @@ pub struct HSet {
 
 impl CmdExecutor for HSet {
     const NAME: &'static str = "HSET";
-    const CATS_FLAG: Flag = HSET_CATS_FLAG;
-    const CMD_FLAG: Flag = HSET_CMD_FLAG;
+    const CATS_FLAG: CatFlag = HSET_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = HSET_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -203,7 +203,7 @@ impl CmdExecutor for HSet {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 

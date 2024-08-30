@@ -16,12 +16,13 @@ use tracing::debug;
 
 thread_local! {
     // PERF:
-    // 多个client handler会共享一个Lua环境但不能同时使用一个Lua环境，因为client
-    // handler执行脚本过程中需要修改并保持Lua环境，即使在同一线程中也需要保证Lua
-    // 环境的一致性，所以需要LocalMutex(使用RefCell会panic)。FAKE_HANDLER同理，需
-    // 要保持上下文的一致性
+    // 由于client handler执行脚本过程中需要修改并保持Lua环境直到脚本执行完毕，
+    // 而同一线程的多个client handler会共享一个Lua环境，因此同一时刻本线程的
+    // Lua环境只能被一个client handler使用。使用LocalMutex可以保证线程内的task
+    // 互斥。
     static LUA: Rc<LocalMutex<Option<Lua>>> = Rc::new(LocalMutex::new(None, false));
     static FAKE_HANDLER: Rc<LocalMutex<Option<FakeHandler>>> = Rc::new(LocalMutex::new(None, false));
+    static FAKE_HANDLER2: Option<FakeHandler> = None;
 }
 
 /// Lua环境包含：
@@ -276,7 +277,7 @@ impl LuaScript {
         async {
             let (lua, fake_handler) = get_or_create_lua_env(shared)?;
 
-            // 加锁，确保该async block*只能有一个task，即一个client handler在执行**
+            // 加锁，确保该async block只能有一个task，即一个client handler在执行
             let mut lua = lua.lock().await;
             let lua = lua.as_mut().unwrap();
 
@@ -285,7 +286,7 @@ impl LuaScript {
                 let mut fake_handler = fake_handler.lock().await;
                 let fake_handler = fake_handler.as_mut().unwrap();
 
-                // 将client handler的属性复制到fake handler
+                // 将client handler的上下文复制到fake handler
                 std::mem::swap(&mut fake_handler.context, &mut handler.context);
 
                 // 给需要操作的键加上意向锁
@@ -332,7 +333,7 @@ impl LuaScript {
             lua_argv.clear()?;
             lua.gc_collect()?;
 
-            // 换回client handler的属性
+            // 换回client handler的上下文
             let mut fake_handler = fake_handler.lock().await;
             let fake_handler = fake_handler.as_mut().unwrap();
             std::mem::swap(&mut fake_handler.context, &mut handler.context);

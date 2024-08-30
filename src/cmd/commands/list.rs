@@ -30,8 +30,8 @@ pub struct BLMove {
 
 impl CmdExecutor for BLMove {
     const NAME: &'static str = "BLMOVE";
-    const CATS_FLAG: Flag = BLMOVE_CATS_FLAG;
-    const CMD_FLAG: Flag = BLMOVE_CMD_FLAG;
+    const CATS_FLAG: CatFlag = BLMOVE_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = BLMOVE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -100,12 +100,12 @@ impl CmdExecutor for BLMove {
         }
 
         let source = args.next().unwrap();
-        if ac.is_forbidden_key(&source, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&source, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
         let destination = args.next().unwrap();
-        if ac.is_forbidden_key(&destination, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&destination, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -131,8 +131,8 @@ pub struct BLPop {
 
 impl CmdExecutor for BLPop {
     const NAME: &'static str = "BLPOP";
-    const CATS_FLAG: Flag = BLPOP_CATS_FLAG;
-    const CMD_FLAG: Flag = BLPOP_CMD_FLAG;
+    const CATS_FLAG: CatFlag = BLPOP_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = BLPOP_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -177,7 +177,7 @@ impl CmdExecutor for BLPop {
 
         let keys = args
             .map(|k| {
-                if ac.is_forbidden_key(&k, Self::CATS_FLAG) {
+                if ac.deny_reading_or_writing_key(&k, Self::CATS_FLAG) {
                     return Err(RutinError::NoPermission);
                 }
                 Ok(k.into())
@@ -204,8 +204,8 @@ pub struct LPos {
 
 impl CmdExecutor for LPos {
     const NAME: &'static str = "LPOS";
-    const CATS_FLAG: Flag = LPOS_CATS_FLAG;
-    const CMD_FLAG: Flag = LPOS_CMD_FLAG;
+    const CATS_FLAG: CatFlag = LPOS_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = LPOS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -287,7 +287,7 @@ impl CmdExecutor for LPos {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -334,8 +334,8 @@ pub struct LLen {
 
 impl CmdExecutor for LLen {
     const NAME: &'static str = "LLEN";
-    const CATS_FLAG: Flag = LLEN_CATS_FLAG;
-    const CMD_FLAG: Flag = LLEN_CMD_FLAG;
+    const CATS_FLAG: CatFlag = LLEN_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = LLEN_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -361,7 +361,7 @@ impl CmdExecutor for LLen {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -382,8 +382,8 @@ pub struct LPop {
 
 impl CmdExecutor for LPop {
     const NAME: &'static str = "LPOP";
-    const CATS_FLAG: Flag = LPOP_CATS_FLAG;
-    const CMD_FLAG: Flag = LPOP_CMD_FLAG;
+    const CATS_FLAG: CatFlag = LPOP_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = LPOP_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -430,7 +430,7 @@ impl CmdExecutor for LPop {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -458,8 +458,8 @@ pub struct LPush {
 
 impl CmdExecutor for LPush {
     const NAME: &'static str = "LPUSH";
-    const CATS_FLAG: Flag = LPUSH_CATS_FLAG;
-    const CMD_FLAG: Flag = LPUSH_CMD_FLAG;
+    const CATS_FLAG: CatFlag = LPUSH_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = LPUSH_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -488,7 +488,7 @@ impl CmdExecutor for LPush {
         }
 
         let key = args.next().unwrap();
-        if ac.is_forbidden_key(&key, Self::CATS_FLAG) {
+        if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
@@ -513,8 +513,8 @@ pub struct NBLPop {
 
 impl CmdExecutor for NBLPop {
     const NAME: &'static str = "NBLPOP";
-    const CATS_FLAG: Flag = NBLPOP_CATS_FLAG;
-    const CMD_FLAG: Flag = NBLPOP_CMD_FLAG;
+    const CATS_FLAG: CatFlag = NBLPOP_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = NBLPOP_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -581,7 +581,7 @@ impl CmdExecutor for NBLPop {
 
         let keys = args
             .map(|k| {
-                if ac.is_forbidden_key(&k, Self::CATS_FLAG) {
+                if ac.deny_reading_or_writing_key(&k, Self::CATS_FLAG) {
                     return Err(RutinError::NoPermission);
                 }
                 Ok(k.into())

@@ -3,12 +3,12 @@ use crate::{
     frame::Resp3Decoder,
     persist::rdb::{rdb_load, rdb_save},
     server::Handler,
-    shared::{Letter, Shared, UnblockEvent, AOF_ID, SET_MASTER_ID},
+    shared::{Letter, Shared, AOF_ID, SET_MASTER_ID},
 };
 use bytes::BytesMut;
-use event_listener::{listener, Event};
+use event_listener::listener;
 use serde::Deserialize;
-use std::{os::unix::fs::MetadataExt, path::Path, sync::Arc, time::Duration};
+use std::{os::unix::fs::MetadataExt, path::Path, time::Duration};
 use tokio::{
     fs::File,
     io::{self, AsyncReadExt, AsyncWriteExt},
@@ -76,16 +76,7 @@ impl Aof {
 
         let (aof_outbox, aof_inbox) = post_office.new_mailbox_with_special_id(AOF_ID);
 
-        let unblock_event = UnblockEvent(Arc::new(Event::new()));
-        post_office.send_block_all(AOF_ID, &unblock_event).await;
-
-        // Safety: BlockAll之后不会有其它任务使用post_office
-        unsafe {
-            *shared.post_office().aof_outbox.get() = Some(aof_outbox);
-        }
-
-        // 解除阻塞
-        drop(unblock_event);
+        post_office.set_aof_outbox(Some(aof_outbox)).await;
 
         let mut curr_aof_size = 0_u128; // 单位为byte
         let auto_aof_rewrite_min_size = aof_conf.auto_aof_rewrite_min_size;

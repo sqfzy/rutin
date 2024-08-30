@@ -1,5 +1,5 @@
 use crate::{
-    cmd::commands::{Flag, EXISTS_CMD_FLAG},
+    cmd::commands::{CmdFlag, EXISTS_CMD_FLAG},
     conf::{
         gen_run_id, AccessControl, Acl, AofConf, Conf, MasterConf, MemoryConf, RdbConf,
         ReplicaConf, SecurityConf, ServerConf,
@@ -17,7 +17,7 @@ use tracing::Level;
 
 pub const TEST_AC_USERNAME: &str = "test_ac";
 pub const TEST_AC_PASSWORD: &str = "test_pwd";
-pub const TEST_AC_CMDS_FLAG: Flag = EXISTS_CMD_FLAG;
+pub const TEST_AC_CMDS_FLAG: CmdFlag = EXISTS_CMD_FLAG;
 
 pub fn test_init() {
     static INIT: Once = Once::new();
@@ -57,7 +57,6 @@ pub fn get_test_config() -> Conf {
         },
         security: SecurityConf {
             requirepass: None,
-            rename_commands: vec![],
             default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
             acl: Some(acl),
         },

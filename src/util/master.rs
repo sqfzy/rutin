@@ -1,4 +1,5 @@
 use crate::{
+    cmd::commands::{AUTH_CMD_FLAG, PSYNC_CMD_FLAG, REPLCONF_CMD_FLAG},
     conf::{AccessControl, MasterConf},
     error::{RutinError, RutinResult},
     frame::Resp3,
@@ -9,7 +10,7 @@ use crate::{
 use bytes::{Buf, BytesMut};
 use event_listener::listener;
 use futures::{future::select_all, FutureExt};
-use std::{sync::Arc, time::Duration};
+use std::{future::pending, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, time::error::Elapsed};
 use tokio_util::time::FutureExt as _;
 
@@ -23,23 +24,28 @@ pub struct BackLog {
 impl BackLog {
     pub fn new(cap: u64) -> Self {
         Self {
-            buf: BytesMut::zeroed(cap as usize),
+            buf: BytesMut::with_capacity(cap as usize),
             cap,
             offset: 0,
         }
     }
 
-    pub fn push(&mut self, mut wcmd: BytesMut) {
-        self.offset += wcmd.len() as u64;
+    pub fn reset(&mut self) {
+        self.buf.clear();
+        self.offset = 0;
+    }
 
-        if wcmd.len() > self.cap as usize {
-            self.buf = wcmd.split_off(wcmd.len() - self.cap as usize);
-        } else {
-            self.buf.advance(wcmd.len());
-            self.buf.unsplit(wcmd);
+    // 主节点向从节点发送的所有命令都会被记录到BackLog中(包括PING和REPLCONF命令)
+    pub fn push(&mut self, wcmd: BytesMut) {
+        self.offset = self.offset.wrapping_add(wcmd.len() as u64);
+
+        self.buf.unsplit(wcmd);
+
+        if self.buf.len() > self.cap as usize {
+            self.buf.advance(self.buf.len() - self.cap as usize);
         }
 
-        debug_assert_eq!(self.cap as usize, self.buf.len());
+        debug_assert!(self.buf.len() <= self.cap as usize);
     }
 
     pub fn get_gap_data(&self, repl_offset: u64) -> Option<&[u8]> {
@@ -48,7 +54,7 @@ impl BackLog {
         if gap == 0 {
             Some(&[])
         } else if gap <= self.cap {
-            self.buf.get((self.cap - gap) as usize..)
+            self.buf.get((self.buf.len() - gap as usize)..)
         } else {
             None
         }
@@ -77,16 +83,15 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
     let replica_handlers_ptr = &mut replica_handlers as *mut Vec<Handler<TcpStream>>;
 
     let ping_replica_period = Duration::from_secs(master_conf.ping_replica_period);
-    let mut interval = tokio::time::interval(ping_replica_period);
-    let ping_frame = Resp3::new_array(vec![Resp3::new_blob_string("PING".into())]);
+    let mut ping_interval = tokio::time::interval(ping_replica_period);
+    let ping_frame = Resp3::<&[u8; 4], String>::new_array(vec![Resp3::new_blob_string(b"PING")]);
+    let ping_frame_encoded = ping_frame.encode();
 
     let timeout = Duration::from_secs(master_conf.timeout);
 
-    // select_all的数组中必须有一个future，否则会panic
-    let mut futs = select_all([async {
-        Ok::<Result<Option<Resp3>, RutinError>, Elapsed>(Ok(Some(ping_frame.clone())))
-    }
-    .boxed()]);
+    // select_all的数组中必须有一个future，否则会panic，因此放入一个永远不会完成的future
+    let mut futs =
+        select_all([pending::<Result<Result<Option<Resp3>, RutinError>, Elapsed>>().boxed()]);
 
     loop {
         tokio::select! {
@@ -121,6 +126,9 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                         let run_id = conf.server.run_id.clone();
                         let master_offset = back_log.offset;
 
+                        // 设置ac
+                        handle_replica.context.ac = Arc::new(get_handle_replica_ac());
+
                         if conf.security.requirepass.is_some() {
                             let auth = handle_replica.conn.read_frame().await?.ok_or(RutinError::from("ERR require auth"))?;
                             if let Some(resp) = handle_replica.dispatch(auth).await? {
@@ -144,8 +152,6 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
                             handle_replica.conn.write_all(gap_data).await?;
 
-                            // 允许接收从节点的所有命令
-                            handle_replica.context.ac = Arc::new(AccessControl::new_loose());
 
                             replica_handlers.push(handle_replica);
 
@@ -208,9 +214,14 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                     Err(_) | Ok(Err(_)) | Ok(Ok(None)) => {
                         replica_handlers.remove(i);
 
-                        // 如果没有从节点但set_master_outbox存在，则清除set_master_outbox
-                        if post_office.set_master_outbox().is_some() {
-                            post_office.set_set_master_outbox(None).await;
+                        if replica_handlers.is_empty() {
+                            // 如果没有从节点但set_master_outbox存在，则清除set_master_outbox
+                            if post_office.set_master_outbox().is_some() {
+                                post_office.set_set_master_outbox(None).await;
+                            }
+
+                            // 重置BackLog
+                            back_log.reset();
                         }
                     }
                     Ok(Ok(Some(frame))) => {
@@ -228,23 +239,26 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                     }
                 }
 
-                if rest.is_empty() {
-                    rest = vec![async {
-                         Ok::<Result<Option<Resp3>, RutinError>, Elapsed>(Ok(Some(ping_frame.clone())))
-                    }.boxed()];
-                }
-
                 futs = select_all(rest);
             }
             // 向从节点发送PING命令
-            _ = interval.tick(), if !replica_handlers.is_empty() => {
+            _ = ping_interval.tick(), if !replica_handlers.is_empty() => {
                 for handler in replica_handlers.iter_mut() {
                     handler.conn.write_frame(&ping_frame).await?;
+                    back_log.push(ping_frame_encoded.clone());
                     // 不需要等待响应，因为从节点不会返回响应
                 }
             }
         }
     }
+}
+
+fn get_handle_replica_ac() -> AccessControl {
+    let mut ac = AccessControl::new_strict();
+
+    ac.allow_cmds(AUTH_CMD_FLAG | REPLCONF_CMD_FLAG | PSYNC_CMD_FLAG);
+
+    ac
 }
 
 async fn full_sync(handle_replica: &mut Handler<TcpStream>) -> RutinResult<()> {

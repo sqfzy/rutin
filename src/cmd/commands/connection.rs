@@ -43,8 +43,8 @@ pub struct Ping {
 
 impl CmdExecutor for Ping {
     const NAME: &'static str = "PING";
-    const CATS_FLAG: Flag = PING_CATS_FLAG;
-    const CMD_FLAG: Flag = PING_CMD_FLAG;
+    const CATS_FLAG: CatFlag = PING_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = PING_CMD_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -75,8 +75,8 @@ pub struct Echo {
 
 impl CmdExecutor for Echo {
     const NAME: &'static str = "ECHO";
-    const CATS_FLAG: Flag = ECHO_CATS_FLAG;
-    const CMD_FLAG: Flag = ECHO_CMD_FLAG;
+    const CATS_FLAG: CatFlag = ECHO_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = ECHO_CMD_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -102,8 +102,8 @@ pub struct Auth {
 
 impl CmdExecutor for Auth {
     const NAME: &'static str = "AUTH";
-    const CATS_FLAG: Flag = AUTH_CATS_FLAG;
-    const CMD_FLAG: Flag = AUTH_CMD_FLAG;
+    const CATS_FLAG: CatFlag = AUTH_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = AUTH_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -159,8 +159,8 @@ pub struct ClientTracking {
 
 impl CmdExecutor for ClientTracking {
     const NAME: &'static str = "TRACKING";
-    const CATS_FLAG: Flag = CLIENTTRACKING_CATS_FLAG;
-    const CMD_FLAG: Flag = CLIENTTRACKING_CMD_FLAG;
+    const CATS_FLAG: CatFlag = CLIENTTRACKING_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = CLIENTTRACKING_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {

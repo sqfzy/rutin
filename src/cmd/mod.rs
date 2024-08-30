@@ -16,8 +16,8 @@ use tracing::instrument;
 #[allow(async_fn_in_trait)]
 pub trait CmdExecutor: Sized + std::fmt::Debug {
     const NAME: &'static str;
-    const CATS_FLAG: Flag;
-    const CMD_FLAG: Flag;
+    const CATS_FLAG: CatFlag;
+    const CMD_FLAG: CmdFlag;
 
     #[inline]
     async fn apply(
@@ -25,13 +25,13 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<Resp3>> {
         // 检查是否有权限执行该命令
-        if handler.context.ac.is_forbidden_cmd(Self::CATS_FLAG) {
+        if handler.context.ac.is_forbidden_cmd(Self::CMD_FLAG) {
             return Err(RutinError::NoPermission);
         }
 
         let post_office = handler.shared.post_office();
         let wcmd =
-            if post_office.need_send_wcmd() && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG) {
+            if cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG) && post_office.need_send_wcmd() {
                 // 加上命令名
                 args.inner
                     .push_front(Resp3::new_blob_string(Self::NAME.into()));
@@ -41,23 +41,25 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
                 args = resp3.try_into()?;
                 args.inner.pop_front(); // 去掉命令名
                 Some(wcmd)
-            } else if let Some(back_log) = &mut handler.context.back_log
-                && cmds_contains_cmd(WRITE_CAT_FLAG, Self::CMD_FLAG)
-            {
-                // handle_master执行主节点传来的写命令时需要记录offset，由于从节点永远不会传播
-                // 写命令给主节点，因此handle_replica即使有back_log也不会执行以下代码
-                args.inner
-                    .push_front(Resp3::new_blob_string(Self::NAME.into()));
-                let resp3 = Resp3::from(args);
-                resp3.encode_buf(&mut back_log.buf);
-                let wcmd = back_log.buf.split();
-
-                back_log.offset += wcmd.len() as u64;
-
-                args = resp3.try_into()?;
-                args.inner.pop_front(); // 去掉命令名
-                None
-            } else {
+            }
+            // else if let Some(back_log) = &mut handler.context.back_log
+            //         && cmds_contains_cmd(WRITE_CAT_CMDS_FLAG, Self::CMD_FLAG)
+            //     {
+            //         // handle_master执行主节点传来的写命令时需要记录offset，由于从节点永远不会传播
+            //         // 写命令给主节点，因此handle_replica即使有back_log也不会执行以下代码
+            //         args.inner
+            //             .push_front(Resp3::new_blob_string(Self::NAME.into()));
+            //         let resp3 = Resp3::from(args);
+            //         resp3.encode_buf(&mut back_log.buf);
+            //         let wcmd = back_log.buf.split();
+            //
+            //         back_log.offset += wcmd.len() as u64;
+            //
+            //         args = resp3.try_into()?;
+            //         args.inner.pop_front(); // 去掉命令名
+            //         None
+            //     }
+            else {
                 None
             };
 

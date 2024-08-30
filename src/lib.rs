@@ -8,10 +8,8 @@
 #![feature(once_cell_get_mut)]
 #![feature(async_closure)]
 
-use mimalloc::MiMalloc;
-
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub mod cli;
 pub mod cmd;

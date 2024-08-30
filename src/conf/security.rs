@@ -18,9 +18,6 @@ pub const DEFAULT_USER: Bytes = Bytes::from_static(b"default_ac");
 #[derive(Debug, Deserialize)]
 pub struct SecurityConf {
     pub requirepass: Option<String>, // 访问密码
-    // TODO:
-    #[serde(skip)]
-    pub rename_commands: Vec<Option<String>>,
     pub default_ac: ArcSwap<AccessControl>,
     pub acl: Option<Acl>, // None代表禁用ACL
 }
@@ -101,7 +98,7 @@ pub struct AccessControl {
     pub enable: bool,
     pub password: Bytes, // 空表示不需要密码
     // 用于记录客户端的命令权限，置0的位表示禁止的命令
-    pub cmds_flag: Flag,
+    pub cmds_flag: CmdFlag,
     // 读取key的限制模式
     pub deny_read_key_patterns: Option<RegexSet>,
     // 写入key的限制模式
@@ -115,7 +112,7 @@ impl AccessControl {
         Self {
             enable: true,
             password: Bytes::new(),
-            cmds_flag: NO_CMD_FLAG,
+            cmds_flag: NO_CMDS_FLAG,
             deny_read_key_patterns: None,
             deny_write_key_patterns: None,
             deny_channel_patterns: None,
@@ -126,7 +123,7 @@ impl AccessControl {
         Self {
             enable: true,
             password: Bytes::new(),
-            cmds_flag: ALL_CMD_FLAG,
+            cmds_flag: ALL_CMDS_FLAG,
             deny_read_key_patterns: None,
             deny_write_key_patterns: None,
             deny_channel_patterns: None,
@@ -134,14 +131,14 @@ impl AccessControl {
     }
 
     pub fn allow_only_read(&mut self) {
-        self.cmds_flag = READ_CAT_FLAG;
+        self.cmds_flag = READ_CMDS_FLAG;
     }
 
     pub fn allow_only_write(&mut self) {
-        self.cmds_flag = WRITE_CAT_FLAG;
+        self.cmds_flag = WRITE_CMDS_FLAG;
     }
 
-    pub fn allow_cmds(&mut self, cmds: Flag) {
+    pub fn allow_cmds(&mut self, cmds: CmdFlag) {
         self.cmds_flag |= cmds;
     }
 
@@ -159,7 +156,7 @@ impl AccessControl {
 
         if let Some(allow_categories) = other.allow_categories {
             for category_name in &allow_categories {
-                let flag = cat_name_to_flag(category_name)?;
+                let flag = cat_name_to_cmds_flag(category_name)?;
 
                 self.cmds_flag |= flag; // 允许某类命令执行
             }
@@ -168,7 +165,7 @@ impl AccessControl {
         if let Some(allow_cmds) = other.allow_commands {
             for cmd_name in &allow_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
-                    self.cmds_flag = ALL_CMD_FLAG; // 允许所有命令执行，后面的命令无效
+                    self.cmds_flag = ALL_CMDS_FLAG; // 允许所有命令执行，后面的命令无效
                     break;
                 }
                 let flag = cmd_name_to_flag(cmd_name)?;
@@ -180,7 +177,7 @@ impl AccessControl {
 
         if let Some(deny_categories) = other.deny_categories {
             for category_name in &deny_categories {
-                let flag = cat_name_to_flag(category_name)?;
+                let flag = cat_name_to_cmds_flag(category_name)?;
 
                 self.cmds_flag &= !flag; // 禁止某类命令执行
             }
@@ -189,7 +186,7 @@ impl AccessControl {
         if let Some(deny_cmds) = other.deny_commands {
             for cmd_name in &deny_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
-                    self.cmds_flag = NO_CMD_FLAG; // 禁止所有命令执行，后面的命令无效
+                    self.cmds_flag = NO_CMDS_FLAG; // 禁止所有命令执行，后面的命令无效
                     break;
                 }
 
@@ -261,7 +258,7 @@ impl AccessControl {
         Ok(())
     }
 
-    pub const fn cmd_flag(&self) -> Flag {
+    pub const fn cmd_flag(&self) -> CmdFlag {
         self.cmds_flag
     }
 
@@ -274,26 +271,27 @@ impl AccessControl {
     }
 
     // 是否是禁用的命令
-    pub const fn is_forbidden_cmd(&self, check: Flag) -> bool {
+    pub const fn is_forbidden_cmd(&self, check: CmdFlag) -> bool {
         if !self.enable {
-            return true;
+            return false;
         }
         self.cmds_flag & check == 0
     }
 
     #[inline]
-    pub fn is_forbidden_key(&self, key: &dyn AsRef<[u8]>, cats_flag: Flag) -> bool {
+    pub fn deny_reading_or_writing_key(&self, key: &dyn AsRef<[u8]>, cats_flag: CatFlag) -> bool {
         if !self.enable {
-            return true;
+            return false;
         }
 
-        if cmds_contains_cmds(cats_flag, READ_CAT_FLAG) {
+        // 若命令是读命令且key匹配deny_read_key_patterns，则禁止
+        if cats_contains_cat(cats_flag, READ_CAT_FLAG) {
             if let Some(patterns) = &self.deny_read_key_patterns {
                 patterns.is_match(key.as_ref())
             } else {
                 false
             }
-        } else if cmds_contains_cmds(cats_flag, WRITE_CAT_FLAG) {
+        } else if cats_contains_cat(cats_flag, WRITE_CAT_FLAG) {
             if let Some(patterns) = &self.deny_write_key_patterns {
                 patterns.is_match(key.as_ref())
             } else {
@@ -306,7 +304,7 @@ impl AccessControl {
 
     pub fn is_forbidden_channel(&self, channel: &dyn AsRef<[u8]>) -> bool {
         if !self.enable {
-            return true;
+            return false;
         }
 
         if let Some(patterns) = &self.deny_channel_patterns {

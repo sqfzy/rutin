@@ -1,4 +1,5 @@
 use crate::{
+    cmd::commands::{PING_CMD_FLAG, REPLCONF_CMD_FLAG, WRITE_CMDS_FLAG},
     conf::{AccessControl, MasterInfo, DEFAULT_USER},
     error::{RutinError, RutinResult},
     frame::Resp3,
@@ -64,8 +65,7 @@ pub fn set_server_to_replica(
             })??;
 
         let mut handle_master = {
-            // 允许接收主节点的所有命令
-            let ac = AccessControl::new_loose();
+            let ac = get_handle_master_ac();
 
             let (outbox, inbox) = post_office.new_mailbox_with_special_id(SET_REPLICA_ID);
             let context =
@@ -229,6 +229,14 @@ pub fn set_server_to_replica(
 
         Ok(())
     }
+}
+
+fn get_handle_master_ac() -> AccessControl {
+    let mut ac = AccessControl::new_strict();
+
+    ac.allow_cmds(PING_CMD_FLAG | WRITE_CMDS_FLAG | REPLCONF_CMD_FLAG);
+
+    ac
 }
 
 async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {

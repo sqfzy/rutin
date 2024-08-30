@@ -47,14 +47,14 @@ regex = { version = "1.10.4", features = ["perf"] }
 # async-recursion = "1.1.1"
 snafu = "0.8.2"
 # tokio-uring = { version = "0.4.0", features = ["bytes"] }
-backon = "0.4.4"
+backon = "0.5"
 rayon = "1.10.0"
 # tokio-async-drop = "0.1.0"
 console-subscriber = "0.4.0"
 try-lock = "0.2.5"
 kanal = "0.1.0-pre8"
 tokio-rustls = "0.26.0"
-tokio-rustls-acme = "0.3.0"
+# tokio-rustls-acme = "0.3.0"
 rustls-pemfile = "2.1.2"
 rustls = "0.23.7"
 mlua = { version = "0.9.8", features = ["async", "lua54", "vendored"] }
@@ -66,7 +66,7 @@ owning_ref = "0.4.1"
 num-bigint = "0.4.5"
 memchr = "2.7.2"
 smallvec = { version = "1.13.2", features = ["const_new", "union"] }
-mimalloc = "0.1"
+mimalloc = { version = "0.1" }
 arc-swap = { version = "1.7.1", features = ["serde"] }
 bus = "2.4.1"
 tokio-uring = "0.5.0"
@@ -116,7 +116,15 @@ codegen-units = 1 # 减少代码生成单元以提高优化效果
 # strip = "symbols"       # 删除调试符号
 
 [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.release]
-rustflags = ["-C", "target-cpu=native", "-C", "link-args=-Wl,-O2"]
+rustflags = [
+  "-C",
+  "target-cpu=native",
+  "-C",
+  "link-args=-Wl,-O2",
+  # 使用#[thread_local]代替thread_local!宏
+  # "-Z",
+  # "tls-model=local-exec",
+]
 
 [target.'cfg(all(target_arch = "x86_64", target_os = "windows"))'.release]
 rustflags = ["-C", "target-cpu=native", "-C", "link-args=-O2"]
@@ -126,3 +134,4 @@ debug = []
 debug_client = []
 debug_server = []
 redis = []
+secure = ["mimalloc/secure"]

@@ -20,8 +20,8 @@ pub struct Eval {
 
 impl CmdExecutor for Eval {
     const NAME: &'static str = "EVAL";
-    const CATS_FLAG: Flag = EVAL_CATS_FLAG;
-    const CMD_FLAG: Flag = EVAL_CMD_FLAG;
+    const CATS_FLAG: CatFlag = EVAL_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = EVAL_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -67,8 +67,8 @@ pub struct EvalName {
 
 impl CmdExecutor for EvalName {
     const NAME: &'static str = "EVALNAME";
-    const CATS_FLAG: Flag = EVALNAME_CATS_FLAG;
-    const CMD_FLAG: Flag = EVALNAME_CMD_FLAG;
+    const CATS_FLAG: CatFlag = EVALNAME_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = EVALNAME_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -112,8 +112,8 @@ pub struct ScriptExists {
 
 impl CmdExecutor for ScriptExists {
     const NAME: &'static str = "SCRIPTEXISTS";
-    const CATS_FLAG: Flag = SCRIPTEXISTS_CATS_FLAG;
-    const CMD_FLAG: Flag = SCRIPTEXISTS_CMD_FLAG;
+    const CATS_FLAG: CatFlag = SCRIPTEXISTS_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = SCRIPTEXISTS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -145,8 +145,8 @@ pub struct ScriptFlush {}
 
 impl CmdExecutor for ScriptFlush {
     const NAME: &'static str = "SCRIPTFLUSH";
-    const CATS_FLAG: Flag = SCRIPTFLUSH_CATS_FLAG;
-    const CMD_FLAG: Flag = SCRIPTFLUSH_CMD_FLAG;
+    const CATS_FLAG: CatFlag = SCRIPTFLUSH_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = SCRIPTFLUSH_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -172,8 +172,8 @@ pub struct ScriptRegister {
 
 impl CmdExecutor for ScriptRegister {
     const NAME: &'static str = "SCRIPTREGISTER";
-    const CATS_FLAG: Flag = SCRIPTREGISTER_CATS_FLAG;
-    const CMD_FLAG: Flag = SCRIPTREGISTER_CMD_FLAG;
+    const CATS_FLAG: CatFlag = SCRIPTREGISTER_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = SCRIPTREGISTER_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {

@@ -41,7 +41,6 @@ const CHUNKED_STRING_LENGTH_PREFIX: u8 = b';';
 
 pub type Attributes<B, S> = AHashMap<Resp3<B, S>, Resp3<B, S>>;
 
-// TODO: Display
 #[derive(Clone, Debug, IntoStaticStr, EnumDiscriminants)]
 #[strum_discriminants(vis(pub))]
 #[strum_discriminants(name(Resp3Type))]

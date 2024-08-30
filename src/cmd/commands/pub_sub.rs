@@ -24,8 +24,8 @@ pub struct Publish {
 
 impl CmdExecutor for Publish {
     const NAME: &'static str = "PUBLISH";
-    const CATS_FLAG: Flag = PUBLISH_CATS_FLAG;
-    const CMD_FLAG: Flag = PUBLISH_CMD_FLAG;
+    const CATS_FLAG: CatFlag = PUBLISH_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = PUBLISH_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -85,8 +85,8 @@ pub struct Subscribe {
 
 impl CmdExecutor for Subscribe {
     const NAME: &'static str = "SUBSCRIBE";
-    const CATS_FLAG: Flag = SUBSCRIBE_CATS_FLAG;
-    const CMD_FLAG: Flag = SUBSCRIBE_CMD_FLAG;
+    const CATS_FLAG: CatFlag = SUBSCRIBE_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = SUBSCRIBE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -155,8 +155,8 @@ pub struct Unsubscribe {
 
 impl CmdExecutor for Unsubscribe {
     const NAME: &'static str = "UNSUBSCRIBE";
-    const CATS_FLAG: Flag = UNSUBSCRIBE_CATS_FLAG;
-    const CMD_FLAG: Flag = UNSUBSCRIBE_CMD_FLAG;
+    const CATS_FLAG: CatFlag = UNSUBSCRIBE_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = UNSUBSCRIBE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {

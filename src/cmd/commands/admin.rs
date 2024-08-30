@@ -27,20 +27,20 @@ pub struct AclCat {
 
 impl CmdExecutor for AclCat {
     const NAME: &'static str = "ACLCAT";
-    const CATS_FLAG: Flag = ACLCAT_CATS_FLAG;
-    const CMD_FLAG: Flag = ACLCAT_CMD_FLAG;
+    const CATS_FLAG: CatFlag = ACLCAT_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = ACLCAT_CMD_FLAG;
 
     #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res: Vec<Resp3<Bytes, ByteString>> = if let Some(cat) = self.category {
-            let cat = cat_name_to_flag(cat.as_ref())?;
+            let cat = cat_name_to_cmds_flag(cat.as_ref())?;
 
             cmds_flag_to_names(cat)
                 .iter_mut()
                 .map(|s| Resp3::new_blob_string(s.as_bytes().into()))
                 .collect_vec()
         } else {
-            cmds_flag_to_names(ALL_CMD_FLAG)
+            cmds_flag_to_names(ALL_CMDS_FLAG)
                 .iter_mut()
                 .map(|s| Resp3::new_blob_string(s.as_bytes().into()))
                 .collect_vec()
@@ -74,8 +74,8 @@ pub struct AclDelUser {
 
 impl CmdExecutor for AclDelUser {
     const NAME: &'static str = "ACLDELUSER";
-    const CATS_FLAG: Flag = ACLDELUSER_CATS_FLAG;
-    const CMD_FLAG: Flag = ACLDELUSER_CMD_FLAG;
+    const CATS_FLAG: CatFlag = ACLDELUSER_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = ACLDELUSER_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -124,8 +124,8 @@ pub struct AclSetUser {
 
 impl CmdExecutor for AclSetUser {
     const NAME: &'static str = "ACLSETUSER";
-    const CATS_FLAG: Flag = ACLSETUSER_CATS_FLAG;
-    const CMD_FLAG: Flag = ACLSETUSER_CMD_FLAG;
+    const CATS_FLAG: CatFlag = ACLSETUSER_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = ACLSETUSER_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -277,8 +277,8 @@ pub struct AclUsers;
 
 impl CmdExecutor for AclUsers {
     const NAME: &'static str = "ACLUSERS";
-    const CATS_FLAG: Flag = ACLUSERS_CATS_FLAG;
-    const CMD_FLAG: Flag = ACLUSERS_CMD_FLAG;
+    const CATS_FLAG: CatFlag = ACLUSERS_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = ACLUSERS_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -303,8 +303,8 @@ pub struct AclWhoAmI;
 
 impl CmdExecutor for AclWhoAmI {
     const NAME: &'static str = "ACLWHOAMI";
-    const CATS_FLAG: Flag = ACLWHOAMI_CATS_FLAG;
-    const CMD_FLAG: Flag = ACLWHOAMI_CMD_FLAG;
+    const CATS_FLAG: CatFlag = ACLWHOAMI_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = ACLWHOAMI_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -326,8 +326,8 @@ pub struct BgSave;
 
 impl CmdExecutor for BgSave {
     const NAME: &'static str = "BGSAVE";
-    const CATS_FLAG: Flag = BGSAVE_CATS_FLAG;
-    const CMD_FLAG: Flag = BGSAVE_CMD_FLAG;
+    const CATS_FLAG: CatFlag = BGSAVE_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = BGSAVE_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -372,8 +372,8 @@ pub struct PSync {
 
 impl CmdExecutor for PSync {
     const NAME: &'static str = "PSYNC";
-    const CATS_FLAG: Flag = PSYNC_CATS_FLAG;
-    const CMD_FLAG: Flag = PSYNC_CMD_FLAG;
+    const CATS_FLAG: CatFlag = PSYNC_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = PSYNC_CMD_FLAG;
 
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let post_office = handler.shared.post_office();
@@ -440,8 +440,8 @@ pub struct ReplConf {
 
 impl CmdExecutor for ReplConf {
     const NAME: &'static str = "REPLCONF";
-    const CATS_FLAG: Flag = REPLCONF_CATS_FLAG;
-    const CMD_FLAG: Flag = REPLCONF_CMD_FLAG;
+    const CATS_FLAG: CatFlag = REPLCONF_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = REPLCONF_CMD_FLAG;
 
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         // TODO:
@@ -528,8 +528,8 @@ pub struct ReplicaOf {
 
 impl CmdExecutor for ReplicaOf {
     const NAME: &'static str = "REPLICAOF";
-    const CATS_FLAG: Flag = REPLICAOF_CATS_FLAG;
-    const CMD_FLAG: Flag = REPLICAOF_CMD_FLAG;
+    const CATS_FLAG: CatFlag = REPLICAOF_CATS_FLAG;
+    const CMD_FLAG: CmdFlag = REPLICAOF_CMD_FLAG;
 
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -699,10 +699,10 @@ async fn cmd_acl_tests() {
         assert!(ac.is_forbidden_cmd(HDel::CMD_FLAG));
         assert!(!ac.is_forbidden_cmd(MSet::CMD_FLAG));
 
-        assert!(ac.is_forbidden_key(b"foo1", READ_CAT_FLAG));
-        assert!(!ac.is_forbidden_key(b"foo", READ_CAT_FLAG));
-        assert!(ac.is_forbidden_key(b"bar1", WRITE_CAT_FLAG));
-        assert!(!ac.is_forbidden_key(b"bar", WRITE_CAT_FLAG));
+        assert!(ac.deny_reading_or_writing_key(b"foo1", READ_CAT_FLAG));
+        assert!(!ac.deny_reading_or_writing_key(b"foo", READ_CAT_FLAG));
+        assert!(ac.deny_reading_or_writing_key(b"bar1", WRITE_CAT_FLAG));
+        assert!(!ac.deny_reading_or_writing_key(b"bar", WRITE_CAT_FLAG));
 
         assert!(ac.is_forbidden_channel(b"channel"));
         assert!(!ac.is_forbidden_channel(b"chan"));

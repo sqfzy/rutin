@@ -69,15 +69,13 @@ impl<S: AsyncStream> Handler<S> {
         .await
     }
 
+    // 1. 从节点向主节点不会返回响应，除非是REPLCONF GETACK命令
+    // 2. 从节点每秒向主节点发送REPLCONF ACK <offset>命令，以便主节点知道当前同步进度
+    // 3. offset记录了主节点发来的所有命令的字节数(不仅是写命令)
     pub async fn run_replica(
         mut self,
         mut offset: tokio::sync::MutexGuard<'_, u64>,
     ) -> RutinResult<()> {
-        // back_log仅用于记录offset
-        let mut back_log = BackLog::new(0);
-        back_log.offset = *offset;
-        self.context.back_log = Some(back_log);
-
         ID.scope(self.context.id, async {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
 
@@ -101,6 +99,7 @@ impl<S: AsyncStream> Handler<S> {
                             listener.await;
                         }
                         Letter::Resp3(resp) => {
+                            // TODO: REPLCONF GETACK命令返回响应
                             self.conn.write_frame(&resp).await?;
                         }
                         Letter::Wcmd(_) | Letter::Psync {..} => {}
@@ -111,33 +110,30 @@ impl<S: AsyncStream> Handler<S> {
                             for f in frames.into_iter() {
                                 // 如果从节点返回响应的话，主节点为了区分响应和请求
                                 // 就需要同步等待响应，为了避免等待，从节点只发送请
-                                // 求，不会发送响应
+                                // 求，不会发送响应(除了REPLCONF GETACK命令)
+                                let size = f.size() as u64;
                                 dispatch(f, &mut self).await?;
+                                *offset += size;
                             }
                         } else {
                             return Ok(());
                         }
                     },
                     // 每秒向master发送REPLCONF ACK <offset>命令，以便master知道当前
-                    // 同步进度。如果offset小于master offset，则主节点会补发相差的数据
+                    // 同步进度。
                     _ = interval.tick() => {
                         // 更新offset frame
-                        resp3.try_array_mut().unwrap()[2] = Resp3::new_blob_string(
-                            buf.format(self.context.back_log.as_ref().unwrap().offset)
-                                .into(),
-                        );
+                        resp3.try_array_mut().unwrap()[2] = Resp3::new_blob_string(buf.format(*offset).into());
 
                         self.conn.write_frame(&resp3).await?;
+                        // 等待master响应"+OK\r\n"
                         let resp = self.conn.read_frame_force().await?;
                         if resp.is_simple_error() {
-                            error!("REPLCONF ACK error: {}", resp);
+                            error!("REPLCONF ACK command get error: {}", resp);
                         }
                     },
                 };
             }
-
-            // 保存offset，以便PSYNC时使用
-            *offset = self.context.back_log.unwrap().offset;
 
             Ok(())
         })
