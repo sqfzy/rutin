@@ -204,3 +204,19 @@ impl Default for Str {
         Str::Raw("".into())
     }
 }
+
+#[cfg(feature = "zeroize")]
+impl Drop for Str {
+    fn drop(&mut self) {
+        match self {
+            Self::Raw(b) => {
+                if b.is_unique()
+                    && let Ok(mut b) = b.split_to(b.len()).try_into_mut()
+                {
+                    b.zeroize();
+                }
+            }
+            Self::Int(i) => i.zeroize(),
+        }
+    }
+}

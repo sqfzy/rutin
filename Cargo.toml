@@ -60,7 +60,7 @@ rustls = "0.23.7"
 mlua = { version = "0.9.8", features = ["async", "lua54", "vendored"] }
 either = "1.12.0"
 pin-project = "1.1.5"
-yoke = { version = "0.7.4", features = ["derive"] }
+# yoke = { version = "0.7.4", features = ["derive"] }
 owning_ref = "0.4.1"
 # polonius-the-crab = "0.4.1"
 num-bigint = "0.4.5"
@@ -85,6 +85,8 @@ figment = { version = "0.10.19", features = ["toml", "env"] }
 paste = "1.0.15"
 derive_builder = "0.20.0"
 futures = "0.3.30"
+
+zeroize = { version = "1", optional = true }
 # futures-util = "0.3.30"
 # lru = "0.12.3"
 # neat-date-time = "0.2.0"
@@ -115,23 +117,23 @@ codegen-units = 1 # 减少代码生成单元以提高优化效果
 # incremental = false     # 禁用增量编译
 # strip = "symbols"       # 删除调试符号
 
-[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.release]
-rustflags = [
-  "-C",
-  "target-cpu=native",
-  "-C",
-  "link-args=-Wl,-O2",
-  # 使用#[thread_local]代替thread_local!宏
-  # "-Z",
-  # "tls-model=local-exec",
-]
+# [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.release]
+# rustflags = [
+#   "-C",
+#   "target-cpu=native",
+#   "-C",
+#   "link-args=-Wl,-O2",
+#   # 使用#[thread_local]代替thread_local!宏
+#   # "-Z",
+#   # "tls-model=local-exec",
+# ]
 
-[target.'cfg(all(target_arch = "x86_64", target_os = "windows"))'.release]
-rustflags = ["-C", "target-cpu=native", "-C", "link-args=-O2"]
+# [target.'cfg(all(target_arch = "x86_64", target_os = "windows"))'.release]
+# rustflags = ["-C", "target-cpu=native", "-C", "link-args=-O2"]
 
 [features]
 debug = []
 debug_client = []
 debug_server = []
 redis = []
-secure = ["mimalloc/secure"]
+secure = ["mimalloc/secure", "zeroize"]

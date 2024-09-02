@@ -443,6 +443,7 @@ impl CmdExecutor for ReplConf {
     const CATS_FLAG: CatFlag = REPLCONF_CATS_FLAG;
     const CMD_FLAG: CmdFlag = REPLCONF_CMD_FLAG;
 
+    #[allow(unused_variables)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         // TODO:
         match self.sub_cmd {
