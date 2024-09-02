@@ -13,13 +13,50 @@ use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
-    shared::{post_office::Letter, Shared, MAIN_ID},
-    util::{set_server_to_master, set_server_to_replica},
+    shared::{db::Lru, post_office::Letter, Shared, MAIN_ID},
+    util::{set_server_to_master, set_server_to_replica, UnsafeLazy},
     Id,
 };
-use std::{cell::RefCell, str::FromStr, sync::atomic::Ordering, time::Duration};
+use std::{
+    cell::RefCell,
+    str::FromStr,
+    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    time::{Duration, SystemTime},
+};
 use tokio::{task_local, time::Instant};
 use tracing::{error, info};
+
+pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
+    Instant::now()
+        - SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+});
+
+pub static NEVER_EXPIRE: UnsafeLazy<Instant> =
+    UnsafeLazy::new(|| Instant::now() + Duration::from_secs(3600 * 24 * 365));
+
+// 程序运行前或测试前需要进行初始化
+pub fn preface() {
+    unsafe {
+        UNIX_EPOCH.init();
+        NEVER_EXPIRE.init();
+    }
+}
+
+pub static USED_MEMORY: AtomicU64 = AtomicU64::new(0);
+
+static LRU_CLOCK: AtomicU32 = AtomicU32::new(0);
+
+#[inline]
+pub fn incr_lru_clock() {
+    LRU_CLOCK.fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
+pub fn get_lru_clock() -> u32 {
+    LRU_CLOCK.load(Ordering::Relaxed) % Lru::LRU_CLOCK_MAX
+}
 
 task_local! { pub static ID: Id; }
 
@@ -45,7 +82,7 @@ pub async fn run() {
     let shared = Shared::new();
     let post_office = shared.post_office();
 
-    init(shared).await.unwrap();
+    init_server(shared).await.unwrap();
 
     let inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
 
@@ -83,7 +120,7 @@ pub async fn run() {
     post_office.wait_shutdown_complete().await;
 }
 
-pub async fn init(shared: Shared) -> anyhow::Result<()> {
+pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
     static ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
     let post_office = shared.post_office();
@@ -202,7 +239,7 @@ pub async fn init(shared: Shared) -> anyhow::Result<()> {
         let mut aof = Aof::new(shared, aof.file_path.clone()).await?;
 
         shared.pool().spawn_pinned(move || async move {
-            if let Err(e) = aof.save(shared).await {
+            if let Err(e) = aof.save().await {
                 error!("Failed to save AOF file: {}", e);
             }
         });

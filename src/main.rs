@@ -12,5 +12,7 @@ async fn main() {
         return;
     }
 
+    rutin::server::preface();
+
     rutin::server::run().await;
 }

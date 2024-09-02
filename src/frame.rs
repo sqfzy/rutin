@@ -11,7 +11,10 @@ use bytes::{Buf, Bytes, BytesMut};
 use bytestring::ByteString;
 use mlua::{prelude::*, Value};
 use num_bigint::BigInt;
-use std::{fmt::Display, hash::Hash, io, iter::Iterator, ops::Range, ptr::slice_from_raw_parts};
+use std::{
+    fmt::Display, hash::Hash, intrinsics::unlikely, io, iter::Iterator, ops::Range,
+    ptr::slice_from_raw_parts,
+};
 use strum::{EnumDiscriminants, IntoStaticStr};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_util::{
@@ -1209,22 +1212,10 @@ impl Resp3<BytesMut, ByteString> {
             trace!("reader_buf: {src:?}");
 
             let res = match Resp3::get_u8(src)? {
-                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
-                    inner: Resp3::decode_string_async(io_read, src).await?,
-                    attributes: None,
-                },
-                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
-                    inner: Resp3::decode_string_async(io_read, src).await?,
-                    attributes: None,
-                },
-                INTEGER_PREFIX => Resp3::Integer {
-                    inner: Resp3::decode_decimal_async(io_read, src).await?,
-                    attributes: None,
-                },
                 BLOB_STRING_PREFIX => {
                     let line = Resp3::decode_line_async(io_read, src).await?;
 
-                    if Resp3::get(&line, 0..1)?[0] == CHUNKED_STRING_PREFIX {
+                    if unlikely(Resp3::get(&line, 0..1)?[0] == CHUNKED_STRING_PREFIX) {
                         let mut chunks = Vec::new();
                         loop {
                             let mut line = Resp3::decode_line_async(io_read, src).await?;
@@ -1266,6 +1257,18 @@ impl Resp3<BytesMut, ByteString> {
                         }
                     }
                 }
+                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                INTEGER_PREFIX => Resp3::Integer {
+                    inner: Resp3::decode_decimal_async(io_read, src).await?,
+                    attributes: None,
+                },
                 ARRAY_PREFIX => {
                     let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
 
@@ -1624,6 +1627,7 @@ impl Resp3<BytesMut, ByteString> {
         if let Some(i) = memchr::memchr(b'\n', src) {
             if i > 0 && src[i - 1] == b'\r' {
                 let line = src.split_to(i - 1);
+                // skip \r\n
                 src.advance(2);
 
                 return Ok(line);

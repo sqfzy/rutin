@@ -4,11 +4,8 @@ use crate::{
     conf::AccessControl,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::{AsyncStream, Handler},
-    shared::{
-        db::{ObjValueType, ObjectInner, NEVER_EXPIRE},
-        UNIX_EPOCH,
-    },
+    server::{AsyncStream, Handler, NEVER_EXPIRE, UNIX_EPOCH},
+    shared::db::{ObjValueType, ObjectInner},
     util::atoi,
     Int, Key,
 };
@@ -194,7 +191,7 @@ impl CmdExecutor for Get {
 
     #[inline]
     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
-        if args.len() != 1 {
+        if unlikely(args.len() != 1) {
             return Err(RutinError::WrongArgNum);
         }
 
@@ -645,7 +642,7 @@ impl CmdExecutor for Set {
     }
 
     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
-        if args.len() < 2 {
+        if unlikely(args.len() < 2) {
             return Err(RutinError::WrongArgNum);
         }
 

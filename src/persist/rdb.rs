@@ -102,7 +102,7 @@ impl Rdb {
 }
 
 mod rdb_save {
-    use crate::shared::{db::as_bytes, UNIX_EPOCH};
+    use crate::{server::UNIX_EPOCH, shared::db::as_bytes};
 
     use super::*;
 
@@ -290,9 +290,9 @@ mod rdb_save {
 }
 
 mod rdb_load {
-    use crate::shared::{
-        db::{ObjectInner, NEVER_EXPIRE},
-        UNIX_EPOCH,
+    use crate::{
+        server::{NEVER_EXPIRE, UNIX_EPOCH},
+        shared::db::ObjectInner,
     };
 
     use super::*;
@@ -776,8 +776,11 @@ mod rdb_test {
     use super::rdb_load::*;
     use super::rdb_save::*;
     use super::*;
-    use crate::{shared::db::ObjectInner, util::get_test_shared};
-    use crate::{shared::db::NEVER_EXPIRE, util::test_init};
+    use crate::{
+        server::*,
+        shared::db::ObjectInner,
+        util::{get_test_shared, test_init},
+    };
     use bytes::BytesMut;
     use tokio::time::Instant;
 

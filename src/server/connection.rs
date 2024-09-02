@@ -58,10 +58,6 @@ impl<S: AsyncStream> Connection<S> {
         self.batch
     }
 
-    pub fn set_count(&mut self, count: usize) {
-        self.batch = count;
-    }
-
     #[inline]
     pub async fn shutdown(&mut self) -> io::Result<()> {
         self.stream.shutdown().await

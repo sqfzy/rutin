@@ -9,8 +9,8 @@ use crate::{
     conf::MemoryConf,
     error::{RutinError, RutinResult},
     frame::Resp3,
+    server::NEVER_EXPIRE,
     shared::Outbox,
-    util::UnsafeLazy,
     Id, Key,
 };
 use ahash::RandomState;
@@ -19,12 +19,8 @@ use dashmap::{
     DashMap, DashSet,
 };
 use flume::Sender;
-use std::time::Duration;
 use tokio::time::Instant;
 use tracing::instrument;
-
-pub static NEVER_EXPIRE: UnsafeLazy<Instant> =
-    UnsafeLazy::new(|| Instant::now() + Duration::from_secs(3600 * 24 * 365));
 
 #[derive(Debug)]
 pub struct Db {
@@ -50,9 +46,6 @@ pub struct Db {
 
 impl Db {
     pub fn new(mem_conf: Option<MemoryConf>) -> Self {
-        // WARN: 当多线程执行test时，极小概率会同时执行Db::new()，出现数据竞争
-        unsafe { NEVER_EXPIRE.init() };
-
         Self {
             entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
@@ -318,7 +311,10 @@ impl Db {
 
 #[cfg(test)]
 pub mod db_tests {
-    use crate::util::{get_test_db, test_init};
+    use crate::{
+        server::NEVER_EXPIRE,
+        util::{get_test_db, test_init},
+    };
 
     use super::*;
 

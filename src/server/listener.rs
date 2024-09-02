@@ -2,30 +2,13 @@ use super::Handler;
 use crate::{
     persist::rdb::Rdb,
     server::HandlerContext,
-    shared::{db::Lru, Shared, SPECIAL_ID_RANGE},
+    shared::{Shared, SPECIAL_ID_RANGE},
 };
 use backon::Retryable;
-use std::sync::{
-    atomic::{AtomicU32, AtomicU64, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use tokio::{net::TcpListener, sync::Semaphore};
 use tokio_rustls::TlsAcceptor;
 use tracing::error;
-
-pub static USED_MEMORY: AtomicU64 = AtomicU64::new(0);
-
-static LRU_CLOCK: AtomicU32 = AtomicU32::new(0);
-
-#[inline]
-pub fn incr_lru_clock() {
-    LRU_CLOCK.fetch_add(1, Ordering::Relaxed);
-}
-
-#[inline]
-pub fn get_lru_clock() -> u32 {
-    LRU_CLOCK.load(Ordering::Relaxed) % Lru::LRU_CLOCK_MAX
-}
 
 pub struct Listener {
     pub shared: Shared,
@@ -78,7 +61,7 @@ impl Listener {
             let permit = self.limit_connections.clone().acquire_owned().await?;
 
             let (stream, _) = (|| async { self.listener.accept().await })
-                .retry(&backon::ExponentialBuilder::default())
+                .retry(backon::ExponentialBuilder::default())
                 .await?;
 
             let (id, outbox, inbox) = post_office.new_mailbox(self.next_client_id);

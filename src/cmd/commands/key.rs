@@ -7,10 +7,10 @@ use crate::{
     persist::rdb::{
         encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
     },
-    server::{AsyncStream, Handler},
+    server::{AsyncStream, Handler, NEVER_EXPIRE, UNIX_EPOCH},
     shared::{
-        db::{as_bytes, ObjValueType, NEVER_EXPIRE},
-        Letter, UNIX_EPOCH,
+        db::{as_bytes, ObjValueType},
+        Letter,
     },
     util::atoi,
     Id, Int, Key,
@@ -773,9 +773,9 @@ impl CmdExecutor for Type {
 #[cfg(test)]
 mod cmd_key_tests {
     use super::*;
-    use crate::shared::{
-        db::{Hash, List, ObjectInner, Set, Str, ZSet},
-        UNIX_EPOCH,
+    use crate::{
+        server::{NEVER_EXPIRE, UNIX_EPOCH},
+        shared::db::{Hash, List, ObjectInner, Set, Str, ZSet},
     };
 
     // 允许的时间误差

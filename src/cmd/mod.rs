@@ -1,6 +1,6 @@
 pub mod commands;
 
-use std::{collections::VecDeque, num::NonZero};
+use std::{collections::VecDeque, intrinsics::unlikely, num::NonZero};
 
 use crate::{
     conf::AccessControl,
@@ -25,7 +25,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<Resp3>> {
         // 检查是否有权限执行该命令
-        if handler.context.ac.is_forbidden_cmd(Self::CMD_FLAG) {
+        if unlikely(handler.context.ac.is_forbidden_cmd(Self::CMD_FLAG)) {
             return Err(RutinError::NoPermission);
         }
 
@@ -41,25 +41,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
                 args = resp3.try_into()?;
                 args.inner.pop_front(); // 去掉命令名
                 Some(wcmd)
-            }
-            // else if let Some(back_log) = &mut handler.context.back_log
-            //         && cmds_contains_cmd(WRITE_CAT_CMDS_FLAG, Self::CMD_FLAG)
-            //     {
-            //         // handle_master执行主节点传来的写命令时需要记录offset，由于从节点永远不会传播
-            //         // 写命令给主节点，因此handle_replica即使有back_log也不会执行以下代码
-            //         args.inner
-            //             .push_front(Resp3::new_blob_string(Self::NAME.into()));
-            //         let resp3 = Resp3::from(args);
-            //         resp3.encode_buf(&mut back_log.buf);
-            //         let wcmd = back_log.buf.split();
-            //
-            //         back_log.offset += wcmd.len() as u64;
-            //
-            //         args = resp3.try_into()?;
-            //         args.inner.pop_front(); // 去掉命令名
-            //         None
-            //     }
-            else {
+            } else {
                 None
             };
 
@@ -106,6 +88,7 @@ pub async fn dispatch(
     cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
 ) -> RutinResult<Option<Resp3>> {
+    // 匹配命令名并执行对应的命令
     macro_rules! dispatch_command {
         ( $cmd:expr, $handler:expr, $( $cmd_type:ident ),*; $( $cmd_group:expr => $( $cmd_type2:ident ),* );* ) => {
             {

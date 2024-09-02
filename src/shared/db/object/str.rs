@@ -12,7 +12,6 @@ pub macro as_bytes($str:expr) {
     $str.as_bytes(&mut itoa::Buffer::new())
 }
 
-// WARN: 禁止直接使用Str::Raw和Str::Int构造，应使用Str::from()方法
 #[derive(EnumDiscriminants, IntoStaticStr)]
 #[strum_discriminants(vis(pub))]
 #[strum_discriminants(name(StrType))]

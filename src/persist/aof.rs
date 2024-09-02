@@ -70,9 +70,9 @@ impl Aof {
 }
 
 impl Aof {
-    pub async fn save(&mut self, shared: Shared) -> anyhow::Result<()> {
-        let aof_conf = shared.conf().aof.as_ref().unwrap();
-        let post_office = shared.post_office();
+    pub async fn save(&mut self) -> anyhow::Result<()> {
+        let aof_conf = self.shared.conf().aof.as_ref().unwrap();
+        let post_office = self.shared.post_office();
 
         let (aof_outbox, aof_inbox) = post_office.new_mailbox_with_special_id(AOF_ID);
 
@@ -81,7 +81,7 @@ impl Aof {
         let mut curr_aof_size = 0_u128; // 单位为byte
         let auto_aof_rewrite_min_size = aof_conf.auto_aof_rewrite_min_size;
 
-        let set_master_outbox = shared.post_office().get_outbox(SET_MASTER_ID);
+        let set_master_outbox = post_office.get_outbox(SET_MASTER_ID);
 
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         match aof_conf.append_fsync {
@@ -260,7 +260,7 @@ async fn aof_test() {
     aof.load().await.unwrap();
 
     shared.pool().spawn_pinned(move || async move {
-        aof.save(shared).await.unwrap();
+        aof.save().await.unwrap();
     });
 
     let db = shared.db();

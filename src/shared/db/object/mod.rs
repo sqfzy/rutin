@@ -13,10 +13,10 @@ pub use zset::*;
 use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::{get_lru_clock, ID},
+    server::{get_lru_clock, ID, NEVER_EXPIRE},
     shared::db::{
         object_entry::{IntentionLock, ObjectEntry},
-        Db, NEVER_EXPIRE,
+        Db,
     },
     Id, Key,
 };
@@ -998,7 +998,10 @@ impl From<ZSet> for ObjValue {
 
 #[cfg(test)]
 mod object_tests {
-    use crate::util::{get_test_db, test_init};
+    use crate::{
+        server::NEVER_EXPIRE,
+        util::{get_test_db, test_init},
+    };
 
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};

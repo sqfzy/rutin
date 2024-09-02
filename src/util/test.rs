@@ -5,10 +5,8 @@ use crate::{
         ReplicaConf, SecurityConf, ServerConf,
     },
     persist::aof::AppendFSync,
-    shared::{
-        db::{Db, NEVER_EXPIRE},
-        Shared,
-    },
+    server::preface,
+    shared::{db::Db, Shared},
 };
 use arc_swap::ArcSwap;
 use std::sync::Once;
@@ -23,9 +21,7 @@ pub fn test_init() {
     static INIT: Once = Once::new();
 
     INIT.call_once(|| {
-        unsafe {
-            NEVER_EXPIRE.init();
-        }
+        preface();
 
         tracing_subscriber::fmt()
             .with_max_level(Level::DEBUG)

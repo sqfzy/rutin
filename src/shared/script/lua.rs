@@ -22,7 +22,6 @@ thread_local! {
     // 互斥。
     static LUA: Rc<LocalMutex<Option<Lua>>> = Rc::new(LocalMutex::new(None, false));
     static FAKE_HANDLER: Rc<LocalMutex<Option<FakeHandler>>> = Rc::new(LocalMutex::new(None, false));
-    static FAKE_HANDLER2: Option<FakeHandler> = None;
 }
 
 /// Lua环境包含：

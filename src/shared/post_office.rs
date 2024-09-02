@@ -330,10 +330,6 @@ pub enum Letter {
     // 重置服务。关闭除主任务以外的所有任务，并重置Shared
     Reset,
 
-    // // 阻塞服务，断开所有连接。
-    // BlockServer {
-    //     unblock_event: Arc<Event>,
-    // },
     /// 阻塞服务(不允许新增连接)以及所有客户端连接。
     /// 阻塞后必须解除阻塞，否则服务无法正常关闭。
     ///
@@ -372,7 +368,6 @@ pub enum Letter {
     BlockAll {
         unblock_event: Arc<Event>,
     },
-    // ShutdownReplicas,
 
     // 用于客户端之间重定向
     Resp3(Resp3),

@@ -4,19 +4,11 @@ pub mod script;
 
 pub use post_office::*;
 pub use script::*;
-use tokio_util::task::LocalPoolHandle;
 
-use crate::{conf::Conf, server::Handler, shared::db::Db, util::UnsafeLazy};
+use crate::{conf::Conf, server::Handler, shared::db::Db};
 use bytes::BytesMut;
-use std::time::SystemTime;
-use tokio::{net::TcpStream, time::Instant};
-
-pub static UNIX_EPOCH: UnsafeLazy<Instant> = UnsafeLazy::new(|| {
-    Instant::now()
-        - SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-});
+use tokio::net::TcpStream;
+use tokio_util::task::LocalPoolHandle;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Shared {
@@ -36,10 +28,6 @@ impl Shared {
     }
 
     pub fn with_conf(conf: Conf) -> Self {
-        unsafe {
-            UNIX_EPOCH.init();
-        }
-
         let db = Db::new(conf.memory.clone());
         let script = Script::new();
         let post_office = PostOffice::new();

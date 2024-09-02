@@ -1,12 +1,14 @@
+#![warn(clippy::print_stdout)]
+#![allow(internal_features)]
 #![feature(associated_type_defaults)]
 #![feature(never_type)]
 #![feature(try_blocks)]
-#![warn(clippy::print_stdout)]
 #![feature(decl_macro)]
 #![feature(iter_advance_by)]
 #![feature(let_chains)]
 #![feature(once_cell_get_mut)]
 #![feature(async_closure)]
+#![feature(core_intrinsics)]
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
