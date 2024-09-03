@@ -8,6 +8,11 @@ Rutin涉及安全的主要技术(概念)见https://sqfzy.notion.site/Rutin-51c40
 
 # [Benchmark](https://github.com/sqfzy/rutin/blob/main/benches/compare_redis/result.txt)
 
+OS: Arch Linux on Windows 10 x86_64  
+Kernel: 6.6.36.3-microsoft-standard-WSL2  
+CPU: 12th Gen Intel i7-12700H (20) @ 2.688GHz  
+GPU: 982f:00:00.0 Microsoft Corporation Basic Render Driver
+
 ### Benchmark: GET command, varying batch size, measuring throughput and latency
 
 ![bench_batch_throughput&latency_get](https://github.com/sqfzy/rutin/blob/main/benches/compare_redis/svg/bench_batch_throughput%26latency_get.svg)
