@@ -10,7 +10,7 @@ Rutin涉及安全的主要技术(概念)见https://sqfzy.notion.site/Rutin-51c40
 
 ### [Benchmark: GET command, varying batch size, measuring throughput and latency]
 
-[![bench_batch_throughput&latency_get]()](https://github.com/sqfzy/rutin/blob/main/benches/compare_redis/svg/bench_batch_throughput%26latency_get.svg)
+[![bench_batch_throughput&latency_get](/rutin/blob/main/benches/compare_redis/svg/bench_batch_throughput%26latency_get.svg)](https://github.com/sqfzy)
 
 ### [Benchmark: SET command, varying batch size, measuring throughput and latency]
 
