@@ -10,19 +10,19 @@ Rutin涉及安全的主要技术(概念)见https://sqfzy.notion.site/Rutin-51c40
 
 ### [Benchmark: GET command, varying batch size, measuring throughput and latency]
 
-[![bench_batch_throughput&latency_get]()](https://github.com/sqfzy/rutin/blob/main/benches/compare_redis/html/bench_batch_throughput%26latency_get.svg)
+[![bench_batch_throughput&latency_get]()](https://github.com/sqfzy/rutin/blob/main/benches/compare_redis/svg/bench_batch_throughput%26latency_get.svg)
 
 ### [Benchmark: SET command, varying batch size, measuring throughput and latency]
 
-[![bench_batch_throughput&latency_set](/sqfzy/rutin/blob/main/benches/compare_redis/html/bench_batch_throughput&latency_set.svg)](https://github.com)
+[![bench_batch_throughput&latency_set](/sqfzy/rutin/blob/main/benches/compare_redis/svg/bench_batch_throughput&latency_set.svg)](https://github.com)
 
 ### [Benchmark: GET command, varying client sessions, measuring throughput and latency]
 
-[![bench_client_throughput&latency_get](/sqfzy/rutin/blob/main/benches/compare_redis/html/bench_client_throughput&latency_get.svg)](https://github.com)
+[![bench_client_throughput&latency_get](/sqfzy/rutin/blob/main/benches/compare_redis/svg/bench_client_throughput&latency_get.svg)](https://github.com)
 
 ### [Benchmark: SET command, varying client sessions, measuring throughput and latency]
 
-[![bench_client_throughput&latency_set](/sqfzy/rutin/blob/main/benches/compare_redis/html/bench_client_throughput&latency_set.svg)](https://github.com)
+[![bench_client_throughput&latency_set](/sqfzy/rutin/blob/main/benches/compare_redis/svg/bench_client_throughput&latency_set.svg)](https://github.com)
 
 # TODO
 
