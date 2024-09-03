@@ -12,11 +12,8 @@ pub macro as_bytes($str:expr) {
     $str.as_bytes(&mut itoa::Buffer::new())
 }
 
-#[derive(EnumDiscriminants, IntoStaticStr)]
-#[strum_discriminants(vis(pub))]
-#[strum_discriminants(name(StrType))]
-#[strum_discriminants(derive(IntoStaticStr))]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumDiscriminants, IntoStaticStr)]
+#[strum_discriminants(vis(pub), name(StrType), derive(IntoStaticStr))]
 pub enum Str {
     #[strum(serialize = "string::raw")]
     Raw(Bytes),
@@ -208,6 +205,8 @@ impl Default for Str {
 #[cfg(feature = "zeroize")]
 impl Drop for Str {
     fn drop(&mut self) {
+        use zeroize::Zeroize;
+
         match self {
             Self::Raw(b) => {
                 if b.is_unique()

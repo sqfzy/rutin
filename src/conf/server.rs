@@ -12,8 +12,4 @@ pub struct ServerConf {
     pub log_level: ByteString,
     pub max_connections: usize,
     pub max_batch: usize,
-
-    // 是否为单机模式。如果为false，则总是会传播写命令，无论是否有从节点。这会导致性能有些许下降；
-    // 如果为true，则不会传播写命令，且无法添加从节点。
-    pub standalone: bool,
 }

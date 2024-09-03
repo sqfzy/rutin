@@ -1,0 +1,92 @@
+
+Benchmark: GET command, varying batch size, measuring throughput and latency
+Batch Size: 1:
+	Redis Throughput (Kops/sec): 98.32842, Redis Latency (msec): 0.407
+	Rutin Throughput (Kops/sec): 75.75757, Rutin Latency (msec): 0.607
+Batch Size: 4:
+	Redis Throughput (Kops/sec): 374.53184000000005, Redis Latency (msec): 0.439
+	Rutin Throughput (Kops/sec): 291.12081, Rutin Latency (msec): 0.631
+Batch Size: 16:
+	Redis Throughput (Kops/sec): 1315.7895, Redis Latency (msec): 0.495
+	Rutin Throughput (Kops/sec): 1121.23338, Rutin Latency (msec): 0.607
+Batch Size: 64:
+	Redis Throughput (Kops/sec): 2731.54075, Redis Latency (msec): 1.031
+	Rutin Throughput (Kops/sec): 3088.803, Rutin Latency (msec): 0.847
+Batch Size: 256:
+	Redis Throughput (Kops/sec): 3422.35725, Redis Latency (msec): 3.583
+	Rutin Throughput (Kops/sec): 6016.9245, Rutin Latency (msec): 1.615
+Batch Size: 1024:
+	Redis Throughput (Kops/sec): 4055.21325, Redis Latency (msec): 7.879
+	Rutin Throughput (Kops/sec): 7488.12, Rutin Latency (msec): 5.543
+
+Benchmark: SET command, varying batch size, measuring throughput and latency
+Batch Size: 1:
+	Redis Throughput (Kops/sec): 98.23183, Redis Latency (msec): 0.415
+	Rutin Throughput (Kops/sec): 78.125, Rutin Latency (msec): 0.551
+Batch Size: 4:
+	Redis Throughput (Kops/sec): 372.093, Redis Latency (msec): 0.431
+	Rutin Throughput (Kops/sec): 295.858, Rutin Latency (msec): 0.583
+Batch Size: 16:
+	Redis Throughput (Kops/sec): 1030.9278100000001, Redis Latency (msec): 0.671
+	Rutin Throughput (Kops/sec): 1075.26875, Rutin Latency (msec): 0.623
+Batch Size: 64:
+	Redis Throughput (Kops/sec): 1570.93775, Redis Latency (msec): 1.943
+	Rutin Throughput (Kops/sec): 2606.92475, Rutin Latency (msec): 0.983
+Batch Size: 256:
+	Redis Throughput (Kops/sec): 2084.663, Redis Latency (msec): 5.879
+	Rutin Throughput (Kops/sec): 5149.3965, Rutin Latency (msec): 1.815
+Batch Size: 1024:
+	Redis Throughput (Kops/sec): 2184.1425, Redis Latency (msec): 12.183
+	Rutin Throughput (Kops/sec): 6734.2655, Rutin Latency (msec): 5.223
+
+Benchmark: GET command, varying client sessions, measuring throughput and latency
+Client Sessions: 1:
+	Redis Throughput (Kops/sec): 7.23589, Redis Latency (msec): 0.127
+	Rutin Throughput (Kops/sec): 6.09013, Rutin Latency (msec): 0.151
+Client Sessions: 2:
+	Redis Throughput (Kops/sec): 11.36364, Redis Latency (msec): 0.167
+	Rutin Throughput (Kops/sec): 10.58201, Rutin Latency (msec): 0.175
+Client Sessions: 4:
+	Redis Throughput (Kops/sec): 21.64502, Redis Latency (msec): 0.175
+	Rutin Throughput (Kops/sec): 21.23142, Rutin Latency (msec): 0.183
+Client Sessions: 8:
+	Redis Throughput (Kops/sec): 35.58719, Redis Latency (msec): 0.207
+	Rutin Throughput (Kops/sec): 27.855150000000002, Rutin Latency (msec): 0.271
+Client Sessions: 16:
+	Redis Throughput (Kops/sec): 55.865919999999996, Redis Latency (msec): 0.247
+	Rutin Throughput (Kops/sec): 41.49378, Rutin Latency (msec): 0.351
+Client Sessions: 32:
+	Redis Throughput (Kops/sec): 73.52941, Redis Latency (msec): 0.367
+	Rutin Throughput (Kops/sec): 67.56757, Rutin Latency (msec): 0.415
+Client Sessions: 64:
+	Redis Throughput (Kops/sec): 103.09278, Redis Latency (msec): 0.495
+	Rutin Throughput (Kops/sec): 73.52941, Rutin Latency (msec): 0.799
+Client Sessions: 128:
+	Redis Throughput (Kops/sec): 116.27906, Redis Latency (msec): 0.783
+	Rutin Throughput (Kops/sec): 86.95652, Rutin Latency (msec): 1.199
+
+Benchmark: SET command, varying client sessions, measuring throughput and latency
+Client Sessions: 1:
+	Redis Throughput (Kops/sec): 6.798100000000001, Redis Latency (msec): 0.135
+	Rutin Throughput (Kops/sec): 6.7750699999999995, Rutin Latency (msec): 0.135
+Client Sessions: 2:
+	Redis Throughput (Kops/sec): 11.14827, Redis Latency (msec): 0.167
+	Rutin Throughput (Kops/sec): 11.19821, Rutin Latency (msec): 0.167
+Client Sessions: 4:
+	Redis Throughput (Kops/sec): 20.618560000000002, Redis Latency (msec): 0.183
+	Rutin Throughput (Kops/sec): 19.92032, Rutin Latency (msec): 0.191
+Client Sessions: 8:
+	Redis Throughput (Kops/sec): 34.24657, Redis Latency (msec): 0.215
+	Rutin Throughput (Kops/sec): 28.985509999999998, Rutin Latency (msec): 0.255
+Client Sessions: 16:
+	Redis Throughput (Kops/sec): 50.0, Redis Latency (msec): 0.279
+	Rutin Throughput (Kops/sec): 42.372879999999995, Rutin Latency (msec): 0.343
+Client Sessions: 32:
+	Redis Throughput (Kops/sec): 69.44445, Redis Latency (msec): 0.383
+	Rutin Throughput (Kops/sec): 65.35948, Rutin Latency (msec): 0.431
+Client Sessions: 64:
+	Redis Throughput (Kops/sec): 99.00989999999999, Redis Latency (msec): 0.463
+	Rutin Throughput (Kops/sec): 79.36508, Rutin Latency (msec): 0.711
+Client Sessions: 128:
+	Redis Throughput (Kops/sec): 108.69565, Redis Latency (msec): 0.887
+	Rutin Throughput (Kops/sec): 84.03361, Rutin Latency (msec): 1.239

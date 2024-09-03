@@ -114,7 +114,7 @@ impl<S: AsyncStream> Connection<S> {
     }
 
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 32]>>> {
+    pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 16]>>> {
         let mut frames = SmallVec::new();
 
         self.reader_buf.reserve(4096);

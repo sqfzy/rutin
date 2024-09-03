@@ -2,6 +2,7 @@ pub mod db;
 pub mod post_office;
 pub mod script;
 
+use crossbeam::utils::CachePadded;
 pub use post_office::*;
 pub use script::*;
 

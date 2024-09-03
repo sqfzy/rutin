@@ -46,8 +46,14 @@ pub struct Db {
 
 impl Db {
     pub fn new(mem_conf: Option<MemoryConf>) -> Self {
+        let num_cpus = num_cpus::get();
+
         Self {
-            entries: DashMap::with_capacity_and_hasher(1024 * 16, RandomState::new()),
+            entries: DashMap::with_capacity_and_hasher_and_shard_amount(
+                1024 * 16,
+                RandomState::new(),
+                (num_cpus * 2).next_power_of_two(),
+            ),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
             pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
             mem_conf,
@@ -81,30 +87,6 @@ impl Db {
         }
     }
 
-    // // 记录客户端ID和其对应的`BgTaskSender`，用于向客户端发送消息
-    // #[inline]
-    // pub fn insert_client_record(&self, mut id: Id, bg_sender: BgTaskSender) -> Id {
-    //     loop {
-    //         match self.client_records.entry(id) {
-    //             // 如果id已经存在，则自增1
-    //             Entry::Occupied(_) => id += 1,
-    //             // 如果id不存在，则插入
-    //             Entry::Vacant(e) => {
-    //                 e.insert(bg_sender);
-    //                 return id;
-    //             }
-    //         }
-    //     }
-    // }
-    //
-    // pub fn remove_client_record(&self, client_id: Id) {
-    //     self.client_records.remove(&client_id);
-    // }
-    //
-    // pub fn get_client_bg_sender(&self, client_id: Id) -> Option<BgTaskSender> {
-    //     self.client_records.get(&client_id).map(|e| e.clone())
-    // }
-    //
     pub async fn add_lock_event(
         &self,
         key: Key,

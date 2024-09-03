@@ -12,7 +12,12 @@ use bytestring::ByteString;
 use mlua::{prelude::*, Value};
 use num_bigint::BigInt;
 use std::{
-    fmt::Display, hash::Hash, intrinsics::unlikely, io, iter::Iterator, ops::Range,
+    fmt::Display,
+    hash::Hash,
+    intrinsics::{likely, unlikely},
+    io,
+    iter::Iterator,
+    ops::Range,
     ptr::slice_from_raw_parts,
 };
 use strum::{EnumDiscriminants, IntoStaticStr};
@@ -1211,7 +1216,33 @@ impl Resp3<BytesMut, ByteString> {
         ) -> RutinResult<Resp3> {
             trace!("reader_buf: {src:?}");
 
-            let res = match Resp3::get_u8(src)? {
+            let res = match Resp3::get_u8_async(io_read, src).await? {
+                ARRAY_PREFIX => {
+                    let len = Resp3::decode_length_async(io_read, src).await?;
+
+                    let mut frames = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        let frame = Box::pin(_decode_async(io_read, src)).await?;
+                        frames.push(frame);
+                    }
+
+                    Resp3::Array {
+                        inner: frames,
+                        attributes: None,
+                    }
+                }
+                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                INTEGER_PREFIX => Resp3::Integer {
+                    inner: Resp3::decode_decimal_async(io_read, src).await?,
+                    attributes: None,
+                },
                 BLOB_STRING_PREFIX => {
                     let line = Resp3::decode_line_async(io_read, src).await?;
 
@@ -1255,32 +1286,6 @@ impl Resp3<BytesMut, ByteString> {
                             inner: res.freeze(),
                             attributes: None,
                         }
-                    }
-                }
-                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
-                    inner: Resp3::decode_string_async(io_read, src).await?,
-                    attributes: None,
-                },
-                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
-                    inner: Resp3::decode_string_async(io_read, src).await?,
-                    attributes: None,
-                },
-                INTEGER_PREFIX => Resp3::Integer {
-                    inner: Resp3::decode_decimal_async(io_read, src).await?,
-                    attributes: None,
-                },
-                ARRAY_PREFIX => {
-                    let len = Resp3::decode_decimal_async(io_read, src).await? as usize;
-
-                    let mut frames = Vec::with_capacity(len);
-                    for _ in 0..len {
-                        let frame = Box::pin(_decode_async(io_read, src)).await?;
-                        frames.push(frame);
-                    }
-
-                    Resp3::Array {
-                        inner: frames,
-                        attributes: None,
                     }
                 }
                 NULL_PREFIX => {
@@ -1585,15 +1590,15 @@ impl Resp3<BytesMut, ByteString> {
         io_read: &'a mut R,
         src: &'a mut BytesMut,
     ) -> RutinResult<u8> {
-        loop {
-            if !src.is_empty() {
-                return Ok(src.get_u8());
-            }
-
-            if io_read.read_buf(src).await? == 0 {
-                return Err(RutinError::Incomplete);
-            }
+        if likely(!src.is_empty()) {
+            return Ok(src.get_u8());
         }
+
+        if io_read.read_buf(src).await? == 0 {
+            return Err(RutinError::Incomplete);
+        }
+
+        Ok(src.get_u8())
     }
 
     #[inline]
@@ -1625,7 +1630,7 @@ impl Resp3<BytesMut, ByteString> {
     #[inline]
     fn decode_line(src: &mut BytesMut) -> RutinResult<BytesMut> {
         if let Some(i) = memchr::memchr(b'\n', src) {
-            if i > 0 && src[i - 1] == b'\r' {
+            if likely(i > 0 && src[i - 1] == b'\r') {
                 let line = src.split_to(i - 1);
                 // skip \r\n
                 src.advance(2);
@@ -1689,7 +1694,7 @@ impl Resp3<BytesMut, ByteString> {
 
     #[inline]
     fn get_u8(src: &mut BytesMut) -> RutinResult<u8> {
-        if !src.is_empty() {
+        if likely(!src.is_empty()) {
             Ok(src.get_u8())
         } else {
             Err(RutinError::Incomplete)

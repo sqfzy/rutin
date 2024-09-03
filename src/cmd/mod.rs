@@ -33,6 +33,7 @@ pub trait CmdExecutor: Sized + std::fmt::Debug {
         let wcmd =
             if cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG) && post_office.need_send_wcmd() {
                 // 加上命令名
+                // FIX: 不支持带子命令的命令
                 args.inner
                     .push_front(Resp3::new_blob_string(Self::NAME.into()));
                 let resp3 = Resp3::from(args);
