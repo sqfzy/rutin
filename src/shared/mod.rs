@@ -2,7 +2,6 @@ pub mod db;
 pub mod post_office;
 pub mod script;
 
-use crossbeam::utils::CachePadded;
 pub use post_office::*;
 pub use script::*;
 
@@ -39,8 +38,6 @@ impl Shared {
             conf,
             script,
             post_office,
-            // back_log: Mutex::new(BytesMut::new()),
-            // offset: AtomicU64::new(0),
         };
 
         Self {
@@ -85,8 +82,6 @@ pub struct SharedInner {
     pub conf: Conf,
     pub script: Script,
     pub post_office: PostOffice,
-    // back_log: Mutex<BytesMut>,
-    // offset: AtomicU64,
 }
 
 impl std::fmt::Debug for SharedInner {

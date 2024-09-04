@@ -11,6 +11,7 @@ use crate::{
 };
 use bytes::BytesMut;
 use event_listener::listener;
+use futures::pin_mut;
 use std::{sync::Arc, time::Duration};
 use tracing::{error, instrument};
 
@@ -34,23 +35,14 @@ impl<S: AsyncStream> Handler<S> {
     #[instrument(level = "debug", skip(self), fields(client_id), err)]
     pub async fn run(mut self) -> RutinResult<()> {
         ID.scope(self.context.id, async {
+            let inbox = self.context.inbox.clone();
+            let inbox_fut = inbox.recv_async();
+            pin_mut!(inbox_fut);
+
             loop {
                 tokio::select! {
                     biased; // 有序轮询
 
-                    letter = self.context.inbox.recv_async() => match letter {
-                        Letter::ShutdownServer | Letter::Reset => {
-                            return Ok(());
-                        }
-                        Letter::Resp3(resp) => {
-                            self.conn.write_frame(&resp).await?;
-                        }
-                        Letter::BlockAll { unblock_event } => {
-                            listener!(unblock_event  => listener);
-                            listener.await;
-                        }
-                        Letter::Wcmd(_) | Letter::Psync {..} => {}
-                    },
                     // 等待客户端请求
                     frames = self.conn.read_frames() => {
                         if let Some(frames) = frames? {
@@ -62,7 +54,25 @@ impl<S: AsyncStream> Handler<S> {
                         } else {
                             return Ok(());
                         }
-                    },
+                    }
+                    letter = &mut inbox_fut => {
+                        match letter {
+                            Letter::ShutdownServer | Letter::Reset => {
+                                return Ok(());
+                            }
+                            Letter::Resp3(resp) => {
+                                self.conn.write_frame(&resp).await?;
+
+                            }
+                            Letter::BlockAll { unblock_event } => {
+                                listener!(unblock_event  => listener);
+                                listener.await;
+                            }
+                            Letter::Wcmd(_) | Letter::Psync {..} => inbox_fut.set(inbox.recv_async()),
+                        }
+
+                        inbox_fut .set(inbox.recv_async());
+                    } 
                 };
             }
         })
@@ -86,24 +96,31 @@ impl<S: AsyncStream> Handler<S> {
                 Resp3::new_blob_string(buf.format(*offset).into()),
             ]);
 
+            let inbox = self.context.inbox.clone();
+            let inbox_fut = inbox.recv_async();
+            pin_mut!(inbox_fut);
             loop {
                 tokio::select! {
                     biased;
 
-                    letter = self.context.inbox.recv_async() => match letter {
-                        Letter::ShutdownServer | Letter::Reset => {
-                            break;
+                    letter = &mut inbox_fut => {
+                        match letter {
+                            Letter::ShutdownServer | Letter::Reset => {
+                                break;
+                            }
+                            Letter::BlockAll { unblock_event } => {
+                                listener!(unblock_event  => listener);
+                                listener.await;
+                            }
+                            Letter::Resp3(resp) => {
+                                // TODO: REPLCONF GETACK命令返回响应
+                                self.conn.write_frame(&resp).await?;
+                            }
+                            Letter::Wcmd(_) | Letter::Psync {..} => {}
                         }
-                        Letter::BlockAll { unblock_event } => {
-                            listener!(unblock_event  => listener);
-                            listener.await;
-                        }
-                        Letter::Resp3(resp) => {
-                            // TODO: REPLCONF GETACK命令返回响应
-                            self.conn.write_frame(&resp).await?;
-                        }
-                        Letter::Wcmd(_) | Letter::Psync {..} => {}
-                    },
+
+                        inbox_fut .set(inbox.recv_async());
+                    } 
                     // 等待master请求(一般为master传播的写命令)
                     frames = self.conn.read_frames() => {
                         if let Some(frames) = frames? {
@@ -118,7 +135,7 @@ impl<S: AsyncStream> Handler<S> {
                         } else {
                             return Ok(());
                         }
-                    },
+                    }
                     // 每秒向master发送REPLCONF ACK <offset>命令，以便master知道当前
                     // 同步进度。
                     _ = interval.tick() => {
@@ -131,7 +148,7 @@ impl<S: AsyncStream> Handler<S> {
                         if resp.is_simple_error() {
                             error!("REPLCONF ACK command get error: {}", resp);
                         }
-                    },
+                    }
                 };
             }
 

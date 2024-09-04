@@ -30,6 +30,8 @@ impl<T: AsyncRead + AsyncReadExt + AsyncWrite + AsyncWriteExt + Unpin + Send + A
 {
 }
 
+const BUF_SIZE: usize = 1024 * 8;
+
 #[derive(Debug)]
 pub struct Connection<S = TcpStream>
 where
@@ -47,8 +49,8 @@ impl<S: AsyncStream> Connection<S> {
     pub fn new(stream: S, max_batch_count: usize) -> Self {
         Self {
             stream,
-            reader_buf: BytesMut::with_capacity(4096),
-            writer_buf: BytesMut::with_capacity(4096),
+            reader_buf: BytesMut::with_capacity(BUF_SIZE),
+            writer_buf: BytesMut::with_capacity(BUF_SIZE),
             batch: 0,
             max_batch: max_batch_count,
         }
@@ -117,8 +119,6 @@ impl<S: AsyncStream> Connection<S> {
     pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 16]>>> {
         let mut frames = SmallVec::new();
 
-        self.reader_buf.reserve(4096);
-
         loop {
             let frame = match Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await? {
                 Some(frame) => frame,
@@ -165,8 +165,6 @@ impl<S: AsyncStream> Connection<S> {
         if self.batch == 0 {
             self.stream.write_buf(&mut self.writer_buf).await?;
             self.flush().await?;
-
-            self.writer_buf.reserve(4096);
         }
 
         Ok(())
