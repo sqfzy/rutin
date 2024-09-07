@@ -13,12 +13,14 @@ use bytes::Bytes;
 use commands::*;
 use tracing::instrument;
 
-#[allow(async_fn_in_trait)]
-pub trait CmdExecutor: Sized + std::fmt::Debug {
+pub trait CommandFlag {
     const NAME: &'static str;
     const CATS_FLAG: CatFlag;
     const CMD_FLAG: CmdFlag;
+}
 
+#[allow(async_fn_in_trait)]
+pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
     #[inline]
     async fn apply(
         mut args: CmdUnparsed,
@@ -89,141 +91,123 @@ pub async fn dispatch(
     cmd_frame: Resp3,
     handler: &mut Handler<impl AsyncStream>,
 ) -> RutinResult<Option<Resp3>> {
-    // 匹配命令名并执行对应的命令
-    macro_rules! dispatch_command {
-        ( $cmd:expr, $handler:expr, $( $cmd_type:ident ),*; $( $cmd_group:expr => $( $cmd_type2:ident ),* );* ) => {
-            {
-                let mut buf = [0; 32];
-                let cmd_name = $cmd.next().ok_or_else(|| RutinError::Syntax)?;
-
-                debug_assert!(cmd_name.len() <= buf.len());
-                let len1 = util::uppercase(&cmd_name, &mut buf).unwrap();
-
-                let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1]) {
-                    s
-                } else {
-                    return Err(RutinError::UnknownCmd);
-                };
-
-                match cmd_name {
-                    $(
-                        $cmd_type::NAME => $cmd_type::apply($cmd, $handler).await,
-                    )*
-                    $(
-                        $cmd_group => {
-                            let sub_cmd_name = $cmd.next().ok_or(RutinError::Syntax)?;
-
-                            debug_assert!(sub_cmd_name.len() <= buf.len() - len1);
-                            let len2 = util::uppercase(&sub_cmd_name, &mut buf[len1..]).unwrap();
-
-                            let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1 + len2]) {
-                                s
-                            } else {
-                                return Err(RutinError::UnknownCmd);
-                            };
-                            match cmd_name {
-                                $(
-                                    $cmd_type2::NAME => $cmd_type2::apply($cmd, $handler).await,
-                                )*
-                                _ => Err(RutinError::UnknownCmd),
-                            }
-                        }
-                    )*
-                    _ => Err(RutinError::UnknownCmd),
-                }
-            }
-        };
-    }
-
     let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
 
-    let res = dispatch_command!(
-        cmd,
-        handler,
+    let mut buf = [0; 32];
+    let cmd_name = cmd.next().ok_or_else(|| RutinError::Syntax)?;
+
+    debug_assert!(cmd_name.len() <= buf.len());
+    let len1 = util::uppercase(&cmd_name, &mut buf).unwrap();
+
+    let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1]) {
+        s
+    } else {
+        return Err(RutinError::UnknownCmd);
+    };
+
+    let res = match cmd_name {
         /*********/
         /* admin */
         /*********/
-        AclCat,
-        AclDelUser,
-        AclSetUser,
-        AclUsers,
-        AclWhoAmI,
-        BgSave,
-        PSync,
-        ReplConf,
-        ReplicaOf,
+        AclCat::NAME => AclCat::apply(cmd, handler).await,
+        AclDelUser::NAME => AclDelUser::apply(cmd, handler).await,
+        AclSetUser::NAME => AclSetUser::apply(cmd, handler).await,
+        AclUsers::NAME => AclUsers::apply(cmd, handler).await,
+        AclWhoAmI::NAME => AclWhoAmI::apply(cmd, handler).await,
+        BgSave::NAME => BgSave::apply(cmd, handler).await,
+        PSync::NAME => PSync::apply(cmd, handler).await,
+        ReplConf::NAME => ReplConf::apply(cmd, handler).await,
+        ReplicaOf::NAME => ReplicaOf::apply(cmd, handler).await,
         /**************/
         /* connection */
         /**************/
-        Auth,
-        Echo,
-        Ping,
+        Auth::NAME => Auth::apply(cmd, handler).await,
+        Echo::NAME => Echo::apply(cmd, handler).await,
+        Ping::NAME => Ping::apply(cmd, handler).await,
         /************/
         /* keyspace */
         /************/
-        Del,
-        Dump,
-        Exists,
-        Expire,
-        ExpireAt,
-        ExpireTime,
-        Keys,
-        NBKeys,
-        Persist,
-        Pttl,
-        Ttl,
-        Type,
+        Del::NAME => Del::apply(cmd, handler).await,
+        Dump::NAME => Dump::apply(cmd, handler).await,
+        Exists::NAME => Exists::apply(cmd, handler).await,
+        Expire::NAME => Expire::apply(cmd, handler).await,
+        ExpireAt::NAME => ExpireAt::apply(cmd, handler).await,
+        ExpireTime::NAME => ExpireTime::apply(cmd, handler).await,
+        Keys::NAME => Keys::apply(cmd, handler).await,
+        NBKeys::NAME => NBKeys::apply(cmd, handler).await,
+        Persist::NAME => Persist::apply(cmd, handler).await,
+        Pttl::NAME => Pttl::apply(cmd, handler).await,
+        Ttl::NAME => Ttl::apply(cmd, handler).await,
+        Type::NAME => Type::apply(cmd, handler).await,
         /**********/
         /* string */
         /**********/
-        Append,
-        Decr,
-        DecrBy,
-        Get,
-        GetRange,
-        GetSet,
-        Incr,
-        IncrBy,
-        MGet,
-        MSet,
-        MSetNx,
-        Set,
-        SetEx,
-        SetNx,
-        StrLen,
+        Append::NAME => Append::apply(cmd, handler).await,
+        Decr::NAME => Decr::apply(cmd, handler).await,
+        DecrBy::NAME => DecrBy::apply(cmd, handler).await,
+        Get::NAME => Get::apply(cmd, handler).await,
+        GetRange::NAME => GetRange::apply(cmd, handler).await,
+        GetSet::NAME => GetSet::apply(cmd, handler).await,
+        Incr::NAME => Incr::apply(cmd, handler).await,
+        IncrBy::NAME => IncrBy::apply(cmd, handler).await,
+        MGet::NAME => MGet::apply(cmd, handler).await,
+        MSet::NAME => MSet::apply(cmd, handler).await,
+        MSetNx::NAME => MSetNx::apply(cmd, handler).await,
+        Set::NAME => Set::apply(cmd, handler).await,
+        SetEx::NAME => SetEx::apply(cmd, handler).await,
+        SetNx::NAME => SetNx::apply(cmd, handler).await,
+        StrLen::NAME => StrLen::apply(cmd, handler).await,
         /********/
         /* list */
         /********/
-        BLMove,
-        BLPop,
-        LLen,
-        LPop,
-        LPos,
-        LPush,
-        NBLPop,
+        BLMove::NAME => BLMove::apply(cmd, handler).await,
+        BLPop::NAME => BLPop::apply(cmd, handler).await,
+        LLen::NAME => LLen::apply(cmd, handler).await,
+        LPop::NAME => LPop::apply(cmd, handler).await,
+        LPos::NAME => LPos::apply(cmd, handler).await,
+        LPush::NAME => LPush::apply(cmd, handler).await,
+        NBLPop::NAME => NBLPop::apply(cmd, handler).await,
         /********/
         /* hash */
         /********/
-        HDel,
-        HExists,
-        HGet,
-        HSet,
+        HDel::NAME => HDel::apply(cmd, handler).await,
+        HExists::NAME => HExists::apply(cmd, handler).await,
+        HGet::NAME => HGet::apply(cmd, handler).await,
+        HSet::NAME => HSet::apply(cmd, handler).await,
         /**********/
         /* pubsub */
         /**********/
-        Publish,
-        Subscribe,
-        Unsubscribe,
+        Publish::NAME => Publish::apply(cmd, handler).await,
+        Subscribe::NAME => Subscribe::apply(cmd, handler).await,
+        Unsubscribe::NAME => Unsubscribe::apply(cmd, handler).await,
         /*************/
         /* scripting */
         /*************/
-        Eval,
-        EvalName;
+        Eval::NAME => Eval::apply(cmd, handler).await,
+        EvalName::NAME => EvalName::apply(cmd, handler).await,
 
-       "CLIENT" => ClientTracking;
+        // 命令中包含子命令
+        _ => {
+            let sub_cmd_name = cmd.next().ok_or(RutinError::Syntax)?;
 
-       "SCRIPT" => ScriptExists, ScriptFlush, ScriptRegister
-    );
+            debug_assert!(sub_cmd_name.len() <= buf.len() - len1);
+            let len2 = util::uppercase(&sub_cmd_name, &mut buf[len1..]).unwrap();
+
+            let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1 + len2]) {
+                s
+            } else {
+                return Err(RutinError::UnknownCmd);
+            };
+
+            match cmd_name {
+                ClientTracking::NAME => ClientTracking::apply(cmd, handler).await,
+                ScriptExists::NAME => ScriptExists::apply(cmd, handler).await,
+                ScriptFlush::NAME => ScriptFlush::apply(cmd, handler).await,
+                ScriptRegister::NAME => ScriptRegister::apply(cmd, handler).await,
+                _ => Err(RutinError::UnknownCmd),
+            }
+        }
+    };
 
     match res {
         Ok(res) => Ok(res),

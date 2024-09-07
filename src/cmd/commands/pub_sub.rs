@@ -1,4 +1,3 @@
-use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
@@ -23,10 +22,6 @@ pub struct Publish {
 }
 
 impl CmdExecutor for Publish {
-    const NAME: &'static str = "PUBLISH";
-    const CATS_FLAG: CatFlag = PUBLISH_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = PUBLISH_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         // 获取正在监听的订阅者
@@ -84,10 +79,6 @@ pub struct Subscribe {
 }
 
 impl CmdExecutor for Subscribe {
-    const NAME: &'static str = "SUBSCRIBE";
-    const CATS_FLAG: CatFlag = SUBSCRIBE_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = SUBSCRIBE_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let Handler {
@@ -154,10 +145,6 @@ pub struct Unsubscribe {
 }
 
 impl CmdExecutor for Unsubscribe {
-    const NAME: &'static str = "UNSUBSCRIBE";
-    const CATS_FLAG: CatFlag = UNSUBSCRIBE_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = UNSUBSCRIBE_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let Handler {

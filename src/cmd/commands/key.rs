@@ -53,10 +53,6 @@ pub struct Del {
 }
 
 impl CmdExecutor for Del {
-    const NAME: &'static str = "DEL";
-    const CATS_FLAG: CatFlag = DEL_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = DEL_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut count = 0;
@@ -98,10 +94,6 @@ pub struct Dump {
 }
 
 impl CmdExecutor for Dump {
-    const NAME: &'static str = "DUMP";
-    const CATS_FLAG: CatFlag = DUMP_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = DUMP_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut buf = BytesMut::with_capacity(1024);
@@ -148,10 +140,6 @@ pub struct Exists {
 }
 
 impl CmdExecutor for Exists {
-    const NAME: &'static str = "EXISTS";
-    const CATS_FLAG: CatFlag = EXISTS_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = EXISTS_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         for key in self.keys {
@@ -194,10 +182,6 @@ pub struct Expire {
 }
 
 impl CmdExecutor for Expire {
-    const NAME: &'static str = "EXPIRE";
-    const CATS_FLAG: CatFlag = EXPIRE_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = EXPIRE_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = None;
@@ -294,10 +278,6 @@ pub struct ExpireAt {
 }
 
 impl CmdExecutor for ExpireAt {
-    const NAME: &'static str = "EXPIREAT";
-    const CATS_FLAG: CatFlag = EXPIREAT_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = EXPIREAT_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = None;
@@ -393,10 +373,6 @@ pub struct ExpireTime {
 }
 
 impl CmdExecutor for ExpireTime {
-    const NAME: &'static str = "EXPIRETIME";
-    const CATS_FLAG: CatFlag = EXPIRETIME_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = EXPIRETIME_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut ex = None;
@@ -444,10 +420,6 @@ pub struct Keys {
 
 // TODO: 提供非阻塞操作
 impl CmdExecutor for Keys {
-    const NAME: &'static str = "KEYS";
-    const CATS_FLAG: CatFlag = KEYS_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = KEYS_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let re = regex::bytes::Regex::new(std::str::from_utf8(&self.pattern)?)?;
@@ -503,10 +475,6 @@ pub struct NBKeys {
 }
 
 impl CmdExecutor for NBKeys {
-    const NAME: &'static str = "NBKEYS";
-    const CATS_FLAG: CatFlag = NBKEYS_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = NBKEYS_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let re = regex::Regex::new(&String::from_utf8_lossy(&self.pattern))?;
@@ -585,10 +553,6 @@ pub struct Persist {
 }
 
 impl CmdExecutor for Persist {
-    const NAME: &'static str = "PERSIST";
-    const CATS_FLAG: CatFlag = PERSIST_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = PERSIST_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         handler
@@ -634,10 +598,6 @@ pub struct Pttl {
 }
 
 impl CmdExecutor for Pttl {
-    const NAME: &'static str = "PTTL";
-    const CATS_FLAG: CatFlag = PTTL_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = PTTL_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut ex = None;
@@ -686,10 +646,6 @@ pub struct Ttl {
 }
 
 impl CmdExecutor for Ttl {
-    const NAME: &'static str = "TTL";
-    const CATS_FLAG: CatFlag = TTL_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = TTL_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut ex = None;
@@ -736,10 +692,6 @@ pub struct Type {
 }
 
 impl CmdExecutor for Type {
-    const NAME: &'static str = "TYPE";
-    const CATS_FLAG: CatFlag = TYPE_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = TYPE_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut typ = "";

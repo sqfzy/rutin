@@ -25,10 +25,6 @@ pub struct Append {
 }
 
 impl CmdExecutor for Append {
-    const NAME: &'static str = "APPEND";
-    const CATS_FLAG: CatFlag = APPEND_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = APPEND_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut length = None;
@@ -75,10 +71,6 @@ pub struct Decr {
 }
 
 impl CmdExecutor for Decr {
-    const NAME: &'static str = "DECR";
-    const CATS_FLAG: CatFlag = DECR_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = DECR_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut new_i = 0;
@@ -120,10 +112,6 @@ pub struct DecrBy {
 }
 
 impl CmdExecutor for DecrBy {
-    const NAME: &'static str = "DECYBY";
-    const CATS_FLAG: CatFlag = DECRBY_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = DECRBY_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut new_i = 0;
@@ -168,10 +156,6 @@ pub struct Get {
 }
 
 impl CmdExecutor for Get {
-    const NAME: &'static str = "GET";
-    const CATS_FLAG: CatFlag = GET_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = GET_CMD_FLAG;
-
     #[inline]
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -216,10 +200,6 @@ pub struct GetRange {
 }
 
 impl CmdExecutor for GetRange {
-    const NAME: &'static str = "GETRANGE";
-    const CATS_FLAG: CatFlag = GETRANGE_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = GETRANGE_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = "".into();
@@ -276,10 +256,6 @@ pub struct GetSet {
 }
 
 impl CmdExecutor for GetSet {
-    const NAME: &'static str = "GETSET";
-    const CATS_FLAG: CatFlag = GETSET_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = GETSET_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut old = "".into();
@@ -324,10 +300,6 @@ pub struct Incr {
 }
 
 impl CmdExecutor for Incr {
-    const NAME: &'static str = "INCR";
-    const CATS_FLAG: CatFlag = INCR_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = INCR_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut new_i = 0;
@@ -370,10 +342,6 @@ pub struct IncrBy {
 }
 
 impl CmdExecutor for IncrBy {
-    const NAME: &'static str = "INCRBY";
-    const CATS_FLAG: CatFlag = INCRBY_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = INCRBY_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut new_i = 0;
@@ -418,10 +386,6 @@ pub struct MGet {
 }
 
 impl CmdExecutor for MGet {
-    const NAME: &'static str = "MGET";
-    const CATS_FLAG: CatFlag = MGET_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = MGET_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = Vec::with_capacity(self.keys.len());
@@ -471,10 +435,6 @@ pub struct MSet {
 }
 
 impl CmdExecutor for MSet {
-    const NAME: &'static str = "MSET";
-    const CATS_FLAG: CatFlag = MSET_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = MSET_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         for (key, value) in self.pairs {
@@ -518,10 +478,6 @@ pub struct MSetNx {
 }
 
 impl CmdExecutor for MSetNx {
-    const NAME: &'static str = "MSETNX";
-    const CATS_FLAG: CatFlag = MSETNX_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = MSETNX_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         for (key, _) in &self.pairs {
@@ -584,10 +540,6 @@ enum SetOpt {
 }
 
 impl CmdExecutor for Set {
-    const NAME: &'static str = "SET";
-    const CATS_FLAG: CatFlag = SET_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = SET_CMD_FLAG;
-
     #[inline]
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
@@ -774,10 +726,6 @@ pub struct SetEx {
 }
 
 impl CmdExecutor for SetEx {
-    const NAME: &'static str = "SETEX";
-    const CATS_FLAG: CatFlag = SETEX_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = SETEX_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         handler
@@ -825,10 +773,6 @@ pub struct SetNx {
 }
 
 impl CmdExecutor for SetNx {
-    const NAME: &'static str = "SETNX";
-    const CATS_FLAG: CatFlag = SETNX_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = SETNX_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         if handler.shared.db().contains_object(&self.key).await {
@@ -871,10 +815,6 @@ pub struct StrLen {
 }
 
 impl CmdExecutor for StrLen {
-    const NAME: &'static str = "STRLEN";
-    const CATS_FLAG: CatFlag = STRLEN_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = STRLEN_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut len = 0;

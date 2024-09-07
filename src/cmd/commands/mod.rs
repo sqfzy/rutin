@@ -1,8 +1,8 @@
 //! <cat_name>_CAT_FLAG代表单个分类标志
-//! <cmd_name>_CATS_FLAG代表命令所属的分类标志，每一位代表一个分类
+//! <cmd_name>_CATS_FLAG代表命令所属的分类标志，或者只是一个普通的分类标志组，每一位代表一个分类
 //!
 //! <cmd_name>_CMD_FLAG代表单个命令标志
-//! <cat_name>_CMDS_FLAG代表分类标志下的所有命令标志，每一位代表一个命令
+//! <cat_name>_CMDS_FLAG代表分类标志下的所有命令标志，或者只是一个普通的命令组，每一位代表一个命令
 
 mod admin;
 mod connection;
@@ -21,6 +21,7 @@ pub use hash::*;
 pub use key::*;
 pub use list::*;
 pub use pub_sub::*;
+use rutin_proc::gen_flag;
 pub use script::*;
 pub use str::*;
 
@@ -30,70 +31,9 @@ use crate::{
     util::get_uppercase,
 };
 use bytes::Bytes;
-use paste::paste;
 
 pub type CmdFlag = u128;
 pub type CatFlag = u32;
-
-// 生成<cmd_name>_CATS_FLAG以及<cmd_name>_CMD_FLAG
-macro_rules! gen_flag {
-    // Recursion end condition
-    (@internal $shift:expr,) => {
-        pub const ALL_CMDS_FLAG: CmdFlag  = (1 << $shift) - 1;
-    };
-
-    // Recursive expansion of the macro, defining each command flag and its shift amount
-    (@internal $shift:expr, $cmd:ident ($($cat:ident),*) $(, $rest:ident ($($rest_cat:ident),*))* ) => {
-        paste! {
-            pub const [<$cmd:upper _CMD_FLAG>]: CmdFlag = 1 << $shift;
-            pub const [<$cmd:upper _CATS_FLAG>]: CatFlag = $([<$cat:upper _CAT_FLAG>])|*;
-        }
-        gen_flag!(@internal $shift + 1, $($rest ($($rest_cat),*)),*);
-    };
-
-    ($($name:ident ($($cat:ident),*)),+) => {
-        // Start the internal recursion
-        gen_flag!(@internal 0, $($name ($($cat),*)),+);
-
-        pub fn cmd_name_to_flag(name: &[u8]) -> RutinResult<CmdFlag > {
-            let mut buf = [0; 32];
-            let name = get_uppercase(name, &mut buf)?;
-            let name = std::str::from_utf8(&name).map_err(|_| RutinError::UnknownCmd)?;
-
-            Ok(match name {
-                $(
-                    paste! {stringify!([<$name:upper>])} => paste! {[<$name:upper _CMD_FLAG>]},
-                )*
-                _ => return Err(RutinError::UnknownCmd)
-            })
-        }
-
-        pub fn cmd_flag_to_name(flag: CmdFlag ) -> Option<&'static str> {
-            Some(match flag {
-                $(
-                    paste! {[<$name:upper _CMD_FLAG>]} => $name::NAME,
-
-                )*
-                _ => return None,
-            })
-        }
-
-    };
-}
-
-pub const ADMIN_CAT_FLAG: CatFlag = 1;
-pub const CONNECTION_CAT_FLAG: CatFlag = 1 << 1;
-pub const READ_CAT_FLAG: CatFlag = 1 << 2;
-pub const WRITE_CAT_FLAG: CatFlag = 1 << 3;
-pub const KEYSPACE_CAT_FLAG: CatFlag = 1 << 4;
-pub const STRING_CAT_FLAG: CatFlag = 1 << 5;
-pub const LIST_CAT_FLAG: CatFlag = 1 << 6;
-pub const HASH_CAT_FLAG: CatFlag = 1 << 7;
-pub const PUBSUB_CAT_FLAG: CatFlag = 1 << 8;
-pub const SCRIPTING_CAT_FLAG: CatFlag = 1 << 9;
-pub const DANGEROUS_CAT_FLAG: CatFlag = 1 << 10;
-
-pub const NO_CMDS_FLAG: CmdFlag = CmdFlag::MIN | AUTH_CMD_FLAG; // 允许AUTH命令
 
 gen_flag!(
     /*********/
@@ -181,127 +121,16 @@ gen_flag!(
     ScriptRegister(scripting)
 );
 
-// Admin 分类命令标志
-pub const ADMIN_CMDS_FLAG: CmdFlag = ACLCAT_CMD_FLAG
-    | ACLDELUSER_CMD_FLAG
-    | ACLSETUSER_CMD_FLAG
-    | ACLUSERS_CMD_FLAG
-    | ACLWHOAMI_CMD_FLAG
-    | BGSAVE_CMD_FLAG
-    | PSYNC_CMD_FLAG
-    | REPLCONF_CMD_FLAG
-    | REPLICAOF_CMD_FLAG;
+pub fn cmd_name_to_flag(name: &[u8]) -> RutinResult<CmdFlag> {
+    let mut buf = [0; 32];
+    let name = get_uppercase(name, &mut buf)?;
 
-// Dangerous 分类命令标志
-pub const DANGEROUS_CMDS_FLAG: CmdFlag = ACLCAT_CMD_FLAG
-    | ACLDELUSER_CMD_FLAG
-    | ACLSETUSER_CMD_FLAG
-    | ACLUSERS_CMD_FLAG
-    | ACLWHOAMI_CMD_FLAG
-    | BGSAVE_CMD_FLAG
-    | PSYNC_CMD_FLAG
-    | REPLCONF_CMD_FLAG
-    | REPLICAOF_CMD_FLAG;
+    _cmd_name_to_flag(name).ok_or(RutinError::UnknownCmd)
+}
 
-// Connection 分类命令标志
-pub const CONNECTION_CMDS_FLAG: CmdFlag =
-    AUTH_CMD_FLAG | CLIENTTRACKING_CMD_FLAG | ECHO_CMD_FLAG | PING_CMD_FLAG;
-
-// Keyspace 分类命令标志
-pub const KEYSPACE_CMDS_FLAG: CmdFlag = DEL_CMD_FLAG
-    | DUMP_CMD_FLAG
-    | EXISTS_CMD_FLAG
-    | EXPIRE_CMD_FLAG
-    | EXPIREAT_CMD_FLAG
-    | EXPIRETIME_CMD_FLAG
-    | KEYS_CMD_FLAG
-    | NBKEYS_CMD_FLAG
-    | PERSIST_CMD_FLAG
-    | PTTL_CMD_FLAG
-    | TTL_CMD_FLAG
-    | TYPE_CMD_FLAG;
-
-// Read 分类命令标志
-pub const READ_CMDS_FLAG: CmdFlag = DUMP_CMD_FLAG
-    | EXISTS_CMD_FLAG
-    | EXPIRETIME_CMD_FLAG
-    | KEYS_CMD_FLAG
-    | NBKEYS_CMD_FLAG
-    | PTTL_CMD_FLAG
-    | TTL_CMD_FLAG
-    | TYPE_CMD_FLAG
-    | GET_CMD_FLAG
-    | GETRANGE_CMD_FLAG
-    | MGET_CMD_FLAG
-    | STRLEN_CMD_FLAG
-    | LLEN_CMD_FLAG
-    | LPOS_CMD_FLAG
-    | HEXISTS_CMD_FLAG
-    | HGET_CMD_FLAG;
-
-// Write 分类命令标志
-pub const WRITE_CMDS_FLAG: CmdFlag = DEL_CMD_FLAG
-    | EXPIRE_CMD_FLAG
-    | EXPIREAT_CMD_FLAG
-    | PERSIST_CMD_FLAG
-    | APPEND_CMD_FLAG
-    | DECR_CMD_FLAG
-    | DECRBY_CMD_FLAG
-    | GETSET_CMD_FLAG
-    | INCR_CMD_FLAG
-    | INCRBY_CMD_FLAG
-    | MSET_CMD_FLAG
-    | MSETNX_CMD_FLAG
-    | SET_CMD_FLAG
-    | SETEX_CMD_FLAG
-    | SETNX_CMD_FLAG
-    | BLMOVE_CMD_FLAG
-    | BLPOP_CMD_FLAG
-    | LPOP_CMD_FLAG
-    | LPUSH_CMD_FLAG
-    | NBLPOP_CMD_FLAG
-    | HDEL_CMD_FLAG
-    | HSET_CMD_FLAG;
-
-// String 分类命令标志
-pub const STRING_CMDS_FLAG: CmdFlag = APPEND_CMD_FLAG
-    | DECR_CMD_FLAG
-    | DECRBY_CMD_FLAG
-    | GET_CMD_FLAG
-    | GETRANGE_CMD_FLAG
-    | GETSET_CMD_FLAG
-    | INCR_CMD_FLAG
-    | INCRBY_CMD_FLAG
-    | MGET_CMD_FLAG
-    | MSET_CMD_FLAG
-    | MSETNX_CMD_FLAG
-    | SET_CMD_FLAG
-    | SETEX_CMD_FLAG
-    | SETNX_CMD_FLAG
-    | STRLEN_CMD_FLAG;
-
-// List 分类命令标志
-pub const LIST_CMDS_FLAG: CmdFlag = BLMOVE_CMD_FLAG
-    | BLPOP_CMD_FLAG
-    | LLEN_CMD_FLAG
-    | LPOP_CMD_FLAG
-    | LPOS_CMD_FLAG
-    | LPUSH_CMD_FLAG
-    | NBLPOP_CMD_FLAG;
-
-// Hash 分类命令标志
-pub const HASH_CMDS_FLAG: CmdFlag =
-    HDEL_CMD_FLAG | HEXISTS_CMD_FLAG | HGET_CMD_FLAG | HSET_CMD_FLAG;
-
-// Pubsub 分类命令标志
-pub const PUBSUB_CMDS_FLAG: CmdFlag = PUBLISH_CMD_FLAG | SUBSCRIBE_CMD_FLAG | UNSUBSCRIBE_CMD_FLAG;
-
-// Scripting 分类命令标志
-pub const SCRIPTING_CMDS_FLAG: CmdFlag = EVAL_CMD_FLAG
-    | EVALNAME_CMD_FLAG
-    | SCRIPTEXISTS_CMD_FLAG
-    | SCRIPTFLUSH_CMD_FLAG
-    | SCRIPTREGISTER_CMD_FLAG;
+pub fn cmd_flag_to_name(flag: CmdFlag) -> Option<&'static str> {
+    _cmd_flag_to_name(flag)
+}
 
 pub fn cat_names() -> [&'static str; 11] {
     [
@@ -361,6 +190,7 @@ pub fn cat_name_to_cmds_flag(cat_name: &[u8]) -> RutinResult<CmdFlag> {
 //     }
 // }
 
+// TODO: use SIMD
 pub fn cmds_flag_to_names(cmds_flag: CmdFlag) -> Vec<&'static str> {
     let mut names = Vec::new();
     let mut cursor = 1;

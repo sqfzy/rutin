@@ -170,7 +170,6 @@ impl<S: AsyncStream> Connection<S> {
         Ok(())
     }
 
-    // TODO: write_resp3
     #[instrument(level = "trace", skip(self), err)]
     pub async fn write_frame<B, St>(&mut self, frame: &Resp3<B, St>) -> io::Result<()>
     where

@@ -29,10 +29,6 @@ pub struct BLMove {
 }
 
 impl CmdExecutor for BLMove {
-    const NAME: &'static str = "BLMOVE";
-    const CATS_FLAG: CatFlag = BLMOVE_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = BLMOVE_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let db = handler.shared.db();
@@ -130,10 +126,6 @@ pub struct BLPop {
 }
 
 impl CmdExecutor for BLPop {
-    const NAME: &'static str = "BLPOP";
-    const CATS_FLAG: CatFlag = BLPOP_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = BLPOP_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let db = handler.shared.db();
@@ -203,10 +195,6 @@ pub struct LPos {
 }
 
 impl CmdExecutor for LPos {
-    const NAME: &'static str = "LPOS";
-    const CATS_FLAG: CatFlag = LPOS_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = LPOS_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         // 找到一个匹配元素，则rank-1(或+1)，当rank为0时，则表明开始收入
@@ -333,10 +321,6 @@ pub struct LLen {
 }
 
 impl CmdExecutor for LLen {
-    const NAME: &'static str = "LLEN";
-    const CATS_FLAG: CatFlag = LLEN_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = LLEN_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = None;
@@ -381,10 +365,6 @@ pub struct LPop {
 }
 
 impl CmdExecutor for LPop {
-    const NAME: &'static str = "LPOP";
-    const CATS_FLAG: CatFlag = LPOP_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = LPOP_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut res = None;
@@ -457,10 +437,6 @@ pub struct LPush {
 }
 
 impl CmdExecutor for LPush {
-    const NAME: &'static str = "LPUSH";
-    const CATS_FLAG: CatFlag = LPUSH_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = LPUSH_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut len = 0;
@@ -512,10 +488,6 @@ pub struct NBLPop {
 }
 
 impl CmdExecutor for NBLPop {
-    const NAME: &'static str = "NBLPOP";
-    const CATS_FLAG: CatFlag = NBLPOP_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = NBLPOP_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let shared = handler.shared;

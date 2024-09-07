@@ -11,7 +11,11 @@ repository = "https://github.com/sqfzy/rutin"
 keywords = ["redis", "async", "database", "kv"]
 categories = ["database"]
 
+[workspace]
+members = ["rutin_proc"]
+
 [dependencies]
+rutin_proc = { path = "rutin_proc" }
 anyhow = "1.0.59"
 bytes = { version = "1", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }

@@ -26,10 +26,6 @@ pub struct AclCat {
 }
 
 impl CmdExecutor for AclCat {
-    const NAME: &'static str = "ACLCAT";
-    const CATS_FLAG: CatFlag = ACLCAT_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = ACLCAT_CMD_FLAG;
-
     #[instrument(level = "debug", skip(_handler), ret, err)]
     async fn execute(self, _handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res: Vec<Resp3<Bytes, ByteString>> = if let Some(cat) = self.category {
@@ -73,10 +69,6 @@ pub struct AclDelUser {
 }
 
 impl CmdExecutor for AclDelUser {
-    const NAME: &'static str = "ACLDELUSER";
-    const CATS_FLAG: CatFlag = ACLDELUSER_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = ACLDELUSER_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut count = 0;
@@ -123,10 +115,6 @@ pub struct AclSetUser {
 }
 
 impl CmdExecutor for AclSetUser {
-    const NAME: &'static str = "ACLSETUSER";
-    const CATS_FLAG: CatFlag = ACLSETUSER_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = ACLSETUSER_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let security = &handler.shared.conf().security;
@@ -276,10 +264,6 @@ impl CmdExecutor for AclSetUser {
 pub struct AclUsers;
 
 impl CmdExecutor for AclUsers {
-    const NAME: &'static str = "ACLUSERS";
-    const CATS_FLAG: CatFlag = ACLUSERS_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = ACLUSERS_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut users = vec![Resp3::new_blob_string(DEFAULT_USER)];
@@ -302,10 +286,6 @@ impl CmdExecutor for AclUsers {
 pub struct AclWhoAmI;
 
 impl CmdExecutor for AclWhoAmI {
-    const NAME: &'static str = "ACLWHOAMI";
-    const CATS_FLAG: CatFlag = ACLWHOAMI_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = ACLWHOAMI_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         Ok(Some(Resp3::new_blob_string(handler.context.user.clone())))
@@ -325,10 +305,6 @@ impl CmdExecutor for AclWhoAmI {
 pub struct BgSave;
 
 impl CmdExecutor for BgSave {
-    const NAME: &'static str = "BGSAVE";
-    const CATS_FLAG: CatFlag = BGSAVE_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = BGSAVE_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let rdb_conf = &handler.shared.conf().rdb;
@@ -371,10 +347,6 @@ pub struct PSync {
 }
 
 impl CmdExecutor for PSync {
-    const NAME: &'static str = "PSYNC";
-    const CATS_FLAG: CatFlag = PSYNC_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = PSYNC_CMD_FLAG;
-
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let post_office = handler.shared.post_office();
 
@@ -439,10 +411,6 @@ pub struct ReplConf {
 }
 
 impl CmdExecutor for ReplConf {
-    const NAME: &'static str = "REPLCONF";
-    const CATS_FLAG: CatFlag = REPLCONF_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = REPLCONF_CMD_FLAG;
-
     #[allow(unused_variables)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         // TODO:
@@ -528,10 +496,6 @@ pub struct ReplicaOf {
 }
 
 impl CmdExecutor for ReplicaOf {
-    const NAME: &'static str = "REPLICAOF";
-    const CATS_FLAG: CatFlag = REPLICAOF_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = REPLICAOF_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         if self.should_set_to_master {

@@ -1,4 +1,3 @@
-use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
@@ -19,10 +18,6 @@ pub struct Eval {
 }
 
 impl CmdExecutor for Eval {
-    const NAME: &'static str = "EVAL";
-    const CATS_FLAG: CatFlag = EVAL_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = EVAL_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res = handler
@@ -66,10 +61,6 @@ pub struct EvalName {
 }
 
 impl CmdExecutor for EvalName {
-    const NAME: &'static str = "EVALNAME";
-    const CATS_FLAG: CatFlag = EVALNAME_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = EVALNAME_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res = handler
@@ -111,10 +102,6 @@ pub struct ScriptExists {
 }
 
 impl CmdExecutor for ScriptExists {
-    const NAME: &'static str = "SCRIPTEXISTS";
-    const CATS_FLAG: CatFlag = SCRIPTEXISTS_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = SCRIPTEXISTS_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let res: Vec<_> = self
@@ -144,10 +131,6 @@ impl CmdExecutor for ScriptExists {
 pub struct ScriptFlush {}
 
 impl CmdExecutor for ScriptFlush {
-    const NAME: &'static str = "SCRIPTFLUSH";
-    const CATS_FLAG: CatFlag = SCRIPTFLUSH_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = SCRIPTFLUSH_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         handler.shared.script().lua_script.flush();
@@ -171,10 +154,6 @@ pub struct ScriptRegister {
 }
 
 impl CmdExecutor for ScriptRegister {
-    const NAME: &'static str = "SCRIPTREGISTER";
-    const CATS_FLAG: CatFlag = SCRIPTREGISTER_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = SCRIPTREGISTER_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         handler

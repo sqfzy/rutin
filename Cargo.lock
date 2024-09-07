@@ -2200,6 +2200,7 @@ dependencies = [
  "regex",
  "rustls",
  "rustls-pemfile",
+ "rutin_proc",
  "ryu",
  "serde",
  "serde_with",
@@ -2216,6 +2217,16 @@ dependencies = [
  "tracing-subscriber",
  "try-lock",
  "zeroize",
+]
+
+[[package]]
+name = "rutin_proc"
+version = "0.1.0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

@@ -25,10 +25,6 @@ pub struct HDel {
 }
 
 impl CmdExecutor for HDel {
-    const NAME: &'static str = "HDEL";
-    const CATS_FLAG: CatFlag = HDEL_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = HDEL_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut count = 0;
@@ -77,10 +73,6 @@ pub struct HExists {
 }
 
 impl CmdExecutor for HExists {
-    const NAME: &'static str = "HEXISTS";
-    const CATS_FLAG: CatFlag = HEXISTS_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = HEXISTS_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut exists = false;
@@ -125,10 +117,6 @@ pub struct HGet {
 }
 
 impl CmdExecutor for HGet {
-    const NAME: &'static str = "HGET";
-    const CATS_FLAG: CatFlag = HGET_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = HGET_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut value = None;
@@ -172,10 +160,6 @@ pub struct HSet {
 }
 
 impl CmdExecutor for HSet {
-    const NAME: &'static str = "HSET";
-    const CATS_FLAG: CatFlag = HSET_CATS_FLAG;
-    const CMD_FLAG: CmdFlag = HSET_CMD_FLAG;
-
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
         let mut count = 0;
