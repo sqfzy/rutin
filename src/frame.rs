@@ -1253,32 +1253,6 @@ impl Resp3<BytesMut, ByteString> {
             trace!("reader_buf: {src:?}");
 
             let res = match Resp3::get_u8_async(io_read, src).await? {
-                ARRAY_PREFIX => {
-                    let len = Resp3::decode_length_async(io_read, src).await?;
-
-                    let mut frames = Vec::with_capacity(len);
-                    for _ in 0..len {
-                        let frame = T::_decode_async_recursively(io_read, src).await?;
-                        frames.push(frame);
-                    }
-
-                    Resp3::Array {
-                        inner: frames,
-                        attributes: None,
-                    }
-                }
-                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
-                    inner: Resp3::decode_string_async(io_read, src).await?,
-                    attributes: None,
-                },
-                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
-                    inner: Resp3::decode_string_async(io_read, src).await?,
-                    attributes: None,
-                },
-                INTEGER_PREFIX => Resp3::Integer {
-                    inner: Resp3::decode_decimal_async(io_read, src).await?,
-                    attributes: None,
-                },
                 BLOB_STRING_PREFIX => {
                     let line = Resp3::decode_line_async(io_read, src).await?;
 
@@ -1324,6 +1298,32 @@ impl Resp3<BytesMut, ByteString> {
                         }
                     }
                 }
+                ARRAY_PREFIX => {
+                    let len = Resp3::decode_length_async(io_read, src).await?;
+
+                    let mut frames = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        let frame = T::_decode_async_recursively(io_read, src).await?;
+                        frames.push(frame);
+                    }
+
+                    Resp3::Array {
+                        inner: frames,
+                        attributes: None,
+                    }
+                }
+                SIMPLE_STRING_PREFIX => Resp3::SimpleString {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                SIMPLE_ERROR_PREFIX => Resp3::SimpleError {
+                    inner: Resp3::decode_string_async(io_read, src).await?,
+                    attributes: None,
+                },
+                INTEGER_PREFIX => Resp3::Integer {
+                    inner: Resp3::decode_decimal_async(io_read, src).await?,
+                    attributes: None,
+                },
                 NULL_PREFIX => {
                     Resp3::need_bytes_async(io_read, src, 2).await?;
                     src.advance(2);

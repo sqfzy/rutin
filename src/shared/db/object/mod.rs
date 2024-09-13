@@ -609,32 +609,25 @@ impl ObjectInner {
     ///  access time更新为lru_clock，access count加1
     #[inline]
     pub fn update_lru(&self) {
-        // PERF:
         let atc = self.lru.load(Relaxed);
 
         let count = atc & Lru::LFU_MASK;
 
-        // TODO:
-        let new_count = count.wrapping_add(1);
-        // if count == Lru::LFU_FREQUENCY_MAX {
-        //     count
-        // } else {
-        //     // 每次有1 / (count / 2)的概率更新count
-        //     // let prob = rand::thread_rng().gen_range(0..=count / 2);
-        //     // if prob == 0 {
-        //     //     count + 1
-        //     // } else {
-        //     //     count
-        //     // }
-        //
-        // };
+        let new_count = if count == Lru::LFU_FREQUENCY_MAX {
+            count
+        } else {
+            // 每次有1 / (count / 2)的概率更新count
+            let prob = fastrand::u32(..=count / 2);
+            if prob == 0 {
+                count + 1
+            } else {
+                count
+            }
+        };
 
-        // PERF:
         let new_atc = (get_lru_clock() << Lru::LFU_BITS) | new_count;
 
-        // PERF:
-        // WARN: 有可能有多个线程在同时更新lru，这会覆盖掉其他线程的更新
-        // 或许这是可以接受的？
+        // 有可能有多个线程在同时更新lru，这会覆盖掉其他线程的更新，但这是可以接受的
         self.lru.store(new_atc, Relaxed);
     }
 

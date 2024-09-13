@@ -2178,6 +2178,7 @@ dependencies = [
  "either",
  "enum_dispatch",
  "event-listener",
+ "fastrand",
  "figment",
  "flume",
  "futures",
