@@ -5,9 +5,7 @@ pub mod script;
 pub use post_office::*;
 pub use script::*;
 
-use crate::{conf::Conf, server::Handler, shared::db::Db};
-use bytes::BytesMut;
-use tokio::net::TcpStream;
+use crate::{conf::Conf, shared::db::Db};
 use tokio_util::task::LocalPoolHandle;
 
 #[derive(Debug, Copy, Clone)]
@@ -92,9 +90,4 @@ impl std::fmt::Debug for SharedInner {
             .field("script", &self.script)
             .finish()
     }
-}
-
-pub enum Message {
-    Wcmd(BytesMut),
-    AddReplica(Handler<TcpStream>),
 }

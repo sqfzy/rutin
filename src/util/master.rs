@@ -91,7 +91,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
     // select_all的数组中必须有一个future，否则会panic，因此放入一个永远不会完成的future
     let mut futs =
-        select_all([pending::<Result<Result<Option<Resp3>, RutinError>, Elapsed>>().boxed()]);
+        select_all([pending::<Result<Result<Option<Resp3>, RutinError>, Elapsed>>().boxed_local()]);
 
     loop {
         tokio::select! {
@@ -164,7 +164,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                             futs = select_all(
                                 unsafe { &mut *replica_handlers_ptr }
                                     .iter_mut()
-                                    .map(|handler| handler.conn.read_frame().timeout(timeout).boxed()),
+                                    .map(|handler| handler.conn.read_frame().timeout(timeout).boxed_local()),
                             );
                         } else {
                             // 如果id不匹配或者BackLog中没有足够的数据，则进行全量复制
@@ -203,7 +203,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                     }
                     // TODO:
                     // RemoveReplica。如果remove后，replica_handlers为空，则
-                    // futs = select_all([async { Ok(ping_frame) }.boxed()]);
+                    // futs = select_all([async { Ok(ping_frame) }.boxed_local()]);
                     Letter::Resp3(_) => {}
                 }
             },
@@ -235,7 +235,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
                         back_log = handler.context.back_log.take().unwrap(); // return back back_log
 
-                        rest.insert(i, handler.conn.read_frame().timeout(timeout).boxed());
+                        rest.insert(i, handler.conn.read_frame().timeout(timeout).boxed_local());
                     }
                 }
 

@@ -35,7 +35,7 @@ pub fn set_server_to_replica(
     shared: Shared,
     master_host: ByteString,
     master_port: u16,
-) -> impl Future<Output = RutinResult<()>> + Send {
+) -> impl Future<Output = RutinResult<()>> {
     async move {
         // 记录replica的offset。运行run_replica()时，由于发送
         // PSYNC <run_id> <offset>是多线程的，所以需要上锁共享

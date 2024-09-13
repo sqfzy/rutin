@@ -31,6 +31,7 @@ pub struct Db {
     entries: DashMap<Key, Object, RandomState>,
 
     // 记录具有expire的键，以便进行**定期删除**，所有修改过期时间的操作都应该更新记录
+    // TODO: 复用entries的hash值
     entry_expire_records: DashSet<(Instant, Key), RandomState>,
 
     // Key代表频道名，每个频道名映射着一组Sender，通过这些Sender可以发送消息给订阅频道

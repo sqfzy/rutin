@@ -9,6 +9,7 @@ use crate::{
 use ahash::{AHashMap, AHashSet};
 use bytes::{Buf, Bytes, BytesMut};
 use bytestring::ByteString;
+use futures::FutureExt;
 use mlua::{prelude::*, Value};
 use num_bigint::BigInt;
 use std::{
@@ -1205,12 +1206,47 @@ impl Resp3<BytesMut, ByteString> {
     #[allow(clippy::multiple_bound_locations)]
     #[inline]
     #[instrument(level = "trace", skip(io_read), err)]
-    pub async fn decode_async<R: AsyncRead + Unpin + Send>(
+    pub async fn decode_async<R: AsyncRead + Unpin>(
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> RutinResult<Option<Resp3>> {
+        trait AsyncRecursion {
+            async fn _decode_async_recursively<R: AsyncRead + Unpin>(
+                io_read: &mut R,
+                src: &mut BytesMut,
+            ) -> RutinResult<Resp3>;
+        }
+
+        struct NonRecursive;
+        struct Recursive;
+
+        impl AsyncRecursion for Recursive {
+            async fn _decode_async_recursively<R: AsyncRead + Unpin>(
+                io_read: &mut R,
+                src: &mut BytesMut,
+            ) -> RutinResult<Resp3> {
+                _decode_async::<R, Recursive>(io_read, src)
+                    .boxed_local()
+                    .await
+            }
+        }
+
+        impl AsyncRecursion for NonRecursive {
+            async fn _decode_async_recursively<R: AsyncRead + Unpin>(
+                io_read: &mut R,
+                src: &mut BytesMut,
+            ) -> RutinResult<Resp3> {
+                // 避免堆分配
+                _decode_async::<R, Recursive>(io_read, src).await
+            }
+        }
+
+        // 有两份_decode_async，分别是_decode_async::<R, Recursive>和_decode_async::<R, NonRecursive>
+        // _decode_async::<R, NonRecursive>会调用_decode_async::<R, Recursive>，而
+        // _decode_async::<R, Recursive>会递归调用自己，可以定义Recursive2，Recursive3等避免更多的堆
+        // 分配，但是会导致严重的代码膨胀
         #[inline]
-        async fn _decode_async<R: AsyncRead + Unpin + Send>(
+        async fn _decode_async<R: AsyncRead + Unpin, T: AsyncRecursion>(
             io_read: &mut R,
             src: &mut BytesMut,
         ) -> RutinResult<Resp3> {
@@ -1222,7 +1258,7 @@ impl Resp3<BytesMut, ByteString> {
 
                     let mut frames = Vec::with_capacity(len);
                     for _ in 0..len {
-                        let frame = Box::pin(_decode_async(io_read, src)).await?;
+                        let frame = T::_decode_async_recursively(io_read, src).await?;
                         frames.push(frame);
                     }
 
@@ -1372,8 +1408,8 @@ impl Resp3<BytesMut, ByteString> {
 
                     let mut map = AHashMap::with_capacity(len);
                     for _ in 0..len {
-                        let k = Box::pin(_decode_async(io_read, src)).await?;
-                        let v = Box::pin(_decode_async(io_read, src)).await?;
+                        let k = T::_decode_async_recursively(io_read, src).await?;
+                        let v = T::_decode_async_recursively(io_read, src).await?;
                         map.insert(k, v);
                     }
 
@@ -1388,7 +1424,7 @@ impl Resp3<BytesMut, ByteString> {
 
                     let mut set = AHashSet::with_capacity(len);
                     for _ in 0..len {
-                        let frame = Box::pin(_decode_async(io_read, src)).await?;
+                        let frame = T::_decode_async_recursively(io_read, src).await?;
                         set.insert(frame);
                     }
 
@@ -1403,7 +1439,7 @@ impl Resp3<BytesMut, ByteString> {
 
                     let mut frames = Vec::with_capacity(len);
                     for _ in 0..len {
-                        let frame = Box::pin(_decode_async(io_read, src)).await?;
+                        let frame = T::_decode_async_recursively(io_read, src).await?;
                         frames.push(frame);
                     }
 
@@ -1470,12 +1506,12 @@ impl Resp3<BytesMut, ByteString> {
 
         debug_assert!(!src.is_empty());
 
-        let res = _decode_async(io_read, src).await?;
+        let res = _decode_async::<R, NonRecursive>(io_read, src).await?;
         Ok(Some(res))
     }
 
     #[inline]
-    pub async fn need_bytes_async<R: AsyncRead + Unpin + Send>(
+    pub async fn need_bytes_async<R: AsyncRead + Unpin>(
         io_read: &mut R,
         src: &mut BytesMut,
         len: usize,
@@ -1490,7 +1526,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    pub async fn decode_line_async<R: AsyncRead + Unpin + Send>(
+    pub async fn decode_line_async<R: AsyncRead + Unpin>(
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> RutinResult<BytesMut> {
@@ -1508,7 +1544,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn decode_until_async<R: AsyncRead + Unpin + Send>(
+    async fn decode_until_async<R: AsyncRead + Unpin>(
         io_read: &mut R,
         src: &mut BytesMut,
         byte: u8,
@@ -1527,7 +1563,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn decode_exact_async<R: AsyncRead + Unpin + Send>(
+    async fn decode_exact_async<R: AsyncRead + Unpin>(
         io_read: &mut R,
         src: &mut BytesMut,
         len: usize,
@@ -1544,7 +1580,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn decode_decimal_async<R: AsyncRead + Unpin + Send>(
+    async fn decode_decimal_async<R: AsyncRead + Unpin>(
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> RutinResult<Int> {
@@ -1556,7 +1592,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn decode_length_async<R: AsyncRead + Unpin + Send>(
+    async fn decode_length_async<R: AsyncRead + Unpin>(
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> RutinResult<usize> {
@@ -1568,10 +1604,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn decode_string_async<
-        R: AsyncRead + Unpin + Send,
-        S: AsRef<str> + for<'a> From<&'a str>,
-    >(
+    async fn decode_string_async<R: AsyncRead + Unpin, S: AsRef<str> + for<'a> From<&'a str>>(
         io_read: &mut R,
         src: &mut BytesMut,
     ) -> RutinResult<S> {
@@ -1586,7 +1619,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn get_u8_async<'a, R: AsyncRead + Unpin + Send>(
+    async fn get_u8_async<'a, R: AsyncRead + Unpin>(
         io_read: &'a mut R,
         src: &'a mut BytesMut,
     ) -> RutinResult<u8> {
@@ -1602,7 +1635,7 @@ impl Resp3<BytesMut, ByteString> {
     }
 
     #[inline]
-    async fn get_async<'a, R: AsyncRead + Unpin + Send>(
+    async fn get_async<'a, R: AsyncRead + Unpin>(
         io_read: &'a mut R,
         src: &'a mut BytesMut,
         range: Range<usize>,
