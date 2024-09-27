@@ -3,7 +3,7 @@ use crate::{
     error::{RutinError, RutinResult},
 };
 use arc_swap::ArcSwap;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use dashmap::{
     iter::Iter,
     mapref::one::{Ref, RefMut},
@@ -31,7 +31,7 @@ impl Acl {
         Self(DashMap::new())
     }
 
-    pub fn get(&self, key: &Bytes) -> Option<Ref<'_, Bytes, AccessControl>> {
+    pub fn get(&self, key: &[u8]) -> Option<Ref<'_, Bytes, AccessControl>> {
         if let Some(ac) = self.0.get(key) {
             if ac.enable {
                 return Some(ac);
@@ -41,7 +41,7 @@ impl Acl {
         None
     }
 
-    pub fn get_mut(&self, key: &Bytes) -> Option<RefMut<'_, Bytes, AccessControl>> {
+    pub fn get_mut(&self, key: &[u8]) -> Option<RefMut<'_, Bytes, AccessControl>> {
         if let Some(ac) = self.0.get_mut(key) {
             if ac.enable {
                 return Some(ac);
@@ -55,23 +55,23 @@ impl Acl {
         self.0.insert(key, value);
     }
 
-    pub fn remove(&self, key: &Bytes) -> Option<(Bytes, AccessControl)> {
+    pub fn remove(&self, key: &[u8]) -> Option<(Bytes, AccessControl)> {
         self.0.remove(key)
     }
 
-    pub fn disable(&self, key: &Bytes) {
+    pub fn disable(&self, key: &[u8]) {
         if let Some(mut ac) = self.0.get_mut(key) {
             ac.enable = false;
         }
     }
 
-    pub fn enable(&self, key: &Bytes) {
+    pub fn enable(&self, key: &[u8]) {
         if let Some(mut ac) = self.0.get_mut(key) {
             ac.enable = true;
         }
     }
 
-    pub fn is_enable(&self, key: &Bytes) -> bool {
+    pub fn is_enable(&self, key: &[u8]) -> bool {
         if let Some(ac) = self.0.get(key) {
             ac.enable
         } else {
@@ -154,43 +154,45 @@ impl AccessControl {
             }
         }
 
-        if let Some(allow_categories) = other.allow_categories {
-            for category_name in &allow_categories {
-                let flag = cat_name_to_cmds_flag(category_name)?;
+        if let Some(mut allow_categories) = other.allow_categories {
+            for category_name in &mut allow_categories {
+                category_name.make_ascii_uppercase();
+                let flag = cat_name_to_cmds_flag(category_name.as_ref())?;
 
                 self.cmds_flag |= flag; // 允许某类命令执行
             }
         }
 
-        if let Some(allow_cmds) = other.allow_commands {
-            for cmd_name in &allow_cmds {
+        if let Some(mut allow_cmds) = other.allow_commands {
+            for cmd_name in &mut allow_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
                     self.cmds_flag = ALL_CMDS_FLAG; // 允许所有命令执行，后面的命令无效
                     break;
                 }
-                let flag = cmd_name_to_flag(cmd_name)?;
+                cmd_name.make_ascii_uppercase();
+                let flag = cmd_name_to_flag(cmd_name.as_ref())?;
                 self.cmds_flag |= flag; // 允许命令执行
             }
         }
 
         // 禁止的优先级高于允许的
 
-        if let Some(deny_categories) = other.deny_categories {
-            for category_name in &deny_categories {
-                let flag = cat_name_to_cmds_flag(category_name)?;
+        if let Some(mut deny_categories) = other.deny_categories {
+            for category_name in &mut deny_categories {
+                let flag = cat_name_to_cmds_flag(category_name.as_mut())?;
 
                 self.cmds_flag &= !flag; // 禁止某类命令执行
             }
         }
 
-        if let Some(deny_cmds) = other.deny_commands {
-            for cmd_name in &deny_cmds {
+        if let Some(mut deny_cmds) = other.deny_commands {
+            for cmd_name in &mut deny_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
                     self.cmds_flag = NO_CMDS_FLAG; // 禁止所有命令执行，后面的命令无效
                     break;
                 }
 
-                let flag = cmd_name_to_flag(cmd_name)?;
+                let flag = cmd_name_to_flag(cmd_name.as_mut())?;
                 self.cmds_flag &= !flag; // 禁止命令执行
             }
         }
@@ -263,11 +265,11 @@ impl AccessControl {
     }
 
     // 密码是否正确
-    pub fn is_pwd_correct(&self, pwd: &Bytes) -> bool {
+    pub fn check_pwd(&self, pwd: &[u8]) -> bool {
         if !self.enable {
             return false;
         }
-        self.password.is_empty() || self.password == *pwd
+        self.password.is_empty() || self.password.as_ref() == pwd
     }
 
     // 是否是禁用的命令
@@ -337,10 +339,10 @@ impl Default for AccessControl {
 pub struct AccessControlIntermedium {
     pub enable: Option<bool>,
     pub password: Option<Bytes>,
-    pub allow_commands: Option<Vec<Bytes>>,
-    pub deny_commands: Option<Vec<Bytes>>,
-    pub allow_categories: Option<Vec<Bytes>>,
-    pub deny_categories: Option<Vec<Bytes>>,
+    pub allow_commands: Option<Vec<BytesMut>>,
+    pub deny_commands: Option<Vec<BytesMut>>,
+    pub allow_categories: Option<Vec<BytesMut>>,
+    pub deny_categories: Option<Vec<BytesMut>>,
     pub deny_read_key_patterns: Option<Vec<String>>,
     pub deny_write_key_patterns: Option<Vec<String>>,
     pub deny_channel_patterns: Option<Vec<String>>,

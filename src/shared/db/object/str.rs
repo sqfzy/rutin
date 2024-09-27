@@ -1,14 +1,14 @@
 use crate::{
     error::{RutinError, RutinResult},
-    util::to_valid_range,
+    util::{to_valid_range, StaticBytes},
     Int,
 };
 use atoi::atoi;
 use bytes::{BufMut, Bytes, BytesMut};
-use std::mem::size_of;
+use std::{borrow::Borrow, mem::size_of};
 use strum::{EnumDiscriminants, IntoStaticStr};
 
-pub macro as_bytes($str:expr) {
+pub macro str_as_bytes($str:expr) {
     $str.as_bytes(&mut itoa::Buffer::new())
 }
 
@@ -47,12 +47,10 @@ impl Str {
         self.len() == 0
     }
 
-    pub fn replce(&mut self, other: Bytes) -> Str {
-        if let Some(i) = atoi::<i128>(&other) {
-            std::mem::replace(self, Self::from(i))
-        } else {
-            std::mem::replace(self, Self::from(other))
-        }
+    pub fn set(&mut self, other: impl Into<Str>) -> Str {
+        let mut new = other.into();
+        std::mem::swap(self, &mut new);
+        new
     }
 
     pub fn is_raw(&self) -> bool {
@@ -137,12 +135,12 @@ impl Str {
         }
     }
 
-    pub fn append(&mut self, other: Bytes) {
+    pub fn append(&mut self, other: &[u8]) {
         match self {
             Self::Raw(b) => {
                 let mut buf = BytesMut::with_capacity(b.len() + other.len());
                 buf.put_slice(b);
-                buf.put_slice(&other);
+                buf.put_slice(other);
 
                 *self = Self::from(buf.freeze());
             }
@@ -190,9 +188,28 @@ impl From<&[u8]> for Str {
     }
 }
 
+impl From<&mut [u8]> for Str {
+    fn from(b: &mut [u8]) -> Self {
+        if let Some(i) = atoi::<Int>(b) {
+            return Str::Int(i);
+        }
+
+        Self::Raw(Bytes::copy_from_slice(b))
+    }
+}
+
 impl From<i128> for Str {
     fn from(i: i128) -> Self {
         Self::Int(i)
+    }
+}
+
+impl From<Str> for Bytes {
+    fn from(s: Str) -> Self {
+        match s {
+            Str::Raw(b) => b,
+            Str::Int(i) => Bytes::copy_from_slice(itoa::Buffer::new().format(i).as_bytes()),
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::{
-    cmd::commands::{CmdFlag, EXISTS_CMD_FLAG},
+    cmd::commands::{CmdFlag /*  EXISTS_CMD_FLAG */},
     conf::{
         gen_run_id, AccessControl, Acl, AofConf, Conf, MasterConf, MemoryConf, RdbConf,
         ReplicaConf, SecurityConf, ServerConf,
@@ -13,9 +13,15 @@ use std::sync::Once;
 use tokio::sync::Mutex;
 use tracing::Level;
 
+pub fn bytes_to_string(bytes: &[u8]) -> String {
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
 pub const TEST_AC_USERNAME: &str = "test_ac";
 pub const TEST_AC_PASSWORD: &str = "test_pwd";
-pub const TEST_AC_CMDS_FLAG: CmdFlag = EXISTS_CMD_FLAG;
+// pub const TEST_AC_CMDS_FLAG: CmdFlag = EXISTS_CMD_FLAG;
+// TODO:
+pub const TEST_AC_CMDS_FLAG: CmdFlag = 1;
 
 pub fn test_init() {
     static INIT: Once = Once::new();

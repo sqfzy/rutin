@@ -30,21 +30,21 @@ impl Hash {
         }
     }
 
-    pub fn remove(&mut self, field: &Key) -> Option<Str> {
+    pub fn remove(&mut self, field: &[u8]) -> Option<Str> {
         match self {
             Hash::HashMap(map) => map.remove(field),
             Hash::ZipList => unimplemented!(),
         }
     }
 
-    pub fn get(&self, field: &Key) -> Option<Str> {
+    pub fn get(&self, field: &[u8]) -> Option<Str> {
         match self {
             Hash::HashMap(map) => map.get(field).cloned(),
             Hash::ZipList => unimplemented!(),
         }
     }
 
-    pub fn contains_key(&self, field: &Key) -> bool {
+    pub fn contains_key(&self, field: &[u8]) -> bool {
         match self {
             Hash::HashMap(map) => map.contains_key(field),
             Hash::ZipList => unimplemented!(),

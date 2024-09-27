@@ -1,17 +1,17 @@
 use crate::{
     error::{RutinError, RutinResult},
-    frame::{decode, Resp3},
+    frame::{decode, Resp3, StaticResp3},
 };
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::{Buf, BytesMut};
 use flume::{
     r#async::{RecvFut, SendFut},
     Receiver, Sender,
 };
 use futures::{future::poll_immediate, io, Future};
 use pin_project::{pin_project, pinned_drop};
-use smallvec::SmallVec;
 use std::{
     any::Any,
+    io::Cursor,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -19,7 +19,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::TcpStream,
 };
-use tracing::{error, instrument, trace};
+use tracing::{debug, error, instrument};
 
 pub trait AsyncStream:
     AsyncRead + AsyncReadExt + AsyncWrite + AsyncWriteExt + Unpin + Send + Any
@@ -38,7 +38,7 @@ where
     S: AsyncStream,
 {
     pub stream: S,
-    pub reader_buf: BytesMut,
+    pub reader_buf: Cursor<BytesMut>,
     pub writer_buf: BytesMut,
     /// 支持批处理
     batch: usize,
@@ -46,14 +46,38 @@ where
 }
 
 impl<S: AsyncStream> Connection<S> {
-    pub fn new(stream: S, max_batch_count: usize) -> Self {
+    pub fn new(stream: S, max_batch: usize) -> Self {
         Self {
             stream,
-            reader_buf: BytesMut::with_capacity(BUF_SIZE),
+            reader_buf: Cursor::new(BytesMut::with_capacity(BUF_SIZE)),
             writer_buf: BytesMut::with_capacity(BUF_SIZE),
             batch: 0,
-            max_batch: max_batch_count,
+            max_batch,
         }
+    }
+
+    // 读取frame之后可以调用该函数清除reader_buf中已经使用过的数据
+    // 不调用该函数只会导致内存占用增加，不会影响后续的数据读取
+    pub fn finish_read_frames(&mut self) {
+        let reader_buf = &mut self.reader_buf;
+
+        // 清除reader_buf中已经使用过的数据，这会使RefMutResp3失效
+        if reader_buf.has_remaining() {
+            // TEST:
+
+            // 如果reader_buf中还有数据，则将其复制到buf的开头
+            let len = reader_buf.remaining();
+            let pos = reader_buf.position() as usize;
+
+            let inner = reader_buf.get_mut();
+            inner.copy_within(pos..pos + len, 0);
+
+            inner.truncate(len);
+        } else {
+            reader_buf.get_mut().clear();
+        }
+
+        reader_buf.set_position(0);
     }
 
     pub const fn unhandled_count(&self) -> usize {
@@ -71,18 +95,15 @@ impl<S: AsyncStream> Connection<S> {
     }
 
     #[inline]
-    pub async fn read_buf<B: BufMut + ?Sized>(&mut self, buf: &mut B) -> io::Result<usize> {
-        self.stream.read_buf(buf).await
-    }
-
-    #[inline]
     pub async fn read_inner_buf(&mut self) -> io::Result<usize> {
-        self.stream.read_buf(&mut self.reader_buf).await
+        self.stream.read_buf(self.reader_buf.get_mut()).await
     }
 
-    pub async fn read_line(&mut self) -> RutinResult<BytesMut> {
-        Resp3::decode_line_async(&mut self.stream, &mut self.reader_buf).await
-    }
+    // pub async fn read_line(&mut self) -> RutinResult<BytesMut> {
+    //     let mut cursor = Cursor::new(&mut self.reader_buf);
+    //
+    //     Resp3::decode_line_async(&mut self.stream, &mut Cursor::new(&mut self.reader_buf)).await
+    // }
 
     #[inline]
     pub async fn write_buf<B: Buf>(&mut self, buf: &mut B) -> io::Result<usize> {
@@ -96,11 +117,17 @@ impl<S: AsyncStream> Connection<S> {
 
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frame(&mut self) -> RutinResult<Option<Resp3>> {
+    pub async fn read_frame(&mut self) -> RutinResult<Option<StaticResp3>> {
         Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await
     }
 
-    pub async fn try_read_frame(&mut self) -> RutinResult<Option<Resp3>> {
+    #[inline]
+    #[instrument(level = "trace", skip(self), ret, err)]
+    pub async fn read_frame_buf(&mut self, frame_buf: &mut StaticResp3) -> RutinResult<Option<()>> {
+        Resp3::decode_buf_async(&mut self.stream, &mut self.reader_buf, frame_buf).await
+    }
+
+    pub async fn try_read_frame(&mut self) -> RutinResult<Option<StaticResp3>> {
         while poll_immediate(self.read_inner_buf()).await.is_some() {}
 
         decode(&mut self.reader_buf)
@@ -109,42 +136,102 @@ impl<S: AsyncStream> Connection<S> {
     // 返回RutinError::Other而不是RutinError::Server
     #[inline]
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frame_force(&mut self) -> RutinResult<Resp3> {
+    pub async fn read_frame_force(&mut self) -> RutinResult<StaticResp3> {
         self.read_frame()
             .await?
             .ok_or_else(|| RutinError::from("ERR connection closed"))
     }
 
     #[instrument(level = "trace", skip(self), ret, err)]
-    pub async fn read_frames(&mut self) -> RutinResult<Option<SmallVec<[Resp3; 16]>>> {
-        let mut frames = SmallVec::new();
+    pub async fn read_frames(&mut self) -> RutinResult<Option<Vec<StaticResp3>>> {
+        let mut frames_buf = Vec::with_capacity(32);
+
+        Ok(self
+            .read_frames_buf(&mut frames_buf)
+            .await?
+            .map(|_| frames_buf))
+    }
+
+    // frames_buf中存有已经allocate的frame (一般是RefMutResp3::Array)， 为了避免
+    // 重复的allocate，我们不断从frames_buf中获取&mut RefMutResp3，如果frames_buf中
+    // 的RefMutResp3数量不够则新建一个默认的RefMutResp3，通过执行read_frame_buf来转
+    // 为实际的RefMutResp3。因此对于总是读取同一类型的frame的情况(例如Array)，我们
+    // 就能尽可能地避免allocate的开销。
+    #[instrument(level = "trace", skip(self), ret, err)]
+    pub async fn read_frames_buf(
+        &mut self,
+        frames_buf: &mut Vec<StaticResp3>,
+    ) -> RutinResult<Option<()>> {
+        let mut next = 0;
 
         loop {
-            let frame = match Resp3::decode_async(&mut self.stream, &mut self.reader_buf).await? {
-                Some(frame) => frame,
-                None => return Ok(None),
-            };
+            {
+                // RefMutResp3数量不够则新建一个默认的RefMutResp3，执行read_frame_buf之后
+                // 会转为实际的RefMutResp3。
+                if next >= frames_buf.len() {
+                    frames_buf.push(StaticResp3::default());
+                }
 
-            trace!(?frame, "read frame");
-            frames.push(frame);
-            self.batch += 1;
+                let frame_buf = &mut frames_buf[next];
+                next += 1;
+                self.batch += 1;
+
+                if self.read_frame_buf(frame_buf).await?.is_none() {
+                    return Ok(None);
+                }
+
+                debug!("read frame {frame_buf:?}");
+                // println!(
+                //     "reader_buf remaining {:?}",
+                //     crate::util::bytes_to_string(
+                //         &self.reader_buf.get_ref()[self.reader_buf.position() as usize..]
+                //     )
+                // );
+            }
 
             // PERF: 该值影响pipeline的性能，以及内存占用
             if self.batch > self.max_batch {
-                return Ok(Some(frames));
+                // 超出最大批处理数则不再继续从网卡读取数据，但是必须消耗掉reader_buf中
+                // 的数据，否则会导致后续的数据读取错误。
+                while self.reader_buf.has_remaining() {
+                    {
+                        // RefMutResp3数量不够则新建一个默认的RefMutResp3，执行read_frame_buf之后
+                        // 会转为实际的RefMutResp3。
+                        if next >= frames_buf.len() {
+                            frames_buf.push(StaticResp3::default());
+                        }
+
+                        let frame_buf = &mut frames_buf[next];
+                        next += 1;
+                        self.batch += 1;
+
+                        if self.read_frame_buf(frame_buf).await?.is_none() {
+                            return Ok(None);
+                        }
+
+                        debug!("read frame {frame_buf:?}");
+                        // println!(
+                        //     "reader_buf remaining {:?}",
+                        //     crate::util::bytes_to_string(
+                        //         &self.reader_buf.get_ref()[self.reader_buf.position() as usize..]
+                        //     )
+                        // );
+                    }
+                }
+                return Ok(Some(()));
             }
 
             // 如果buffer为空则尝试继续从stream读取数据到buffer。如果阻塞或连接
             // 断开(内核中暂无数据)则返回目前解析到frame；如果读取到数据则继续
             // 解析(服务端总是假定客户端会发送完整的RESP3 frame，如果出现半包情
             // 况，则需要等待该frame的完整数据，其它frame请求的处理也会被阻塞)。
-            if self.reader_buf.is_empty() {
-                match poll_immediate(self.stream.read_buf(&mut self.reader_buf)).await {
+            if !self.reader_buf.has_remaining() {
+                match poll_immediate(self.read_inner_buf()).await {
                     Some(Ok(n)) if n != 0 => {}
-                    _ => return Ok(Some(frames)),
+                    _ => return Ok(Some(())),
                 }
 
-                debug_assert!(!self.reader_buf.is_empty());
+                debug_assert!(self.reader_buf.has_remaining());
             }
         }
     }
@@ -386,7 +473,7 @@ impl PinnedDrop for FakeStream {
 #[cfg(test)]
 mod fake_cs_tests {
     use super::*;
-    use crate::util::test_init;
+    use crate::{frame::leak_str, util::test_init};
     use bytes::Bytes;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -460,21 +547,21 @@ mod fake_cs_tests {
         }
 
         let right_res = vec![
-            Resp3::new_simple_string("OK".into()),
-            Resp3::new_simple_error("Error message".into()),
-            Resp3::new_integer(1000),
-            Resp3::new_blob_string("foobar".into()),
-            Resp3::new_blob_string("".into()),
-            Resp3::new_null(),
-            Resp3::new_array(vec![
-                Resp3::new_simple_string("simple".into()),
-                Resp3::new_simple_error("error".into()),
-                Resp3::new_integer(1000),
-                Resp3::new_blob_string("bulk".into()),
-                Resp3::new_null(),
-                Resp3::new_array(vec![
-                    Resp3::new_blob_string("foo".into()),
-                    Resp3::new_blob_string("bar".into()),
+            StaticResp3::new_simple_string(leak_str("OK")),
+            StaticResp3::new_simple_error(leak_str("Error message")),
+            StaticResp3::new_integer(1000),
+            StaticResp3::new_blob_string(b"foobar".as_ref().into()),
+            StaticResp3::new_blob_string(b"".as_ref().into()),
+            StaticResp3::new_null(),
+            StaticResp3::new_array(vec![
+                StaticResp3::new_simple_string(leak_str("simple")),
+                StaticResp3::new_simple_error(leak_str("error")),
+                StaticResp3::new_integer(1000),
+                StaticResp3::new_blob_string(b"bulk".as_ref().into()),
+                StaticResp3::new_null(),
+                StaticResp3::new_array(vec![
+                    StaticResp3::new_blob_string(b"foo".as_ref().into()),
+                    StaticResp3::new_blob_string(b"bar".as_ref().into()),
                 ]),
             ]),
             Resp3::new_array(vec![]),
@@ -582,21 +669,21 @@ mod fake_cs_tests {
         }
 
         let right_res = vec![
-            Resp3::new_simple_string("OK".into()),
-            Resp3::new_simple_error("Error message".into()),
-            Resp3::new_integer(1000),
-            Resp3::new_blob_string("foobar".into()),
-            Resp3::new_blob_string("".into()),
-            Resp3::new_null(),
-            Resp3::new_array(vec![
-                Resp3::new_simple_string("simple".into()),
-                Resp3::new_simple_error("error".into()),
-                Resp3::new_integer(1000),
-                Resp3::new_blob_string("bulk".into()),
-                Resp3::new_null(),
-                Resp3::new_array(vec![
-                    Resp3::new_blob_string("foo".into()),
-                    Resp3::new_blob_string("bar".into()),
+            StaticResp3::new_simple_string(leak_str("OK")),
+            StaticResp3::new_simple_error(leak_str("Error message")),
+            StaticResp3::new_integer(1000),
+            StaticResp3::new_blob_string(b"foobar".as_ref().into()),
+            StaticResp3::new_blob_string(b"".as_ref().into()),
+            StaticResp3::new_null(),
+            StaticResp3::new_array(vec![
+                StaticResp3::new_simple_string(leak_str("simple")),
+                StaticResp3::new_simple_error(leak_str("error")),
+                StaticResp3::new_integer(1000),
+                StaticResp3::new_blob_string(b"bulk".as_ref().into()),
+                StaticResp3::new_null(),
+                StaticResp3::new_array(vec![
+                    StaticResp3::new_blob_string(b"foo".as_ref().into()),
+                    StaticResp3::new_blob_string(b"bar".as_ref().into()),
                 ]),
             ]),
             Resp3::new_array(vec![]),

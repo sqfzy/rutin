@@ -1,4 +1,7 @@
-use crate::{frame::Resp3, Int};
+use crate::{
+    frame::{CheapResp3, Resp3},
+    Int,
+};
 use bytes::Bytes;
 use snafu::Snafu;
 use std::borrow::Cow;
@@ -21,6 +24,9 @@ pub enum RutinError {
     InvalidFormat {
         msg: Cow<'static, str>,
     },
+
+    #[snafu(display("connection reset"))]
+    ConnectionReset,
 
     ErrCode {
         code: Int,
@@ -143,10 +149,10 @@ impl From<String> for RutinError {
     }
 }
 
-impl TryInto<Resp3> for RutinError {
+impl TryInto<CheapResp3> for RutinError {
     type Error = RutinError;
 
-    fn try_into(self) -> Result<Resp3, Self::Error> {
+    fn try_into(self) -> Result<CheapResp3, Self::Error> {
         let frame = match self {
             RutinError::ServerErr { .. } => return Err(self),
             // 命令执行失败，向客户端返回错误码

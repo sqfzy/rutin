@@ -2,7 +2,7 @@ use crate::{
     cmd::commands::{AUTH_CMD_FLAG, PSYNC_CMD_FLAG, REPLCONF_CMD_FLAG},
     conf::{AccessControl, MasterConf},
     error::{RutinError, RutinResult},
-    frame::Resp3,
+    frame::{Resp3, StaticResp3},
     persist::rdb::rdb_save,
     server::Handler,
     shared::{Letter, Shared, SET_MASTER_ID},
@@ -90,8 +90,9 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
     let timeout = Duration::from_secs(master_conf.timeout);
 
     // select_all的数组中必须有一个future，否则会panic，因此放入一个永远不会完成的future
-    let mut futs =
-        select_all([pending::<Result<Result<Option<Resp3>, RutinError>, Elapsed>>().boxed_local()]);
+    let mut futs = select_all([
+        pending::<Result<Result<Option<StaticResp3>, RutinError>, Elapsed>>().boxed_local(),
+    ]);
 
     loop {
         tokio::select! {
@@ -130,8 +131,8 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                         handle_replica.context.ac = Arc::new(get_handle_replica_ac());
 
                         if conf.security.requirepass.is_some() {
-                            let auth = handle_replica.conn.read_frame().await?.ok_or(RutinError::from("ERR require auth"))?;
-                            if let Some(resp) = handle_replica.dispatch(auth).await? {
+                            let mut auth = handle_replica.conn.read_frame().await?.ok_or(RutinError::from("ERR require auth"))?;
+                            if let Some(resp) = handle_replica.dispatch(&mut auth).await? {
                                 handle_replica.conn.write_frame(&resp).await?;
 
                                 if resp.is_simple_error() {
@@ -224,12 +225,12 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                             back_log.reset();
                         }
                     }
-                    Ok(Ok(Some(frame))) => {
+                    Ok(Ok(Some(mut frame))) => {
                         let handler = unsafe { &mut (*replica_handlers_ptr)[i] };
 
                         handler.context.back_log = Some(back_log); // set back_log
 
-                        if let Some(resp) = handler.dispatch(frame).await? {
+                        if let Some(resp) = handler.dispatch(&mut frame).await? {
                             handler.conn.write_frame(&resp).await?;
                         }
 

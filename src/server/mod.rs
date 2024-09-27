@@ -9,23 +9,27 @@ pub use handler::*;
 pub use listener::*;
 
 use bytes::BytesMut;
-use rand::seq::IteratorRandom;
 use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
-    shared::{db::Lru, post_office::Letter, Shared, MAIN_ID},
+    shared::{db::Atc, post_office::Letter, Shared, MAIN_ID},
     util::{set_server_to_master, set_server_to_replica, UnsafeLazy},
     Id,
 };
 use std::{
     cell::RefCell,
     str::FromStr,
-    sync::atomic::{AtomicU32, AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU32, AtomicU64, Ordering},
+        LazyLock,
+    },
     time::{Duration, SystemTime},
 };
 use tokio::{task_local, time::Instant};
 use tracing::{error, info};
+
+pub static SHARED: LazyLock<Shared> = LazyLock::new(Shared::new);
 
 // 程序运行前或测试前需要进行初始化
 pub fn preface() {
@@ -56,7 +60,7 @@ pub fn incr_lru_clock() {
 
 #[inline]
 pub fn get_lru_clock() -> u32 {
-    LRU_CLOCK.load(Ordering::Relaxed) % Lru::LRU_CLOCK_MAX
+    LRU_CLOCK.load(Ordering::Relaxed) % Atc::LRU_CLOCK_MAX
 }
 
 task_local! { pub static ID: Id; }
@@ -80,7 +84,7 @@ pub fn using_local_buf(f: impl FnOnce(&mut BytesMut)) -> BytesMut {
 
 #[inline]
 pub async fn run() {
-    let shared = Shared::new();
+    let shared = *SHARED;
     let post_office = shared.post_office();
 
     init_server(shared).await.unwrap();
@@ -188,17 +192,18 @@ pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
         let mut interval = tokio::time::interval(period);
         let mut rng = rand::thread_rng();
 
-        loop {
-            interval.tick().await;
-
-            if let Some(record) = shared.db().entry_expire_records().iter().choose(&mut rng)
-                && record.0 <= Instant::now()
-            {
-                tracing::trace!("key {:?} is expired", record.1);
-
-                shared.db().remove_object(record.1.clone()).await;
-            }
-        }
+        // TODO:
+        // loop {
+        //     interval.tick().await;
+        //
+        //     if let Some(record) = shared.db().entry_expire_records().iter().choose(&mut rng)
+        //         && record.0 <= Instant::now()
+        //     {
+        //         tracing::trace!("key {:?} is expired", record.1);
+        //
+        //         shared.db().remove_object1(record.1.clone()).await;
+        //     }
+        // }
     });
 
     if conf.memory.is_some() {

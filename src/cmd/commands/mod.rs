@@ -10,10 +10,10 @@ mod hash;
 mod key;
 mod list;
 mod pub_sub;
-mod script;
-mod set;
+// mod script;
+// mod set;
 mod str;
-mod zset;
+// mod zset;
 
 pub use admin::*;
 pub use connection::*;
@@ -21,16 +21,13 @@ pub use hash::*;
 pub use key::*;
 pub use list::*;
 pub use pub_sub::*;
-use rutin_proc::gen_flag;
-pub use script::*;
+// pub use script::*;
 pub use str::*;
 
 use super::*;
-use crate::{
-    error::{RutinError, RutinResult},
-    util::get_uppercase,
-};
+use crate::error::{RutinError, RutinResult};
 use bytes::Bytes;
+use rutin_proc::gen_flag;
 
 pub type CmdFlag = u128;
 pub type CatFlag = u32;
@@ -65,7 +62,7 @@ gen_flag!(
     ExpireAt(keyspace, write),
     ExpireTime(keyspace, read),
     Keys(keyspace, read),
-    NBKeys(keyspace, read),
+    // NBKeys(keyspace, read),
     Persist(keyspace, write),
     Pttl(keyspace, read),
     Ttl(keyspace, read),
@@ -97,7 +94,7 @@ gen_flag!(
     LPop(list, write),
     LPos(list, read),
     LPush(list, write),
-    NBLPop(list, write),
+    // NBLPop(list, write),
     /********/
     /* hash */
     /********/
@@ -111,20 +108,18 @@ gen_flag!(
     Publish(pubsub),
     Subscribe(pubsub),
     Unsubscribe(pubsub),
-    /*************/
-    /* scripting */
-    /*************/
-    Eval(scripting),
-    EvalName(scripting),
-    ScriptExists(scripting),
-    ScriptFlush(scripting),
-    ScriptRegister(scripting)
+    // /*************/
+    // /* scripting */
+    // /*************/
+    // Eval(scripting),
+    // EvalName(scripting),
+    // ScriptExists(scripting),
+    // ScriptFlush(scripting),
+    // ScriptRegister(scripting)
 );
 
+// 调用前应将name转为大写
 pub fn cmd_name_to_flag(name: &[u8]) -> RutinResult<CmdFlag> {
-    let mut buf = [0; 32];
-    let name = get_uppercase(name, &mut buf)?;
-
     _cmd_name_to_flag(name).ok_or(RutinError::UnknownCmd)
 }
 
@@ -148,10 +143,8 @@ pub fn cat_names() -> [&'static str; 11] {
     ]
 }
 
+// 调用前应将cat_name转为大写
 pub fn cat_name_to_cmds_flag(cat_name: &[u8]) -> RutinResult<CmdFlag> {
-    let mut buf = [0; 32];
-    let cat_name = get_uppercase(cat_name, &mut buf)?;
-
     Ok(match cat_name {
         b"ADMIN" => ADMIN_CMDS_FLAG,
         b"READ" => READ_CMDS_FLAG,

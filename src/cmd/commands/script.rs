@@ -2,24 +2,26 @@ use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     error::{RutinError, RutinResult},
-    frame::Resp3,
-    server::AsyncStream,
-    server::Handler,
-    util::atoi,
+    frame::{CheapResp3, Resp3},
+    server::{AsyncStream, Handler},
+    util::{atoi, StaticBytesMut},
 };
 use bytes::Bytes;
 use tracing::instrument;
 
 #[derive(Debug)]
 pub struct Eval {
-    script: Bytes,
+    script: StaticBytesMut,
     keys: Vec<Bytes>,
     args: Vec<Bytes>,
 }
 
 impl CmdExecutor for Eval {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let res = handler
             .shared
             .script()
@@ -62,7 +64,10 @@ pub struct EvalName {
 
 impl CmdExecutor for EvalName {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let res = handler
             .shared
             .script()
@@ -103,7 +108,10 @@ pub struct ScriptExists {
 
 impl CmdExecutor for ScriptExists {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let res: Vec<_> = self
             .names
             .iter()
@@ -132,7 +140,10 @@ pub struct ScriptFlush {}
 
 impl CmdExecutor for ScriptFlush {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         handler.shared.script().lua_script.flush();
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
@@ -155,7 +166,10 @@ pub struct ScriptRegister {
 
 impl CmdExecutor for ScriptRegister {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         handler
             .shared
             .script()

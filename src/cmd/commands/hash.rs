@@ -1,38 +1,33 @@
-// HDel
-// HExists
-// HGet
-// HSet
-
 use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::AsyncStream,
-    server::Handler,
-    shared::db::ObjValueType::Hash,
-    Key,
+    server::{AsyncStream, Handler},
+    shared::db::{ObjectValueType::Hash, Str},
 };
-use bytes::Bytes;
 use tracing::instrument;
 
 /// **Integer reply:** The number of fields that were removed from the hash, excluding any specified but non-existing fields.
 #[derive(Debug)]
 pub struct HDel {
-    pub key: Key,
-    pub fields: Vec<Key>,
+    pub key: StaticBytes,
+    pub fields: Vec<StaticBytes>,
 }
 
 impl CmdExecutor for HDel {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut count = 0;
 
         handler
             .shared
             .db()
-            .update_object(self.key, |obj| {
+            .update_object(&self.key, |obj| {
                 let hash = obj.on_hash_mut()?;
                 for field in self.fields {
                     if hash.remove(&field).is_some() {
@@ -58,8 +53,8 @@ impl CmdExecutor for HDel {
         }
 
         Ok(HDel {
-            key: key.into(),
-            fields: args.map(Key::from).collect(),
+            key,
+            fields: args.collect(),
         })
     }
 }
@@ -68,13 +63,16 @@ impl CmdExecutor for HDel {
 /// **Integer reply:** 1 if the hash contains the field.
 #[derive(Debug)]
 pub struct HExists {
-    pub key: Key,
-    pub field: Key,
+    pub key: StaticBytes,
+    pub field: StaticBytes,
 }
 
 impl CmdExecutor for HExists {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut exists = false;
 
         handler
@@ -102,8 +100,8 @@ impl CmdExecutor for HExists {
         }
 
         Ok(HExists {
-            key: key.into(),
-            field: args.next().unwrap().into(),
+            key,
+            field: args.next().unwrap(),
         })
     }
 }
@@ -112,13 +110,16 @@ impl CmdExecutor for HExists {
 /// **Null reply:** If the field is not present in the hash or key does not exist.
 #[derive(Debug)]
 pub struct HGet {
-    pub key: Key,
-    pub field: Key,
+    pub key: StaticBytes,
+    pub field: StaticBytes,
 }
 
 impl CmdExecutor for HGet {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut value = None;
 
         handler
@@ -146,8 +147,8 @@ impl CmdExecutor for HGet {
         }
 
         Ok(HGet {
-            key: key.into(),
-            field: args.next().unwrap().into(),
+            key,
+            field: args.next().unwrap(),
         })
     }
 }
@@ -155,22 +156,25 @@ impl CmdExecutor for HGet {
 /// **Integer reply:** the number of fields that were added.
 #[derive(Debug)]
 pub struct HSet {
-    pub key: Key,
-    pub fields: Vec<(Key, Bytes)>,
+    pub key: StaticBytes,
+    pub fields: Vec<(StaticBytes, Str)>,
 }
 
 impl CmdExecutor for HSet {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut count = 0;
 
         handler
             .shared
             .db()
-            .update_or_create_object(self.key, Hash, |obj| {
+            .update_object_force(&self.key, Hash, |obj| {
                 let hash = obj.on_hash_mut()?;
                 for (field, value) in self.fields {
-                    hash.insert(field, value);
+                    hash.insert(field.into(), value);
                     count += 1;
                 }
 
@@ -193,15 +197,12 @@ impl CmdExecutor for HSet {
 
         let mut fields = Vec::with_capacity(args.len() / 2);
         while !args.is_empty() {
-            let field = args.next().unwrap().into();
-            let value = args.next().unwrap();
+            let field = args.next().unwrap();
+            let value = args.next().unwrap().into();
             fields.push((field, value));
         }
 
-        Ok(HSet {
-            key: key.into(),
-            fields,
-        })
+        Ok(HSet { key, fields })
     }
 }
 
@@ -216,9 +217,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            ["key", "field1", "value1", "field2", "value2"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -228,7 +227,7 @@ mod cmd_hash_tests {
         );
 
         let hdel = HDel::parse(
-            ["key", "field1", "field2"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field1", "field2"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -239,7 +238,7 @@ mod cmd_hash_tests {
         );
 
         let hdel = HDel::parse(
-            ["key", "field1", "field2"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field1", "field2"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -255,9 +254,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            ["key", "field1", "value1", "field2", "value2"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -267,7 +264,7 @@ mod cmd_hash_tests {
         );
 
         let hexists = HExists::parse(
-            ["key", "field1"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field1"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -277,7 +274,7 @@ mod cmd_hash_tests {
         );
 
         let hexists = HExists::parse(
-            ["key", "field3"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field3"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -293,9 +290,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            ["key", "field1", "value1", "field2", "value2"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -305,7 +300,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            ["key", "field1"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field1"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -315,7 +310,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            ["key", "field3"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field3"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -328,9 +323,7 @@ mod cmd_hash_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let hset = HSet::parse(
-            ["key", "field1", "value1", "field2", "value2"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -340,7 +333,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            ["key", "field1"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field1"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -350,7 +343,7 @@ mod cmd_hash_tests {
         );
 
         let hget = HGet::parse(
-            ["key", "field2"].as_ref().into(),
+            gen_cmdunparsed_test(&["key", "field2"]),
             &AccessControl::new_loose(),
         )
         .unwrap();

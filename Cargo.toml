@@ -12,7 +12,8 @@ keywords = ["redis", "async", "database", "kv"]
 categories = ["database"]
 
 [workspace]
-members = ["rutin_proc"]
+# members = ["rutin_proc"]
+members = ["rutin_proc", "dashmap"]
 
 [dependencies]
 rutin_proc = { path = "rutin_proc" }
@@ -21,8 +22,8 @@ bytes = { version = "1", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
 # config = "0.14.0"
 crc = "3.0.1"
-dashmap = { version = "6.0.1", features = [
-  # "raw-api",
+dashmap = { path = "dashmap", features = [
+  "raw-api",
   "inline",
   "rayon",
   "serde",
@@ -90,8 +91,9 @@ figment = { version = "0.10.19", features = ["toml", "env"] }
 paste = "1.0.15"
 derive_builder = "0.20.0"
 futures = "0.3.30"
-
 zeroize = { version = "1", optional = true }
+# redis-protocol = "5.0.1"
+equivalent = "1.0.1"
 # futures-util = "0.3.30"
 # lru = "0.12.3"
 # neat-date-time = "0.2.0"

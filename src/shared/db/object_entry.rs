@@ -1,63 +1,128 @@
+use std::convert::From;
+
 use super::*;
 use crate::{
     error::{RutinError, RutinResult},
-    server::NEVER_EXPIRE,
     Key,
 };
-use dashmap::mapref::entry::{self, Entry};
-use std::sync::{atomic::Ordering, Arc};
-use tokio::{sync::Notify, time::Instant};
-use tracing::instrument;
+use dashmap::mapref::{entry::OccupiedEntry, entry_ref};
 
-pub struct ObjectEntry<'a> {
-    pub(super) entry: Entry<'a, Str, Object>,
-    db: &'a Db,
-    intention_lock: Option<IntentionLock>,
+pub type StaticEntryRef<'a, 'b, Q> = entry_ref::EntryRef<'a, 'b, Key, Q, Object>;
+pub type StaticOccupiedEntryRef<'a> = entry_ref::OccupiedEntryRef<'a, Key, Object>;
+pub type StaticVacantEntryRef<'a, Q> = entry_ref::VacantEntryRef<'a, 'static, Key, Q, Object>;
+
+// ObjectEntry的对象在一定时间内是合法的，应当尽快使用
+//
+// 当用户持有ObjectEntry时，它满足：
+// 1. 如果是Vacant，则有可能变为Occupied
+// 2 .如果是Occupied，则ObjectInner一定存在，但可能是过期的(用户插入了一个过期的ObjectInner)
+pub struct ObjectEntry<'a, 'b, Q: ?Sized> {
+    pub(super) inner: StaticEntryRef<'a, 'b, Q>,
 }
 
-impl<'a> ObjectEntry<'a> {
-    pub fn new(
-        entry: Entry<'a, Str, Object>,
-        db: &'a Db,
-        intention_lock: Option<IntentionLock>,
-    ) -> Self {
-        Self {
-            entry,
-            db,
-            intention_lock,
-        }
-    }
-}
+// impl<'a> ObjectEntry<'a> {
+//     pub fn new(entry: Entry<'a, Key, Object>, db: &'a Db) -> Self {
+//         Self { inner: entry, db }
+//     }
+// }
 
-impl ObjectEntry<'_> {
-    pub fn is_object_existed(&self) -> bool {
-        if let Entry::Occupied(e) = &self.entry {
-            return e.get().inner().is_some();
-        }
-
-        false
+impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
+    #[inline]
+    pub fn is_occupied(&self) -> bool {
+        matches!(self.inner, StaticEntryRef::Occupied(_))
     }
 
     #[inline]
-    pub fn key(&self) -> &Key {
-        self.entry.key()
+    pub fn key(&self) -> &[u8]
+    where
+        Q: AsRef<[u8]>,
+    {
+        self.inner.key_as_ref::<[u8]>()
     }
 
+    // #[inline]
+    // pub fn into_key(self) -> Key {
+    //     self.inner.into_key()
+    // }
+
     #[inline]
-    pub fn value(&self) -> Option<&ObjectInner> {
-        if let Entry::Occupied(e) = &self.entry {
-            // 对象不为空
-            if let Some(inner) = e.get().inner() {
-                return Some(inner);
-            }
+    pub fn expire(&self) -> Option<Instant> {
+        if let StaticEntryRef::Occupied(e) = &self.inner {
+            let obj = e.get();
+            Events::try_trigger_read_event(&obj);
+
+            return Some(obj.expire);
         }
 
         None
     }
 
+    pub fn and_modify(
+        mut self,
+        f: impl FnOnce(&mut Object) -> RutinResult<()>,
+    ) -> RutinResult<Self> {
+        if let StaticEntryRef::Occupied(e) = &mut self.inner {
+            let obj = e.get_mut();
+            f(obj)?;
+
+            Events::try_trigger_read_and_write_event(obj);
+
+            return Ok(self);
+        }
+
+        Ok(self)
+    }
+
+    pub fn visit(self, f: impl FnOnce(&Object) -> RutinResult<()>) -> RutinResult<Self> {
+        if let StaticEntryRef::Occupied(e) = &self.inner {
+            let obj = e.get();
+            f(obj)?;
+
+            Events::try_trigger_read_event(obj);
+
+            return Ok(self);
+        }
+
+        Err(RutinError::Null)
+    }
+
+    /// # Desc:
+    ///
+    ///
+    /// # Error:
+    ///
+    /// 如果对象不存在，对象为空或者对象已过期则返回RutinError::Null
     #[inline]
-    pub fn set_notify_unlock(&mut self, notify: Arc<Notify>) {
-        self.intention_lock = Some(IntentionLock(notify));
+    #[instrument(level = "debug", skip(self, f), err)]
+    pub fn update1(mut self, f: impl FnOnce(&mut Object) -> RutinResult<()>) -> RutinResult<Self> {
+        if let StaticEntryRef::Occupied(e) = &mut self.inner {
+            let obj = e.get_mut();
+            f(obj)?;
+
+            Events::try_trigger_read_and_write_event(obj);
+
+            return Ok(self);
+        }
+
+        Err(RutinError::Null)
+    }
+
+    #[inline]
+    #[instrument(level = "debug", skip(self, f), err)]
+    pub fn update2<F: FnOnce(&mut Object) -> RutinResult<()>>(
+        mut self,
+        f: F,
+    ) -> RutinResult<(Self, Option<F>)> {
+        if let StaticEntryRef::Occupied(e) = &mut self.inner {
+            let obj = e.get_mut();
+            f(obj)?;
+
+            Events::try_trigger_read_and_write_event(obj);
+
+            Ok((self, None))
+        } else {
+            Ok((self, Some(f)))
+        }
     }
 
     /// # Desc:
@@ -67,32 +132,53 @@ impl ObjectEntry<'_> {
     /// # Return:
     ///
     /// 返回一个新的[`ObjectEntryMut`]以便继续其它操作。
-    #[inline]
     #[instrument(level = "debug", skip(self))]
-    pub fn create_object(self, obj_type: ObjValueType) -> Self {
-        match self.entry {
-            Entry::Occupied(_) => self,
-            Entry::Vacant(e) => {
-                let db = self.db;
+    pub fn or_insert(self, value: Object) -> Self
+    where
+        Key: From<&'b Q>,
+    {
+        match self.inner {
+            StaticEntryRef::Occupied(_) => self,
+            StaticEntryRef::Vacant(e) => {
+                let new_entry = e.insert_entry(value.into());
 
-                let new_obj = match obj_type {
-                    ObjValueType::Str => Object::new_str(Str::default(), *NEVER_EXPIRE),
-                    ObjValueType::List => Object::new_list(List::default(), *NEVER_EXPIRE),
-                    ObjValueType::Set => Object::new_set(Set::default(), *NEVER_EXPIRE),
-                    ObjValueType::Hash => Object::new_hash(Hash::default(), *NEVER_EXPIRE),
-                    ObjValueType::ZSet => Object::new_zset(ZSet::default(), *NEVER_EXPIRE),
-                };
-
-                let new_entry = e.insert_entry(new_obj);
-                Self {
-                    entry: entry::Entry::Occupied(new_entry),
-                    db,
-                    intention_lock: None,
-                }
+                StaticEntryRef::Occupied(new_entry).into()
             }
         }
     }
 
+    #[instrument(level = "debug", skip(self, value))]
+    pub fn or_insert_with(self, value: impl FnOnce() -> Object) -> Self
+    where
+        Key: From<&'b Q>,
+    {
+        match self.inner {
+            StaticEntryRef::Occupied(_) => self,
+            StaticEntryRef::Vacant(e) => {
+                let new_entry = e.insert_entry(value().into());
+
+                StaticEntryRef::Occupied(new_entry).into()
+            }
+        }
+    }
+
+    #[instrument(level = "debug", skip(self, value))]
+    pub fn or_try_insert_with(
+        self,
+        value: impl FnOnce() -> RutinResult<Object>,
+    ) -> RutinResult<Self>
+    where
+        Key: From<&'b Q>,
+    {
+        match self.inner {
+            StaticEntryRef::Occupied(_) => Ok(self),
+            StaticEntryRef::Vacant(e) => {
+                let new_entry = e.insert_entry(value()?.into());
+
+                Ok(StaticEntryRef::Occupied(new_entry).into())
+            }
+        }
+    }
     /// # Desc:
     ///
     /// 插入对象。如果存在旧对象，则会触发旧对象中的**MayUpdate**和**Track**事件。
@@ -101,46 +187,45 @@ impl ObjectEntry<'_> {
     ///
     /// 返回一个旧对象和[`ObjectEntryMut`]以便重复操作。
     #[instrument(level = "debug", skip(self))]
-    pub fn insert_object(mut self, object: ObjectInner) -> (Self, Option<ObjectInner>) {
-        let new_ex = object.expire_unchecked();
+    pub fn insert1(mut self, object: Object) -> Self
+    where
+        Key: From<&'b Q>,
+    {
+        match self.inner {
+            StaticEntryRef::Occupied(ref mut e) => {
+                let mut old_obj = e.insert(object);
 
-        let db = self.db;
-        match self.entry {
-            Entry::Occupied(ref mut e) => {
-                if let Some(inner) = e.get().inner() {
-                    object
-                        .lru
-                        .store(inner.lru.load(Ordering::Relaxed), Ordering::Relaxed);
-                }
-                let mut old_obj = e.insert(object.into());
-                let key = e.key();
+                // 存在旧对象，触发旧对象中的写事件
+                Events::try_trigger_read_and_write_event(&mut old_obj);
 
-                old_obj.trigger_may_update_event(key);
-                old_obj.trigger_track_event(key);
-
-                if let Some(old_obj_inner) = old_obj.inner() {
-                    // 旧对象为有效对象
-                    db.update_expire_records(key, new_ex, old_obj_inner.expire_unchecked());
-                } else {
-                    // 旧对象中为空对象，则old_expire为NEVER_EXPIRE
-                    db.update_expire_records(key, new_ex, *NEVER_EXPIRE);
-                }
-                (self, old_obj.into_inner())
+                self
             }
-            Entry::Vacant(e) => {
-                // 不存在旧对象，则old_expire为NEVER_EXPIRE
-                db.update_expire_records(e.key(), new_ex, *NEVER_EXPIRE);
+            StaticEntryRef::Vacant(e) => {
+                let new_entry = e.insert_entry(object);
 
-                let new_entry = e.insert_entry(object.into());
+                StaticEntryRef::Occupied(new_entry).into()
+            }
+        }
+    }
 
-                (
-                    Self {
-                        entry: entry::Entry::Occupied(new_entry),
-                        db: self.db,
-                        intention_lock: self.intention_lock,
-                    },
-                    None,
-                )
+    #[instrument(level = "debug", skip(self))]
+    pub fn insert2(mut self, object: Object) -> (Self, Option<Object>)
+    where
+        Key: From<&'b Q>,
+    {
+        match self.inner {
+            StaticEntryRef::Occupied(ref mut e) => {
+                let mut old_obj = e.insert(object);
+
+                // 存在旧对象，触发旧对象中的写事件
+                Events::try_trigger_read_and_write_event(&mut old_obj);
+
+                (self, Some(old_obj))
+            }
+            StaticEntryRef::Vacant(e) => {
+                let new_entry = e.insert_entry(object);
+
+                (StaticEntryRef::Occupied(new_entry).into(), None)
             }
         }
     }
@@ -150,159 +235,51 @@ impl ObjectEntry<'_> {
     /// 移除对象。如果存在旧对象，则会触发旧对象中的**Track**事件
     #[inline]
     #[instrument(level = "debug", skip(self), ret)]
-    pub fn remove_object(self) -> Option<(Key, Object)> {
-        match self.entry {
-            Entry::Occupied(e) => {
+    pub fn remove(self) -> Option<(Key, Object)> {
+        match self.inner {
+            StaticEntryRef::Occupied(e) => {
                 let (key, mut obj) = e.remove_entry();
 
-                if let Some(obj_inner) = obj.inner() {
-                    self.db.update_expire_records(
-                        &key,
-                        *NEVER_EXPIRE,
-                        obj_inner.expire_unchecked(),
-                    );
-                }
-
-                obj.trigger_track_event(&key);
+                Events::try_trigger_read_and_write_event(&mut obj);
 
                 Some((key, obj))
             }
-            Entry::Vacant(_) => None,
+            StaticEntryRef::Vacant(_) => None,
         }
     }
 
-    /// # Desc:
-    ///
-    /// 更新对象的过期时间。如果对象不存在，则返回错误。
-    #[inline]
-    #[instrument(level = "debug", skip(self), err)]
-    pub fn update_object_expire(&mut self, new_ex: Instant) -> RutinResult<Instant> {
-        if let Entry::Occupied(e) = &mut self.entry {
-            if e.get_mut().inner().is_some() {
-                let obj_inner = e.get_mut().inner_mut().unwrap();
-                let old_ex = obj_inner.set_expire_unchecked(new_ex)?;
-
-                self.db.update_expire_records(e.key(), new_ex, old_ex);
-                return Ok(old_ex);
-            }
-        }
-
-        Err(RutinError::Null)
-    }
-
-    /// # Desc:
-    ///
-    /// 尝试更新对象的值，在回调函数中可以通过on_str_mut()，on_list_mut()等接口获
-    /// 取可变的对象值的引用进行更新。会触发对象中的**MayUpdate**和**Track**事件。
-    ///
-    /// # Error:
-    ///
-    /// 如果对象不存在，对象为空或者对象已过期则返回RutinError::Null
-    #[inline]
-    #[instrument(level = "debug", skip(self, f), err)]
-    pub fn update_object_value(
-        &mut self,
-        f: impl FnOnce(&mut ObjectInner) -> RutinResult<()>,
-    ) -> RutinResult<()> {
-        if let Entry::Occupied(e) = &mut self.entry {
-            if let Some(obj_inner) = e.get_mut().inner_mut() {
-                f(obj_inner)?;
-
-                let key = e.key().clone();
-                let obj = e.get_mut();
-
-                obj.trigger_may_update_event(&key);
-                obj.trigger_track_event(&key);
-
-                return Ok(());
-            }
-        }
-
-        Err(RutinError::Null)
-    }
-
-    /// # Desc:
-    ///
-    /// 尝试更新对象的值，如果对象不存在或者对象为空，则创建一个新对象后再进行更新。
-    /// 会触发对象中的**MayUpdate**和**Track**事件。
-    ///
-    /// # Error:
-    ///
-    /// 与[`update_object_value()`]不同的是，该函数完全不关心Db中是否存有键值对。除非在
-    /// 回调函数`f`中发生错误，否则该函数一定成功
-    #[inline]
-    #[instrument(level = "debug", skip(self, f), err)]
-    pub fn update_or_create_object(
-        mut self,
-        obj_type: ObjValueType,
-        f: impl FnOnce(&mut ObjectInner) -> RutinResult<()>,
-    ) -> RutinResult<Self> {
-        match self.entry {
-            Entry::Occupied(ref mut e) => match e.get_mut().inner_mut() {
-                Some(obj_inner) => {
-                    f(obj_inner)?;
-
-                    let key = e.key().clone();
-                    let obj = e.get_mut();
-
-                    obj.trigger_may_update_event(&key);
-                    obj.trigger_track_event(&key);
-
-                    Ok(self)
-                }
-                None => {
-                    // 创建新对象，新对象执行回调函数后插入到Db，触发旧对象中的事件
-                    let mut new_obj = match obj_type {
-                        ObjValueType::Str => Object::new_str(Str::default(), *NEVER_EXPIRE),
-                        ObjValueType::List => Object::new_list(List::default(), *NEVER_EXPIRE),
-                        ObjValueType::Set => Object::new_set(Set::default(), *NEVER_EXPIRE),
-                        ObjValueType::Hash => Object::new_hash(Hash::default(), *NEVER_EXPIRE),
-                        ObjValueType::ZSet => Object::new_zset(ZSet::default(), *NEVER_EXPIRE),
-                    };
-                    f(new_obj.inner_mut().unwrap())?;
-
-                    let mut old_obj = e.insert(new_obj);
-
-                    old_obj.trigger_may_update_event(e.key());
-                    old_obj.trigger_track_event(e.key());
-
-                    Ok(self)
-                }
-            },
-            Entry::Vacant(e) => {
-                let mut new_obj = match obj_type {
-                    ObjValueType::Str => Object::new_str(Str::default(), *NEVER_EXPIRE),
-                    ObjValueType::List => Object::new_list(List::default(), *NEVER_EXPIRE),
-                    ObjValueType::Set => Object::new_set(Set::default(), *NEVER_EXPIRE),
-                    ObjValueType::Hash => Object::new_hash(Hash::default(), *NEVER_EXPIRE),
-                    ObjValueType::ZSet => Object::new_zset(ZSet::default(), *NEVER_EXPIRE),
-                };
-                f(new_obj.inner_mut().unwrap())?;
-
-                let new_entry = e.insert_entry(new_obj);
-                Ok(Self {
-                    entry: entry::Entry::Occupied(new_entry),
-                    db: self.db,
-                    intention_lock: self.intention_lock,
-                })
-            }
-        }
-    }
+    // /// # Desc:
+    // ///
+    // /// 更新对象的过期时间。如果对象不存在，则返回错误。
+    // #[inline]
+    // #[instrument(level = "debug", skip(self), err)]
+    // pub fn update_expire(&mut self, new_ex: Instant) -> RutinResult<Instant> {
+    //     if let Entry::Occupied(e) = &mut self.inner {
+    //         if e.get_mut().inner().is_some() {
+    //             let obj_inner = e.get_mut().inner_mut().unwrap();
+    //             let old_ex = obj_inner.set_expire_unchecked(new_ex)?;
+    //
+    //             self.db.update_expire_records(e.key(), new_ex, old_ex);
+    //             return Ok(old_ex);
+    //         }
+    //     }
+    //
+    //     Err(RutinError::Null)
+    // }
 
     /// # Desc:
     ///
     /// 如果对象存在且不为空，则添加监听事件
     #[inline]
     #[instrument(level = "debug", skip(self))]
-    pub fn add_lock_event(mut self, target_id: Id) -> (Self, Option<IntentionLock>) {
-        match self.entry {
-            Entry::Occupied(ref mut e) => {
-                let obj = e.get_mut();
-                let noti = obj.add_lock_event(target_id);
+    pub fn add_lock_event(mut self) -> Self {
+        match &mut self.inner {
+            StaticEntryRef::Occupied(e) => {
+                e.get_mut().events.add_lock_event();
 
-                (self, Some(noti))
+                self
             }
-            Entry::Vacant(_) => (self, None),
+            StaticEntryRef::Vacant(_) => self,
         }
     }
 
@@ -315,84 +292,79 @@ impl ObjectEntry<'_> {
     /// 如果创建了一个空对象，但监听事件长时间（或永远）不会被触发，则会浪费
     /// 内存
     #[inline]
-    #[instrument(level = "debug", skip(self))]
-    pub fn add_may_update_event(mut self, sender: Sender<Key>) -> Self {
-        match self.entry {
-            Entry::Occupied(ref mut e) => {
-                let obj = e.get_mut();
-                obj.add_may_update_event(sender);
+    #[instrument(level = "debug", skip(self, event))]
+    pub fn add_read_event(mut self, event: ReadEvent) -> Self {
+        match self.inner {
+            StaticEntryRef::Occupied(ref mut e) => {
+                e.get_mut().events.add_read_event(event);
 
                 self
             }
-            Entry::Vacant(e) => {
-                // 不存在对象，创建一个空对象
-                let mut obj = Object::new_null();
-                obj.add_may_update_event(sender);
-                let new_entry = e.insert_entry(obj);
-
-                Self {
-                    entry: entry::Entry::Occupied(new_entry),
-                    db: self.db,
-                    intention_lock: self.intention_lock,
-                }
-            }
+            // 不存在对象，则什么都不做
+            StaticEntryRef::Vacant(_) => self,
         }
     }
 
-    /// # Desc:
-    ///
-    /// 向对象添加监听事件，如果对象不存在，则创建一个空对象，再添加监听事件。
-    ///
-    /// # Warn:
-    ///
-    /// 如果创建了一个空对象，但监听事件长时间（或永远）不会被触发，则会浪费
-    /// 内存
     #[inline]
-    #[instrument(level = "debug", skip(self))]
-    pub fn add_track_event(mut self, sender: Sender<Resp3>) -> Self {
-        match self.entry {
-            Entry::Occupied(ref mut e) => {
-                let obj = e.get_mut();
-                obj.add_track_event(sender);
+    #[instrument(level = "debug", skip(self, event))]
+    pub fn add_write_event(mut self, event: WriteEvent) -> Self {
+        match self.inner {
+            StaticEntryRef::Occupied(ref mut e) => {
+                e.get_mut().events.add_write_event(event);
 
                 self
             }
-            Entry::Vacant(e) => {
-                // 不存在对象，创建一个空对象
-                let mut obj = Object::new_null();
-                obj.add_track_event(sender);
-                let new_entry = e.insert_entry(obj);
+            // 不存在对象，则什么都不做
+            StaticEntryRef::Vacant(_) => self,
+        }
+    }
 
-                Self {
-                    entry: entry::Entry::Occupied(new_entry),
-                    db: self.db,
-                    intention_lock: self.intention_lock,
-                }
+    #[inline]
+    #[instrument(level = "debug", skip(self, event))]
+    pub fn add_write_event_force(mut self, obj_type: ObjectValueType, event: WriteEvent) -> Self
+    where
+        Key: From<&'b Q>,
+    {
+        match self.inner {
+            StaticEntryRef::Occupied(ref mut e) => {
+                e.get_mut().events.add_write_event(event);
+
+                self
             }
+            // 不存在对象，则创建一个空对象
+            StaticEntryRef::Vacant(e) => match obj_type {
+                ObjectValueType::Str => {
+                    let mut new_entry = e.insert_entry(Str::default().into());
+                    new_entry.get_mut().events.add_write_event(event);
+                    StaticEntryRef::Occupied(new_entry).into()
+                }
+                ObjectValueType::List => {
+                    let mut new_entry = e.insert_entry(List::default().into());
+                    new_entry.get_mut().events.add_write_event(event);
+                    StaticEntryRef::Occupied(new_entry).into()
+                }
+                ObjectValueType::Set => {
+                    let mut new_entry = e.insert_entry(Set::default().into());
+                    new_entry.get_mut().events.add_write_event(event);
+                    StaticEntryRef::Occupied(new_entry).into()
+                }
+                ObjectValueType::Hash => {
+                    let mut new_entry = e.insert_entry(Hash::default().into());
+                    new_entry.get_mut().events.add_write_event(event);
+                    StaticEntryRef::Occupied(new_entry).into()
+                }
+                ObjectValueType::ZSet => {
+                    let mut new_entry = e.insert_entry(ZSet::default().into());
+                    new_entry.get_mut().events.add_write_event(event);
+                    StaticEntryRef::Occupied(new_entry).into()
+                }
+            },
         }
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct IntentionLock(Arc<Notify>);
-
-impl IntentionLock {
-    pub fn new(notify: Arc<Notify>) -> Self {
-        Self(notify)
-    }
-
-    pub fn unlock(&self) {
-        self.0.notify_one();
-    }
-
-    pub async fn lock(&self) {
-        self.0.notified().await;
-    }
-}
-
-impl Drop for IntentionLock {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.notify_one();
+impl<'a, 'b, Q: ?Sized> From<StaticEntryRef<'a, 'b, Q>> for ObjectEntry<'a, 'b, Q> {
+    fn from(entry: StaticEntryRef<'a, 'b, Q>) -> Self {
+        Self { inner: entry }
     }
 }

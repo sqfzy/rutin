@@ -2,12 +2,13 @@ use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     error::{RutinError, RutinResult},
-    frame::Resp3,
+    frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
-    shared::{db::Str, Letter},
-    Int,
+    shared::Letter,
+    Int, Key,
 };
 use bytes::Bytes;
+use itertools::Itertools;
 use tracing::instrument;
 
 /// # Reply:
@@ -17,17 +18,20 @@ use tracing::instrument;
 /// to the same node as the publishing client are included in the count.
 #[derive(Debug)]
 pub struct Publish {
-    topic: Str,
+    topic: Key,
     msg: Bytes,
 }
 
 impl CmdExecutor for Publish {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let db = handler.shared.db();
+
         // 获取正在监听的订阅者
-        let listeners = handler
-            .shared
-            .db()
+        let listeners = db
             .get_channel_all_listener(&self.topic)
             .ok_or(RutinError::from(0))?;
 
@@ -37,17 +41,14 @@ impl CmdExecutor for Publish {
             let res = listener
                 .send_async(Letter::Resp3(Resp3::new_array(vec![
                     Resp3::new_blob_string("message".into()),
-                    Resp3::new_blob_string(self.topic.to_bytes()),
+                    Resp3::new_blob_string(self.topic.clone()),
                     Resp3::new_blob_string(self.msg.clone()),
                 ])))
                 .await;
 
             // 如果发送失败，证明订阅者已经关闭连接，此时应该从Db中移除该订阅者
             if res.is_err() {
-                handler
-                    .shared
-                    .db()
-                    .remove_channel_listener(&self.topic, &listener);
+                db.remove_channel_listener(&self.topic, &listener);
             } else {
                 count += 1;
             }
@@ -68,19 +69,22 @@ impl CmdExecutor for Publish {
 
         Ok(Publish {
             topic: topic.into(),
-            msg: args.next().unwrap(),
+            msg: args.next().unwrap().into(),
         })
     }
 }
 
 #[derive(Debug)]
 pub struct Subscribe {
-    topics: Vec<Str>,
+    topics: Vec<Key>,
 }
 
 impl CmdExecutor for Subscribe {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let Handler {
             shared,
             conn,
@@ -88,13 +92,7 @@ impl CmdExecutor for Subscribe {
             ..
         } = handler;
 
-        let subscribed_channels = if context.subscribed_channels.is_none() {
-            // subscribed_channels为None，表明从未订阅过频道。创建一个Vec存储订阅的频道的名称
-            context.subscribed_channels = Some(Vec::with_capacity(8));
-            context.subscribed_channels.as_mut().unwrap()
-        } else {
-            context.subscribed_channels.as_mut().unwrap()
-        };
+        let subscribed_channels = &mut context.subscribed_channels;
 
         for topic in self.topics {
             if !subscribed_channels.contains(&topic) {
@@ -107,7 +105,7 @@ impl CmdExecutor for Subscribe {
 
             conn.write_frames::<Bytes, String>(&Resp3::new_array(vec![
                 Resp3::new_blob_string("subscribe".into()),
-                Resp3::new_blob_string(topic.to_bytes()),
+                Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await?;
@@ -128,7 +126,7 @@ impl CmdExecutor for Subscribe {
                 }
                 Ok(k.into())
             })
-            .collect::<RutinResult<Vec<Str>>>()?;
+            .try_collect()?;
 
         Ok(Subscribe { topics })
     }
@@ -141,12 +139,15 @@ impl CmdExecutor for Subscribe {
 /// confirmation that the command succeeded.
 #[derive(Debug)]
 pub struct Unsubscribe {
-    topics: Vec<Str>,
+    topics: Vec<Key>,
 }
 
 impl CmdExecutor for Unsubscribe {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let Handler {
             shared,
             conn,
@@ -154,19 +155,7 @@ impl CmdExecutor for Unsubscribe {
             ..
         } = handler;
 
-        let subscribed_channels = if let Some(sub) = &mut context.subscribed_channels {
-            sub
-        } else {
-            for topic in self.topics {
-                conn.write_frames::<Bytes, String>(&Resp3::new_array(vec![
-                    Resp3::new_blob_string("unsubscribe".into()),
-                    Resp3::new_blob_string(topic.to_bytes()),
-                    Resp3::new_integer(0),
-                ]))
-                .await?;
-            }
-            return Ok(None);
-        };
+        let subscribed_channels = &mut context.subscribed_channels;
 
         for topic in self.topics {
             // 订阅了该频道，需要从订阅列表移除，并且移除Db中的监听器
@@ -177,7 +166,7 @@ impl CmdExecutor for Unsubscribe {
 
             conn.write_frames::<Bytes, String>(&Resp3::new_array(vec![
                 Resp3::new_blob_string("unsubscribe".into()),
-                Resp3::new_blob_string(topic.to_bytes()),
+                Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int),
             ]))
             .await?;
@@ -198,7 +187,7 @@ impl CmdExecutor for Unsubscribe {
                 }
                 Ok(k.into())
             })
-            .collect::<RutinResult<Vec<Str>>>()?;
+            .try_collect()?;
 
         Ok(Unsubscribe { topics })
     }
@@ -207,7 +196,7 @@ impl CmdExecutor for Unsubscribe {
 #[cfg(test)]
 mod cmd_pub_sub_tests {
     use super::*;
-    use crate::util::test_init;
+    use crate::{cmd::gen_cmdunparsed_test, util::test_init};
 
     #[tokio::test]
     async fn sub_pub_unsub_test() {
@@ -217,7 +206,7 @@ mod cmd_pub_sub_tests {
 
         // 订阅channel1和channel2
         let subscribe = Subscribe::parse(
-            CmdUnparsed::from(["channel1", "channel2"].as_ref()),
+            gen_cmdunparsed_test(["channel1", "channel2"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -226,22 +215,19 @@ mod cmd_pub_sub_tests {
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(&"channel1".into())
+            .get_channel_all_listener("channel1".as_bytes())
             .is_some());
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(&"channel2".into())
+            .get_channel_all_listener("channel2".as_bytes())
             .is_some());
 
-        assert_eq!(
-            2,
-            handler.context.subscribed_channels.as_ref().unwrap().len()
-        );
+        assert_eq!(2, handler.context.subscribed_channels.len());
 
         // 订阅channel3
         let subscribe = Subscribe::parse(
-            CmdUnparsed::from(["channel3"].as_ref()),
+            gen_cmdunparsed_test(["channel3"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -250,17 +236,14 @@ mod cmd_pub_sub_tests {
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(&"channel3".into())
+            .get_channel_all_listener("channel3".as_bytes())
             .is_some());
 
-        assert_eq!(
-            3,
-            handler.context.subscribed_channels.as_ref().unwrap().len()
-        );
+        assert_eq!(3, handler.context.subscribed_channels.len());
 
         // 向channel1发布消息
         let publish = Publish::parse(
-            CmdUnparsed::from(["channel1", "hello"].as_ref()),
+            gen_cmdunparsed_test(["channel1", "hello"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -273,28 +256,19 @@ mod cmd_pub_sub_tests {
             .unwrap();
         assert_eq!(res, 1);
 
-        let msg = handler
-            .context
-            .inbox
-            .recv_async()
-            .await
-            .as_resp3_unchecked()
-            .try_array()
-            .unwrap()
-            .to_vec();
+        let msg = handler.context.inbox.recv_async().await;
         assert_eq!(
-            msg.first().unwrap(),
-            &Resp3::new_blob_string("message".into())
+            msg.as_resp3_unchecked().try_array().unwrap(),
+            &[
+                Resp3::new_blob_string("message".into()),
+                Resp3::new_blob_string("channel1".into()),
+                Resp3::new_blob_string("hello".into())
+            ]
         );
-        assert_eq!(
-            msg.get(1).unwrap(),
-            &Resp3::new_blob_string("channel1".into())
-        );
-        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob_string("hello".into()));
 
         // 向channel2发布消息
         let publish = Publish::parse(
-            CmdUnparsed::from(["channel2", "world"].as_ref()),
+            gen_cmdunparsed_test(["channel2", "world"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -307,28 +281,19 @@ mod cmd_pub_sub_tests {
             .unwrap();
         assert_eq!(res, 1);
 
-        let msg = handler
-            .context
-            .inbox
-            .recv_async()
-            .await
-            .as_resp3_unchecked()
-            .try_array()
-            .unwrap()
-            .to_vec();
+        let msg = handler.context.inbox.recv_async().await;
         assert_eq!(
-            msg.first().unwrap(),
-            &Resp3::new_blob_string("message".into())
+            msg.as_resp3_unchecked().try_array().unwrap(),
+            &[
+                Resp3::new_blob_string("message".into()),
+                Resp3::new_blob_string("channel2".into()),
+                Resp3::new_blob_string("world".into())
+            ]
         );
-        assert_eq!(
-            msg.get(1).unwrap(),
-            &Resp3::new_blob_string("channel2".into())
-        );
-        assert_eq!(msg.get(2).unwrap(), &Resp3::new_blob_string("world".into()));
 
         // 尝试向未订阅的频道发布消息
         let publish = Publish::parse(
-            CmdUnparsed::from(["channel_not_exist", "hello"].as_ref()),
+            gen_cmdunparsed_test(["channel_not_exist", "hello"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -337,7 +302,7 @@ mod cmd_pub_sub_tests {
 
         // 取消订阅channel1
         let unsubscribe = Unsubscribe::parse(
-            CmdUnparsed::from(["channel1"].as_ref()),
+            gen_cmdunparsed_test(["channel1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -346,12 +311,9 @@ mod cmd_pub_sub_tests {
         assert!(handler
             .shared
             .db()
-            .get_channel_all_listener(&"channel1".into())
+            .get_channel_all_listener("channel1".as_bytes())
             .is_none());
 
-        assert_eq!(
-            2,
-            handler.context.subscribed_channels.as_ref().unwrap().len()
-        );
+        assert_eq!(2, handler.context.subscribed_channels.len());
     }
 }

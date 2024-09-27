@@ -1,16 +1,15 @@
 pub mod commands;
 
-use std::{collections::VecDeque, intrinsics::unlikely, num::NonZero};
-
 use crate::{
     conf::AccessControl,
     error::{RutinError, RutinResult},
-    frame::Resp3,
-    server::{AsyncStream, Handler},
-    util,
+    frame::{CheapResp3, Resp3, StaticResp3, ARRAY_PREFIX, CRLF},
+    server::{using_local_buf, AsyncStream, Handler},
+    util::{StaticBytes, Uppercase},
 };
-use bytes::Bytes;
+use bytes::BufMut;
 use commands::*;
+use std::{collections::VecDeque, intrinsics::unlikely, iter::Iterator, num::NonZero};
 use tracing::instrument;
 
 pub trait CommandFlag {
@@ -23,9 +22,9 @@ pub trait CommandFlag {
 pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
     #[inline]
     async fn apply(
-        mut args: CmdUnparsed,
+        args: CmdUnparsed<'_>,
         handler: &mut Handler<impl AsyncStream>,
-    ) -> RutinResult<Option<Resp3>> {
+    ) -> RutinResult<Option<CheapResp3>> {
         // 检查是否有权限执行该命令
         if unlikely(handler.context.ac.is_forbidden_cmd(Self::CMD_FLAG)) {
             return Err(RutinError::NoPermission);
@@ -34,15 +33,20 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
         let post_office = handler.shared.post_office();
         let wcmd =
             if cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG) && post_office.need_send_wcmd() {
-                // 加上命令名
-                // FIX: 不支持带子命令的命令
-                args.inner
-                    .push_front(Resp3::new_blob_string(Self::NAME.into()));
-                let resp3 = Resp3::from(args);
-                let wcmd = resp3.encode_local_buf();
+                let wcmd = using_local_buf(|buf| {
+                    buf.put_u8(ARRAY_PREFIX);
+                    buf.put_slice(itoa::Buffer::new().format(args.len() + 1).as_bytes());
+                    buf.put_slice(CRLF);
 
-                args = resp3.try_into()?;
-                args.inner.pop_front(); // 去掉命令名
+                    let cmd_name_frame: Resp3<&[u8], String> =
+                        Resp3::new_blob_string(Self::NAME.as_bytes());
+                    cmd_name_frame.encode_buf(buf);
+
+                    for frame in args.inner.iter() {
+                        frame.encode_buf(buf);
+                    }
+                });
+
                 Some(wcmd)
             } else {
                 None
@@ -80,7 +84,10 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
         Ok(res)
     }
 
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>>;
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>>;
 
     // 需要检查是否有权限操作对应的键
     fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self>;
@@ -88,18 +95,15 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
 
 #[inline]
 pub async fn dispatch(
-    cmd_frame: Resp3,
+    cmd_frame: &mut StaticResp3,
     handler: &mut Handler<impl AsyncStream>,
-) -> RutinResult<Option<Resp3>> {
+) -> RutinResult<Option<CheapResp3>> {
     let mut cmd: CmdUnparsed = cmd_frame.try_into()?;
 
-    let mut buf = [0; 32];
-    let cmd_name = cmd.next().ok_or_else(|| RutinError::Syntax)?;
-
-    debug_assert!(cmd_name.len() <= buf.len());
-    let len1 = util::uppercase(&cmd_name, &mut buf).unwrap();
-
-    let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1]) {
+    let cmd_name = cmd
+        .next_uppercase::<16>()
+        .ok_or_else(|| RutinError::Syntax)?;
+    let cmd_name = if let Ok(s) = std::str::from_utf8(cmd_name.as_ref()) {
         s
     } else {
         return Err(RutinError::UnknownCmd);
@@ -124,86 +128,82 @@ pub async fn dispatch(
         Auth::NAME => Auth::apply(cmd, handler).await,
         Echo::NAME => Echo::apply(cmd, handler).await,
         Ping::NAME => Ping::apply(cmd, handler).await,
-        /************/
-        /* keyspace */
-        /************/
-        Del::NAME => Del::apply(cmd, handler).await,
-        Dump::NAME => Dump::apply(cmd, handler).await,
-        Exists::NAME => Exists::apply(cmd, handler).await,
-        Expire::NAME => Expire::apply(cmd, handler).await,
-        ExpireAt::NAME => ExpireAt::apply(cmd, handler).await,
-        ExpireTime::NAME => ExpireTime::apply(cmd, handler).await,
-        Keys::NAME => Keys::apply(cmd, handler).await,
-        NBKeys::NAME => NBKeys::apply(cmd, handler).await,
-        Persist::NAME => Persist::apply(cmd, handler).await,
-        Pttl::NAME => Pttl::apply(cmd, handler).await,
-        Ttl::NAME => Ttl::apply(cmd, handler).await,
-        Type::NAME => Type::apply(cmd, handler).await,
+        // /************/
+        // /* keyspace */
+        // /************/
+        // Del::NAME => Del::apply(cmd, handler).await,
+        // Dump::NAME => Dump::apply(cmd, handler).await,
+        // Exists::NAME => Exists::apply(cmd, handler).await,
+        // Expire::NAME => Expire::apply(cmd, handler).await,
+        // ExpireAt::NAME => ExpireAt::apply(cmd, handler).await,
+        // ExpireTime::NAME => ExpireTime::apply(cmd, handler).await,
+        // Keys::NAME => Keys::apply(cmd, handler).await,
+        // NBKeys::NAME => NBKeys::apply(cmd, handler).await,
+        // Persist::NAME => Persist::apply(cmd, handler).await,
+        // Pttl::NAME => Pttl::apply(cmd, handler).await,
+        // Ttl::NAME => Ttl::apply(cmd, handler).await,
+        // Type::NAME => Type::apply(cmd, handler).await,
         /**********/
         /* string */
         /**********/
-        Append::NAME => Append::apply(cmd, handler).await,
-        Decr::NAME => Decr::apply(cmd, handler).await,
-        DecrBy::NAME => DecrBy::apply(cmd, handler).await,
+        // Append::NAME => Append::apply(cmd, handler).await,
+        // Decr::NAME => Decr::apply(cmd, handler).await,
+        // DecrBy::NAME => DecrBy::apply(cmd, handler).await,
         Get::NAME => Get::apply(cmd, handler).await,
-        GetRange::NAME => GetRange::apply(cmd, handler).await,
-        GetSet::NAME => GetSet::apply(cmd, handler).await,
-        Incr::NAME => Incr::apply(cmd, handler).await,
-        IncrBy::NAME => IncrBy::apply(cmd, handler).await,
-        MGet::NAME => MGet::apply(cmd, handler).await,
-        MSet::NAME => MSet::apply(cmd, handler).await,
-        MSetNx::NAME => MSetNx::apply(cmd, handler).await,
+        // GetRange::NAME => GetRange::apply(cmd, handler).await,
+        // GetSet::NAME => GetSet::apply(cmd, handler).await,
+        // Incr::NAME => Incr::apply(cmd, handler).await,
+        // IncrBy::NAME => IncrBy::apply(cmd, handler).await,
+        // MGet::NAME => MGet::apply(cmd, handler).await,
+        // MSet::NAME => MSet::apply(cmd, handler).await,
+        // MSetNx::NAME => MSetNx::apply(cmd, handler).await,
         Set::NAME => Set::apply(cmd, handler).await,
-        SetEx::NAME => SetEx::apply(cmd, handler).await,
-        SetNx::NAME => SetNx::apply(cmd, handler).await,
-        StrLen::NAME => StrLen::apply(cmd, handler).await,
-        /********/
-        /* list */
-        /********/
-        BLMove::NAME => BLMove::apply(cmd, handler).await,
-        BLPop::NAME => BLPop::apply(cmd, handler).await,
-        LLen::NAME => LLen::apply(cmd, handler).await,
-        LPop::NAME => LPop::apply(cmd, handler).await,
-        LPos::NAME => LPos::apply(cmd, handler).await,
-        LPush::NAME => LPush::apply(cmd, handler).await,
-        NBLPop::NAME => NBLPop::apply(cmd, handler).await,
-        /********/
-        /* hash */
-        /********/
-        HDel::NAME => HDel::apply(cmd, handler).await,
-        HExists::NAME => HExists::apply(cmd, handler).await,
-        HGet::NAME => HGet::apply(cmd, handler).await,
-        HSet::NAME => HSet::apply(cmd, handler).await,
-        /**********/
-        /* pubsub */
-        /**********/
-        Publish::NAME => Publish::apply(cmd, handler).await,
-        Subscribe::NAME => Subscribe::apply(cmd, handler).await,
-        Unsubscribe::NAME => Unsubscribe::apply(cmd, handler).await,
-        /*************/
-        /* scripting */
-        /*************/
-        Eval::NAME => Eval::apply(cmd, handler).await,
-        EvalName::NAME => EvalName::apply(cmd, handler).await,
+        // SetEx::NAME => SetEx::apply(cmd, handler).await,
+        // SetNx::NAME => SetNx::apply(cmd, handler).await,
+        // StrLen::NAME => StrLen::apply(cmd, handler).await,
+        // /********/
+        // /* list */
+        // /********/
+        // BLMove::NAME => BLMove::apply(cmd, handler).await,
+        // BLPop::NAME => BLPop::apply(cmd, handler).await,
+        // LLen::NAME => LLen::apply(cmd, handler).await,
+        // LPop::NAME => LPop::apply(cmd, handler).await,
+        // LPos::NAME => LPos::apply(cmd, handler).await,
+        // LPush::NAME => LPush::apply(cmd, handler).await,
+        // NBLPop::NAME => NBLPop::apply(cmd, handler).await,
+        // /********/
+        // /* hash */
+        // /********/
+        // HDel::NAME => HDel::apply(cmd, handler).await,
+        // HExists::NAME => HExists::apply(cmd, handler).await,
+        // HGet::NAME => HGet::apply(cmd, handler).await,
+        // HSet::NAME => HSet::apply(cmd, handler).await,
+        // /**********/
+        // /* pubsub */
+        // /**********/
+        // Publish::NAME => Publish::apply(cmd, handler).await,
+        // Subscribe::NAME => Subscribe::apply(cmd, handler).await,
+        // Unsubscribe::NAME => Unsubscribe::apply(cmd, handler).await,
+        // /*************/
+        // /* scripting */
+        // /*************/
+        // Eval::NAME => Eval::apply(cmd, handler).await,
+        // EvalName::NAME => EvalName::apply(cmd, handler).await,
 
         // 命令中包含子命令
         _ => {
-            let sub_cmd_name = cmd.next().ok_or(RutinError::Syntax)?;
-
-            debug_assert!(sub_cmd_name.len() <= buf.len() - len1);
-            let len2 = util::uppercase(&sub_cmd_name, &mut buf[len1..]).unwrap();
-
-            let cmd_name = if let Ok(s) = std::str::from_utf8(&buf[..len1 + len2]) {
+            let sub_cmd_name = cmd.next_uppercase::<16>().ok_or(RutinError::Syntax)?;
+            let sub_cmd_name = if let Ok(s) = std::str::from_utf8(sub_cmd_name.as_ref()) {
                 s
             } else {
                 return Err(RutinError::UnknownCmd);
             };
 
-            match cmd_name {
+            match sub_cmd_name {
                 ClientTracking::NAME => ClientTracking::apply(cmd, handler).await,
-                ScriptExists::NAME => ScriptExists::apply(cmd, handler).await,
-                ScriptFlush::NAME => ScriptFlush::apply(cmd, handler).await,
-                ScriptRegister::NAME => ScriptRegister::apply(cmd, handler).await,
+                // ScriptExists::NAME => ScriptExists::apply(cmd, handler).await,
+                // ScriptFlush::NAME => ScriptFlush::apply(cmd, handler).await,
+                // ScriptRegister::NAME => ScriptRegister::apply(cmd, handler).await,
                 _ => Err(RutinError::UnknownCmd),
             }
         }
@@ -218,12 +218,12 @@ pub async fn dispatch(
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct CmdUnparsed {
-    inner: VecDeque<Resp3>,
+#[derive(Debug)]
+pub struct CmdUnparsed<'a> {
+    inner: &'a mut VecDeque<StaticResp3>,
 }
 
-impl CmdUnparsed {
+impl CmdUnparsed<'_> {
     #[inline]
     pub fn len(&self) -> usize {
         self.inner.len()
@@ -234,34 +234,31 @@ impl CmdUnparsed {
         self.inner.is_empty()
     }
 
-    pub fn get_uppercase<'a>(&mut self, index: usize, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-        match self.inner.get(index) {
-            Some(Resp3::BlobString { inner: b, .. }) => {
-                debug_assert!(b.len() <= buf.len());
+    // pub fn get_uppercase<'a>(&mut self, index: usize, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    //     match self.inner.get(index) {
+    //         Some(Resp3::BlobString { inner: b, .. }) => {
+    //             debug_assert!(b.len() <= buf.len());
+    //
+    //             Some(util::get_uppercase(b, buf).unwrap())
+    //         }
+    //         _ => None,
+    //     }
+    // }
 
-                Some(util::get_uppercase(b, buf).unwrap())
-            }
-            _ => None,
-        }
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Bytes> {
-        self.inner.iter().filter_map(|r| match r {
-            Resp3::BlobString { inner, .. } => Some(inner),
-            _ => None,
-        })
+    pub fn next_uppercase<const L: usize>(&mut self) -> Option<Uppercase<L>> {
+        self.next().map(|b| b.into_uppercase())
     }
 }
 
-impl Iterator for CmdUnparsed {
-    type Item = Bytes;
+impl Iterator for CmdUnparsed<'_> {
+    type Item = StaticBytes;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.pop_front().and_then(|r| match r {
-            Resp3::BlobString { inner, .. } => Some(inner),
+        match self.inner.pop_front() {
+            Some(Resp3::BlobString { inner, .. }) => Some(inner),
             _ => None,
-        })
+        }
     }
 
     #[inline]
@@ -287,12 +284,15 @@ impl Iterator for CmdUnparsed {
     }
 }
 
-impl DoubleEndedIterator for CmdUnparsed {
+impl DoubleEndedIterator for CmdUnparsed<'_> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner.pop_back().and_then(|r| match r {
-            Resp3::BlobString { inner, .. } => Some(inner),
-            _ => None,
+        self.inner.pop_back().map(|r| {
+            if let Resp3::BlobString { inner, .. } = r {
+                inner
+            } else {
+                unreachable!()
+            }
         })
     }
 
@@ -309,36 +309,41 @@ impl DoubleEndedIterator for CmdUnparsed {
     }
 }
 
-impl ExactSizeIterator for CmdUnparsed {}
+impl ExactSizeIterator for CmdUnparsed<'_> {}
 
-impl TryFrom<Resp3> for CmdUnparsed {
+impl<'a> TryFrom<&'a mut StaticResp3> for CmdUnparsed<'a> {
     type Error = RutinError;
 
     #[inline]
-    fn try_from(value: Resp3) -> Result<Self, Self::Error> {
+    fn try_from(value: &'a mut StaticResp3) -> Result<Self, Self::Error> {
         match value {
-            Resp3::Array { inner, .. } => Ok(Self {
-                inner: inner.into(),
-            }),
+            Resp3::Array { inner, .. } => Ok(Self { inner }),
             _ => Err(RutinError::Syntax),
         }
     }
 }
 
-impl From<CmdUnparsed> for Resp3 {
-    #[inline]
-    fn from(val: CmdUnparsed) -> Self {
-        Resp3::new_array(val.inner)
+impl Default for CmdUnparsed<'_> {
+    fn default() -> Self {
+        CmdUnparsed {
+            inner: Box::leak(Box::new(VecDeque::new())),
+        }
     }
 }
 
-impl From<&[&str]> for CmdUnparsed {
-    fn from(val: &[&str]) -> Self {
-        Self {
-            inner: val
-                .iter()
-                .map(|s| Resp3::new_blob_string(Bytes::copy_from_slice(s.as_bytes())))
-                .collect(),
-        }
+// impl From<CmdUnparsed<'_>> for RefMutResp3<'static> {
+//     #[inline]
+//     fn from(val: CmdUnparsed) -> Self {
+//         Resp3::new_array(val.inner)
+//     }
+// }
+
+pub fn gen_cmdunparsed_test(cmd: &[&str]) -> CmdUnparsed<'static> {
+    let mut inner = VecDeque::with_capacity(cmd.len());
+    for c in cmd {
+        inner.push_back(Resp3::new_blob_string(c.as_bytes().to_vec().leak().into()));
+    }
+    CmdUnparsed {
+        inner: Box::leak(Box::new(inner)),
     }
 }

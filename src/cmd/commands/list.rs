@@ -4,16 +4,19 @@ use crate::{
     conf::AccessControl,
     error::{RutinError, RutinResult},
     frame::Resp3,
-    server::{AsyncStream, Handler},
-    shared::{db::ObjValueType, Letter, Shared},
-    util::atoi,
-    Id, Int, Key,
+    server::{AsyncStream, Handler, NEVER_EXPIRE},
+    shared::db::{
+        Object, ObjectValueType,
+        WriteEvent::{self},
+    },
+    util::{atoi, KeyWrapper},
+    Int,
 };
-use bytes::Bytes;
-use flume::{Receiver, Sender};
+use futures::FutureExt;
+use itertools::Itertools;
 use std::time::Duration;
-use tokio::time::Instant;
-use tracing::{instrument, trace};
+use tokio::time::{sleep_until, Instant};
+use tracing::instrument;
 
 /// # Reply:
 ///
@@ -21,8 +24,8 @@ use tracing::{instrument, trace};
 /// **Null reply:** the operation timed-out
 #[derive(Debug)]
 pub struct BLMove {
-    source: Key,
-    destination: Key,
+    source: StaticBytes,
+    destination: StaticBytes,
     wherefrom: Where,
     whereto: Where,
     timeout: u64,
@@ -30,12 +33,21 @@ pub struct BLMove {
 
 impl CmdExecutor for BLMove {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        let db = handler.shared.db();
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let Handler {
+            shared, context, ..
+        } = handler;
+        let db = shared.db();
 
+        let mut source_entry = db.entry(&self.source).await?;
         let mut elem = None;
-        let update_res = db
-            .update_object(self.source, |obj| {
+
+        // 1. 尝试弹出元素
+        if source_entry.is_occupied() {
+            source_entry = source_entry.update1(|obj| {
                 let list = obj.on_list_mut()?;
                 elem = match self.wherefrom {
                     Where::Left => list.pop_front(),
@@ -43,41 +55,29 @@ impl CmdExecutor for BLMove {
                 };
 
                 Ok(())
-            })
-            .await;
-
-        // 忽略空键的错误
-        if !matches!(update_res, Err(RutinError::Null)) {
-            update_res?;
+            })?;
         }
 
+        // 2. 如果存在弹出元素，推入元素后直接返回
         if let Some(elem) = elem {
-            // 存在可弹出元素
-            let mut res = None;
+            let res = Resp3::new_blob_string(elem.to_bytes());
 
-            db.update_or_create_object(self.destination.clone(), ObjValueType::List, |obj| {
+            db.update_object_force(&self.destination, ObjectValueType::List, |obj| {
                 let list = obj.on_list_mut()?;
                 match self.whereto {
-                    Where::Left => list.push_front(elem.clone()),
-                    Where::Right => list.push_back(elem.clone()),
+                    Where::Left => list.push_front(elem),
+                    Where::Right => list.push_back(elem),
                 }
 
-                res = Some(Resp3::new_blob_string(elem.to_bytes()));
                 Ok(())
             })
             .await?;
+            // 成功推入元素
 
-            if let Some(res) = res {
-                // 如果确实拿到了弹出的元素，则返回响应
-                return Ok(Some(res));
-            }
+            return Ok(Some(res));
         }
-        // 不存在可弹出元素
 
-        let (key_tx, key_rx) = flume::bounded(1);
-        // 监听该键的Update事件
-        db.add_may_update_event(self.destination, key_tx.clone())
-            .await?;
+        // 3. 如果不存在弹出元素，加入监听事件
 
         let deadline = if self.timeout == 0 {
             None
@@ -85,9 +85,74 @@ impl CmdExecutor for BLMove {
             Some(Instant::now() + Duration::from_secs(self.timeout))
         };
 
-        let res = pop_timeout_at(handler.shared, key_tx, key_rx, deadline).await?;
+        let (tx, rx) = flume::bounded(1);
 
-        Ok(Some(res))
+        // source_entry的回调事件，如果有timeout则超时后会移除事件，如果客户端断开连接也会移除事件
+        let callback = {
+            let mut shutdown = context.shutdown.listen();
+
+            // TODO: 将该类型闭包(需要检测连接是否已关闭)提取成函数
+            move |obj: &mut Object| -> RutinResult<()> {
+                // 客户端已经断开连接则事件结束并中断超时任务
+                if (&mut shutdown).now_or_never().is_some() {
+                    return Ok(());
+                }
+
+                let list = obj.on_list_mut()?;
+                let elem = match self.wherefrom {
+                    Where::Left => list.pop_front(),
+                    Where::Right => list.pop_back(),
+                };
+
+                if let Some(elem) = elem {
+                    // 发送成功则事件结束，发送失败则证明已经超时，事件也结束
+                    tx.send(elem).ok();
+                    Ok(())
+                } else {
+                    Err(RutinError::Null)
+                }
+            }
+        };
+
+        source_entry.add_write_event_force(
+            ObjectValueType::List,
+            WriteEvent::FnMut {
+                deadline,
+                callback: Box::new(callback),
+            },
+        );
+
+        // 4. 处理对客户端的响应
+
+        let dst = KeyWrapper::from(self.destination.as_ref());
+        let shared = *shared;
+
+        tokio::select! {
+            // 超时，返回Null
+            _ = sleep_until(deadline.unwrap_or(*NEVER_EXPIRE)), if deadline.is_some() => {
+                Ok(Some(Resp3::Null))
+            },
+            elem = rx.recv_async() => {
+                let elem = if let Ok(e) = elem {
+                    e
+                } else {
+                    return Ok(Some(Resp3::Null));
+                };
+
+                shared.db().update_object_force(&dst, ObjectValueType::List, |obj| {
+                    let list = obj.on_list_mut()?;
+                    match self.whereto {
+                        Where::Left => list.push_front(elem.clone()),
+                        Where::Right => list.push_back(elem.clone()),
+                    }
+
+                    Ok(())
+                })
+                .await?;
+
+                Ok(Some(Resp3::new_blob_string(elem.to_bytes())))
+            }
+        }
     }
 
     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
@@ -106,48 +171,59 @@ impl CmdExecutor for BLMove {
         }
 
         Ok(BLMove {
-            source: source.into(),
-            destination: destination.into(),
-            wherefrom: Where::try_from(args.next_back().unwrap().as_ref())?,
-            whereto: Where::try_from(args.next_back().unwrap().as_ref())?,
-            timeout: atoi::<u64>(args.next_back().unwrap().as_ref())?,
+            source,
+            destination,
+            wherefrom: Where::try_from(args.next_back().unwrap().into_uppercase::<8>().as_ref())?,
+            whereto: Where::try_from(args.next_back().unwrap().into_uppercase::<8>().as_ref())?,
+            timeout: atoi::<u64>(&args.next_back().unwrap())?,
         })
     }
 }
 
+/// 从多个列表中的首个非空列表弹出一个元素
 /// # Reply:
 ///
 /// **Null reply:** no element could be popped and the timeout expired
 /// **Array reply:** the key from which the element was popped and the value of the popped element.
 #[derive(Debug)]
 pub struct BLPop {
-    keys: Vec<Key>,
+    keys: Vec<StaticBytes>,
     timeout: u64,
 }
 
 impl CmdExecutor for BLPop {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        let db = handler.shared.db();
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let Handler {
+            shared, context, ..
+        } = handler;
+        let db = shared.db();
 
-        match first_round(&self.keys, handler.shared).await {
-            // 弹出成功，直接返回
-            Ok(Some(frame)) => {
-                return Ok(Some(frame));
+        for key in &self.keys {
+            let source_entry = db.entry(key).await?;
+            let mut elem = None;
+
+            if source_entry.is_occupied() {
+                source_entry.update1(|obj| {
+                    let list = obj.on_list_mut()?;
+                    elem = list.pop_front();
+
+                    Ok(())
+                })?;
             }
-            // 弹出失败，继续后续操作
-            Ok(None) => {}
-            // 发生错误，直接返回
-            Err(e) => {
-                return Err(e);
+
+            if let Some(elem) = elem {
+                return Ok(Some(Resp3::new_array(vec![
+                    Resp3::new_blob_string(key.into()),
+                    Resp3::new_blob_string(elem.to_bytes()),
+                ])));
             }
         }
 
-        // 加入监听事件
-        let (key_tx, key_rx) = flume::bounded(1);
-        for key in self.keys {
-            db.add_may_update_event(key.clone(), key_tx.clone()).await?;
-        }
+        // 所有列表都没有元素，加入监听事件
 
         let deadline = if self.timeout == 0 {
             None
@@ -155,9 +231,61 @@ impl CmdExecutor for BLPop {
             Some(Instant::now() + Duration::from_secs(self.timeout))
         };
 
-        let res = pop_timeout_at(handler.shared, key_tx, key_rx, deadline).await?;
+        let keys = self
+            .keys
+            .into_iter()
+            .map(|k| KeyWrapper::from(k.as_ref()))
+            .collect_vec();
 
-        Ok(Some(res))
+        let (tx, rx) = flume::bounded(1);
+
+        // 添加多个键的监听事件，接收者只会接收到第一个非空列表的元素
+        for key in keys {
+            let callback = {
+                let tx = tx.clone();
+                let mut shutdown = context.shutdown.listen();
+                let key = key.clone();
+
+                move |obj: &mut Object| -> RutinResult<()> {
+                    if (&mut shutdown).now_or_never().is_some() {
+                        return Ok(());
+                    }
+
+                    let list = obj.on_list_mut()?;
+                    let elem = list.pop_front();
+
+                    if let Some(elem) = elem {
+                        tx.send(CheapResp3::new_array(vec![
+                            Resp3::new_blob_string(Bytes::from(key.clone())),
+                            Resp3::new_blob_string(elem.to_bytes()),
+                        ]))
+                        .ok();
+                        Ok(())
+                    } else {
+                        Err(RutinError::Null)
+                    }
+                }
+            };
+
+            db.entry(&key).await?.add_write_event_force(
+                ObjectValueType::List,
+                WriteEvent::FnMut {
+                    deadline,
+                    callback: Box::new(callback),
+                },
+            );
+        }
+
+        tokio::select! {
+            // 超时，返回Null
+            _ = sleep_until(deadline.unwrap_or(*NEVER_EXPIRE)), if deadline.is_some() => {
+                Ok(Some(Resp3::Null))
+            },
+            // 接受并处理首个消息
+            msg = rx.recv_async() => {
+                Ok(Some(msg.unwrap_or_default()))
+            }
+        }
     }
 
     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
@@ -172,9 +300,9 @@ impl CmdExecutor for BLPop {
                 if ac.deny_reading_or_writing_key(&k, Self::CATS_FLAG) {
                     return Err(RutinError::NoPermission);
                 }
-                Ok(k.into())
+                Ok(k)
             })
-            .collect::<RutinResult<Vec<Key>>>()?;
+            .try_collect()?;
 
         Ok(Self { keys, timeout })
     }
@@ -187,8 +315,8 @@ impl CmdExecutor for BLPop {
 /// **Array reply:** If the COUNT option is given, an array of integers representing the matching elements (or an empty array if there are no matches).
 #[derive(Debug)]
 pub struct LPos {
-    key: Key,
-    element: Bytes,
+    key: StaticBytes,
+    element: StaticBytes,
     rank: Int,
     count: usize,
     max_len: Option<usize>,
@@ -196,7 +324,10 @@ pub struct LPos {
 
 impl CmdExecutor for LPos {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         // 找到一个匹配元素，则rank-1(或+1)，当rank为0时，则表明开始收入
         // 一共要收入count个，但最长只能找max_len个元素
         // 如果count == 1，返回Integer
@@ -218,7 +349,7 @@ impl CmdExecutor for LPos {
                 let list = obj.on_list()?;
                 if rank >= 0 {
                     for i in 0..self.max_len.unwrap_or(list.len()) {
-                        if list[i].to_bytes() != self.element {
+                        if self.element != list[i].to_bytes() {
                             continue;
                         }
                         // 只有当rank减为0时，才开始收入元素
@@ -237,7 +368,7 @@ impl CmdExecutor for LPos {
                     let lower_bound = list_len.saturating_sub(self.max_len.unwrap_or(list_len));
                     let upper_bound = list_len - 1;
                     for i in (lower_bound..=upper_bound).rev() {
-                        if list[i].to_bytes() != self.element {
+                        if self.element != list[i].to_bytes() {
                             continue;
                         }
                         // 只有当rank增为0时，才开始收入元素
@@ -291,10 +422,7 @@ impl CmdExecutor for LPos {
                 return Err("ERR invalid option is given".into());
             }
 
-            let mut buf = [0; 6];
-            buf[..len].copy_from_slice(&opt);
-            buf[..len].make_ascii_uppercase();
-            match &buf[..len] {
+            match opt.into_uppercase::<8>().as_ref() {
                 b"RANK" => rank = atoi::<Int>(args.next().unwrap().as_ref())?,
                 b"COUNT" => count = atoi::<usize>(args.next().unwrap().as_ref())?,
                 b"MAXLEN" => max_len = Some(atoi::<usize>(args.next().unwrap().as_ref())?),
@@ -305,7 +433,7 @@ impl CmdExecutor for LPos {
         let count = if count == 0 { usize::MAX } else { count };
 
         Ok(Self {
-            key: key.into(),
+            key,
             element,
             rank,
             count,
@@ -317,12 +445,15 @@ impl CmdExecutor for LPos {
 /// **Integer reply:** the length of the list.
 #[derive(Debug)]
 pub struct LLen {
-    key: Key,
+    key: StaticBytes,
 }
 
 impl CmdExecutor for LLen {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut res = None;
         handler
             .shared
@@ -349,7 +480,7 @@ impl CmdExecutor for LLen {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(LLen { key: key.into() })
+        Ok(LLen { key })
     }
 }
 
@@ -360,18 +491,21 @@ impl CmdExecutor for LLen {
 /// **Array reply:** when called with the count argument, a list of popped elements.
 #[derive(Debug)]
 pub struct LPop {
-    key: Key,
+    key: StaticBytes,
     count: u32,
 }
 
 impl CmdExecutor for LPop {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut res = None;
         handler
             .shared
             .db()
-            .update_object(self.key, |obj| {
+            .update_object(&self.key, |obj| {
                 let list = obj.on_list_mut()?;
 
                 if self.count == 1 {
@@ -420,10 +554,7 @@ impl CmdExecutor for LPop {
             1
         };
 
-        Ok(Self {
-            key: key.into(),
-            count,
-        })
+        Ok(Self { key, count })
     }
 }
 
@@ -432,18 +563,21 @@ impl CmdExecutor for LPop {
 /// **Integer reply:** the length of the list after the push operation.
 #[derive(Debug)]
 pub struct LPush {
-    key: Key,
-    values: Vec<Bytes>,
+    key: StaticBytes,
+    values: Vec<StaticBytes>,
 }
 
 impl CmdExecutor for LPush {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut len = 0;
         handler
             .shared
             .db()
-            .update_or_create_object(self.key, ObjValueType::List, |obj| {
+            .update_object_force(&self.key, ObjectValueType::List, |obj| {
                 let list = obj.on_list_mut()?;
 
                 for v in self.values {
@@ -469,106 +603,109 @@ impl CmdExecutor for LPush {
         }
 
         Ok(Self {
-            key: key.into(),
+            key,
             values: args.collect(),
         })
     }
 }
-
-/// # Reply:
-///
-/// **Null reply:** no element could be popped and the timeout expired
-/// **Array reply:** the key from which the element was popped and the value of the popped element.
-// TODO: 也许应该返回Resp3::Push?
-#[derive(Debug)]
-pub struct NBLPop {
-    keys: Vec<Key>,
-    timeout: u64,
-    redirect: Id, // 0表示不重定向
-}
-
-impl CmdExecutor for NBLPop {
-    #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        let shared = handler.shared;
-
-        match first_round(&self.keys, shared).await {
-            // 弹出成功，直接返回
-            Ok(Some(frame)) => {
-                return Ok(Some(frame));
-            }
-            // 弹出失败，继续后续操作
-            Ok(None) => {}
-            // 发生错误，直接返回
-            Err(e) => {
-                return Err(e);
-            }
-        }
-
-        // 加入监听事件
-        let (key_tx, key_rx) = flume::bounded(1);
-        for key in self.keys {
-            shared
-                .db()
-                .add_may_update_event(key, key_tx.clone())
-                .await?;
-        }
-
-        let deadline = if self.timeout == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(self.timeout))
-        };
-
-        let outbox = if self.redirect != 0 {
-            handler
-                .shared
-                .post_office()
-                .get_outbox(self.redirect)
-                .ok_or(RutinError::from("ERR The client ID does not exist"))?
-                .clone()
-        } else {
-            handler.context.outbox.clone()
-        };
-
-        tokio::spawn(async move {
-            let res = match pop_timeout_at(shared, key_tx, key_rx, deadline).await {
-                Ok(res) => res,
-                Err(e) => e.try_into().unwrap(),
-            };
-            let _ = outbox.send(Letter::Resp3(res));
-        });
-
-        // 开启后台任务后，向客户端返回的响应不由该函数负责，而是由后台任务负责
-        Ok(None)
-    }
-
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
-        if args.len() < 3 {
-            return Err(RutinError::WrongArgNum);
-        }
-
-        let redirect = atoi::<Id>(&args.next_back().unwrap())?;
-        let timeout = atoi::<u64>(&args.next_back().unwrap())?;
-
-        let keys = args
-            .map(|k| {
-                if ac.deny_reading_or_writing_key(&k, Self::CATS_FLAG) {
-                    return Err(RutinError::NoPermission);
-                }
-                Ok(k.into())
-            })
-            .collect::<RutinResult<Vec<Key>>>()?;
-
-        Ok(Self {
-            keys,
-            timeout,
-            redirect,
-        })
-    }
-}
-
-#[derive(Debug)]
+//
+// /// # Reply:
+// ///
+// /// **Null reply:** no element could be popped and the timeout expired
+// /// **Array reply:** the key from which the element was popped and the value of the popped element.
+// // TODO: 也许应该返回Resp3::Push?
+// #[derive(Debug)]
+// pub struct NBLPop {
+//     keys: Vec<Key>,
+//     timeout: u64,
+//     redirect: Id, // 0表示不重定向
+// }
+//
+// impl CmdExecutor for NBLPop {
+//     #[instrument(level = "debug", skip(handler), ret, err)]
+//     async fn execute(
+//         self,
+//         handler: &mut Handler<impl AsyncStream>,
+//     ) -> RutinResult<Option<CheapResp3>> {
+//         let shared = handler.shared;
+//
+//         match first_round(&self.keys, shared).await {
+//             // 弹出成功，直接返回
+//             Ok(Some(frame)) => {
+//                 return Ok(Some(frame));
+//             }
+//             // 弹出失败，继续后续操作
+//             Ok(None) => {}
+//             // 发生错误，直接返回
+//             Err(e) => {
+//                 return Err(e);
+//             }
+//         }
+//
+//         // 加入监听事件
+//         let (key_tx, key_rx) = flume::bounded(1);
+//         for key in self.keys {
+//             shared
+//                 .db()
+//                 .add_may_update_event(key, key_tx.clone())
+//                 .await?;
+//         }
+//
+//         let deadline = if self.timeout == 0 {
+//             None
+//         } else {
+//             Some(Instant::now() + Duration::from_secs(self.timeout))
+//         };
+//
+//         let outbox = if self.redirect != 0 {
+//             handler
+//                 .shared
+//                 .post_office()
+//                 .get_outbox(self.redirect)
+//                 .ok_or(RutinError::from("ERR The client ID does not exist"))?
+//                 .clone()
+//         } else {
+//             handler.context.outbox.clone()
+//         };
+//
+//         tokio::spawn(async move {
+//             let res = match pop_timeout_at(shared, key_tx, key_rx, deadline).await {
+//                 Ok(res) => res,
+//                 Err(e) => e.try_into().unwrap(),
+//             };
+//             let _ = outbox.send(Letter::Resp3(res));
+//         });
+//
+//         // 开启后台任务后，向客户端返回的响应不由该函数负责，而是由后台任务负责
+//         Ok(None)
+//     }
+//
+//     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+//         if args.len() < 3 {
+//             return Err(RutinError::WrongArgNum);
+//         }
+//
+//         let redirect = atoi::<Id>(&args.next_back().unwrap())?;
+//         let timeout = atoi::<u64>(&args.next_back().unwrap())?;
+//
+//         let keys = args
+//             .map(|k| {
+//                 if ac.deny_reading_or_writing_key(&k, Self::CATS_FLAG) {
+//                     return Err(RutinError::NoPermission);
+//                 }
+//                 Ok(k.into())
+//             })
+//             .collect::<RutinResult<Vec<Key>>>()?;
+//
+//         Ok(Self {
+//             keys,
+//             timeout,
+//             redirect,
+//         })
+//     }
+// }
+//
+#[derive(Debug, Clone, Copy)]
 pub enum Where {
     Left,
     Right,
@@ -582,10 +719,7 @@ impl TryFrom<&[u8]> for Where {
             return Err("ERR invalid wherefrom is given".into());
         }
 
-        let mut buf = [0; 5];
-        buf[..len].copy_from_slice(value);
-        buf[..len].make_ascii_uppercase();
-        match &buf[..len] {
+        match value as &[u8] {
             b"LEFT" => Ok(Where::Left),
             b"RIGHT" => Ok(Where::Right),
             _ => Err("ERR invalid wherefrom is given".into()),
@@ -593,129 +727,125 @@ impl TryFrom<&[u8]> for Where {
     }
 }
 
-async fn first_round<S: AsRef<str> + PartialEq + std::fmt::Debug>(
-    keys: &[Key],
-    shared: Shared,
-) -> RutinResult<Option<Resp3<Bytes, S>>> {
-    let mut res = None;
-    // 先尝试一轮pop
-    for key in keys.iter() {
-        let update_res = shared
-            .db()
-            .update_object(key.clone(), |obj| {
-                let list = obj.on_list_mut()?;
-
-                if let Some(value) = list.pop_front() {
-                    res = Some(Resp3::new_array(vec![
-                        Resp3::new_blob_string(key.to_bytes()),
-                        Resp3::new_blob_string(value.to_bytes()),
-                    ]));
-                }
-
-                Ok(())
-            })
-            .await;
-
-        // pop成功
-        if res.is_some() {
-            return Ok(res);
-        }
-
-        // 忽略空键的错误
-        if !matches!(update_res, Err(RutinError::Null)) {
-            update_res?;
-        }
-    }
-
-    Ok(None)
-}
-
-async fn pop_timeout_at(
-    shared: Shared,
-    key_tx: Sender<Key>,
-    key_rx: Receiver<Key>,
-    deadline: Option<Instant>,
-) -> RutinResult<Resp3> {
-    let db = shared.db();
-    let mut res = None;
-
-    trace!("listening for list keys..., deadline: {deadline:?}");
-    loop {
-        // 存在超时时间
-        if let Some(dl) = deadline {
-            match tokio::time::timeout_at(dl, key_rx.recv_async()).await {
-                Ok(Ok(key)) => {
-                    let update_res = db
-                        .update_object(key.clone(), |obj| {
-                            let list = obj.on_list_mut()?;
-
-                            if let Some(value) = list.pop_front() {
-                                res = Some(Resp3::new_array(vec![
-                                    Resp3::new_blob_string(key.to_bytes()),
-                                    Resp3::new_blob_string(value.to_bytes()),
-                                ]));
-                            }
-
-                            Ok(())
-                        })
-                        .await;
-
-                    if let Some(res) = res {
-                        // 如果next确实成功了，则退出循环
-                        break Ok(res);
-                    }
-
-                    // 如果next失败了，则重新加入事件
-                    db.add_may_update_event(key.clone(), key_tx.clone()).await?;
-
-                    // 忽略空键的错误
-                    if !matches!(update_res, Err(RutinError::Null)) {
-                        update_res?;
-                    }
-                }
-                // 超时
-                Err(_) => break Ok(Resp3::Null),
-                _ => continue,
-            }
-        }
-
-        // 不存在超时时间
-        if let Ok(key) = key_rx.recv_async().await {
-            let update_res = shared
-                .db()
-                .update_object(key.clone(), |obj| {
-                    let list = obj.on_list_mut()?;
-
-                    if let Some(value) = list.pop_front() {
-                        res = Some(Resp3::new_array(vec![
-                            Resp3::new_blob_string(key.to_bytes()),
-                            Resp3::new_blob_string(value.to_bytes()),
-                        ]));
-                    }
-
-                    Ok(())
-                })
-                .await;
-
-            if let Some(res) = res {
-                // 如果next确实成功了，则退出循环
-                break Ok(res);
-            }
-
-            db.add_may_update_event(key.clone(), key_tx.clone()).await?;
-
-            // 忽略空键的错误
-            if !matches!(update_res, Err(RutinError::Null)) {
-                update_res?;
-            }
-        }
-    }
-}
-
+// async fn first_round(db: &Db, keys: &[Key], where_: Where) -> RutinResult<Option<CheapResp3>> {
+//     let mut res = None;
+//     // 先尝试一轮pop
+//     for key in keys.iter() {
+//         let update_res = db
+//             .update_object(key.clone(), |obj| {
+//                 let list = obj.on_list_mut()?;
+//
+//                 if let Some(value) = list.pop_front() {
+//                     res = Some(Resp3::new_array(vec![
+//                         Resp3::new_blob_string(key.to_bytes()),
+//                         Resp3::new_blob_string(value.to_bytes()),
+//                     ]));
+//                 }
+//
+//                 Ok(())
+//             })
+//             .await;
+//
+//         // pop成功
+//         if res.is_some() {
+//             return Ok(res);
+//         }
+//
+//         // 忽略空键的错误
+//         if !matches!(update_res, Err(RutinError::Null)) {
+//             update_res?;
+//         }
+//     }
+//
+//     Ok(None)
+// }
+//
+// async fn pop_timeout_at(
+//     shared: Shared,
+//     key_tx: Sender<Key>,
+//     key_rx: Receiver<Key>,
+//     deadline: Option<Instant>,
+// ) -> RutinResult<Resp3> {
+//     let db = shared.db();
+//     let mut res = None;
+//
+//     trace!("listening for list keys..., deadline: {deadline:?}");
+//     loop {
+//         // 存在超时时间
+//         if let Some(dl) = deadline {
+//             match tokio::time::timeout_at(dl, key_rx.recv_async()).await {
+//                 Ok(Ok(key)) => {
+//                     let update_res = db
+//                         .update_object(key.clone(), |obj| {
+//                             let list = obj.on_list_mut()?;
+//
+//                             if let Some(value) = list.pop_front() {
+//                                 res = Some(Resp3::new_array(vec![
+//                                     Resp3::new_blob_string(key.to_bytes()),
+//                                     Resp3::new_blob_string(value.to_bytes()),
+//                                 ]));
+//                             }
+//
+//                             Ok(())
+//                         })
+//                         .await;
+//
+//                     if let Some(res) = res {
+//                         // 如果next确实成功了，则退出循环
+//                         break Ok(res);
+//                     }
+//
+//                     // 如果next失败了，则重新加入事件
+//                     db.add_may_update_event(key.clone(), key_tx.clone()).await?;
+//
+//                     // 忽略空键的错误
+//                     if !matches!(update_res, Err(RutinError::Null)) {
+//                         update_res?;
+//                     }
+//                 }
+//                 // 超时
+//                 Err(_) => break Ok(Resp3::Null),
+//                 _ => continue,
+//             }
+//         }
+//
+//         // 不存在超时时间
+//         if let Ok(key) = key_rx.recv_async().await {
+//             let update_res = shared
+//                 .db()
+//                 .update_object(key.clone(), |obj| {
+//                     let list = obj.on_list_mut()?;
+//
+//                     if let Some(value) = list.pop_front() {
+//                         res = Some(Resp3::new_array(vec![
+//                             Resp3::new_blob_string(key.to_bytes()),
+//                             Resp3::new_blob_string(value.to_bytes()),
+//                         ]));
+//                     }
+//
+//                     Ok(())
+//                 })
+//                 .await;
+//
+//             if let Some(res) = res {
+//                 // 如果next确实成功了，则退出循环
+//                 break Ok(res);
+//             }
+//
+//             db.add_may_update_event(key.clone(), key_tx.clone()).await?;
+//
+//             // 忽略空键的错误
+//             if !matches!(update_res, Err(RutinError::Null)) {
+//                 update_res?;
+//             }
+//         }
+//     }
+// }
+//
 #[cfg(test)]
 mod cmd_list_tests {
     use super::*;
-    use crate::{cmd::Ping, util::test_init};
+    use crate::util::test_init;
     use tokio::time::sleep;
 
     #[tokio::test]
@@ -723,16 +853,18 @@ mod cmd_list_tests {
         test_init();
         let (mut handler, _) = Handler::new_fake();
 
-        let llen = LLen {
-            key: Key::from("list"),
-        };
+        let llen = LLen::parse(
+            gen_cmdunparsed_test(["list"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         matches!(
             llen.execute(&mut handler).await.unwrap_err(),
             RutinError::ErrCode { code } if code == 0
         );
 
         let lpush = LPush::parse(
-            CmdUnparsed::from(["list", "key1"].as_ref()),
+            gen_cmdunparsed_test(["list", "key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -741,16 +873,18 @@ mod cmd_list_tests {
             lpush.execute(&mut handler).await.unwrap()
         );
 
-        let llen = LLen {
-            key: Key::from("list"),
-        };
+        let llen = LLen::parse(
+            gen_cmdunparsed_test(["list"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             Some(Resp3::new_integer(1)),
             llen.execute(&mut handler).await.unwrap()
         );
 
         let lpush = LPush::parse(
-            CmdUnparsed::from(["list", "key2", "key3"].as_ref()),
+            gen_cmdunparsed_test(["list", "key2", "key3"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -759,9 +893,11 @@ mod cmd_list_tests {
             lpush.execute(&mut handler).await.unwrap()
         );
 
-        let llen = LLen {
-            key: Key::from("list"),
-        };
+        let llen = LLen::parse(
+            gen_cmdunparsed_test(["list"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             Some(Resp3::new_integer(3)),
             llen.execute(&mut handler).await.unwrap()
@@ -774,7 +910,7 @@ mod cmd_list_tests {
         let (mut handler, _) = Handler::new_fake();
 
         let lpush = LPush::parse(
-            CmdUnparsed::from(["list", "key1"].as_ref()),
+            gen_cmdunparsed_test(["list", "key1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -785,7 +921,7 @@ mod cmd_list_tests {
         // key1
 
         let lpush = LPush::parse(
-            CmdUnparsed::from(["list", "key2", "key3"].as_ref()),
+            gen_cmdunparsed_test(["list", "key2", "key3"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -796,7 +932,7 @@ mod cmd_list_tests {
         // key3 key2 key1
 
         let lpop = LPop::parse(
-            CmdUnparsed::from(["list"].as_ref()),
+            gen_cmdunparsed_test(["list"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -806,7 +942,7 @@ mod cmd_list_tests {
         );
 
         let lpop = LPop::parse(
-            CmdUnparsed::from(["list", "2"].as_ref()),
+            gen_cmdunparsed_test(["list", "2"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -819,7 +955,7 @@ mod cmd_list_tests {
         );
 
         let lpop = LPop::parse(
-            CmdUnparsed::from(["list"].as_ref()),
+            gen_cmdunparsed_test(["list"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -838,7 +974,7 @@ mod cmd_list_tests {
         /***************/
         let (mut handler, _) = Handler::new_fake();
         let lpush = LPush::parse(
-            CmdUnparsed::from(["l1", "key1a", "key1", "key1c"].as_ref()),
+            gen_cmdunparsed_test(["l1", "key1a", "key1", "key1c"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -849,7 +985,7 @@ mod cmd_list_tests {
         // l1: key1c key1b key1a
 
         let lpush = LPush::parse(
-            CmdUnparsed::from(["l2", "key2a", "key2", "key2c"].as_ref()),
+            gen_cmdunparsed_test(["l2", "key2a", "key2", "key2c"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -860,7 +996,7 @@ mod cmd_list_tests {
         // l2: key2c key2b key2a
 
         let blpop = BLPop::parse(
-            CmdUnparsed::from(["l1", "l2", "1"].as_ref()),
+            gen_cmdunparsed_test(["l1", "l2", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -874,7 +1010,7 @@ mod cmd_list_tests {
         // l1: key1b key1a
 
         let blpop = BLPop::parse(
-            CmdUnparsed::from(["l2", "list1", "1"].as_ref()),
+            gen_cmdunparsed_test(["l2", "list1", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -891,24 +1027,27 @@ mod cmd_list_tests {
         /* 无超时时间，阻塞测试 */
         /************************/
         let (mut handler2, _) = Handler::new_fake();
-        tokio::spawn(async move {
-            let blpop = BLPop::parse(
-                CmdUnparsed::from(["l3", "0"].as_ref()),
-                &AccessControl::new_loose(),
-            )
-            .unwrap();
-            assert_eq!(
-                Resp3::new_array(vec![
-                    Resp3::new_blob_string("l3".into()),
-                    Resp3::new_blob_string("key".into())
-                ]),
-                blpop.execute(&mut handler2).await.unwrap().unwrap()
-            );
+        let handle = tokio::runtime::Handle::current();
+        std::thread::spawn(move || {
+            handle.block_on(async move {
+                let blpop = BLPop::parse(
+                    gen_cmdunparsed_test(["l3", "0"].as_ref()),
+                    &AccessControl::new_loose(),
+                )
+                .unwrap();
+                assert_eq!(
+                    Resp3::new_array(vec![
+                        Resp3::new_blob_string("l3".into()),
+                        Resp3::new_blob_string("key".into())
+                    ]),
+                    blpop.execute(&mut handler2).await.unwrap().unwrap()
+                );
+            });
         });
 
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(
-            CmdUnparsed::from(["l3", "key"].as_ref()),
+            gen_cmdunparsed_test(["l3", "key"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -921,24 +1060,27 @@ mod cmd_list_tests {
         /* 有超时时间，阻塞测试 */
         /************************/
         let (mut handler3, _) = Handler::new_fake();
-        tokio::spawn(async move {
-            let blpop = BLPop::parse(
-                CmdUnparsed::from(["l4", "2"].as_ref()),
-                &AccessControl::new_loose(),
-            )
-            .unwrap();
-            assert_eq!(
-                Resp3::new_array(vec![
-                    Resp3::new_blob_string("l4".into()),
-                    Resp3::new_blob_string("key".into())
-                ]),
-                blpop.execute(&mut handler3).await.unwrap().unwrap()
-            );
+        let handle = tokio::runtime::Handle::current();
+        std::thread::spawn(move || {
+            handle.block_on(async move {
+                let blpop = BLPop::parse(
+                    gen_cmdunparsed_test(["l4", "2"].as_ref()),
+                    &AccessControl::new_loose(),
+                )
+                .unwrap();
+                assert_eq!(
+                    Resp3::new_array(vec![
+                        Resp3::new_blob_string("l4".into()),
+                        Resp3::new_blob_string("key".into())
+                    ]),
+                    blpop.execute(&mut handler3).await.unwrap().unwrap()
+                );
+            });
         });
 
         sleep(Duration::from_millis(500)).await;
         let lpush = LPush::parse(
-            CmdUnparsed::from(["l4", "key"].as_ref()),
+            gen_cmdunparsed_test(["l4", "key"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -951,7 +1093,7 @@ mod cmd_list_tests {
         /* 有超时时间，超时测试 */
         /************************/
         let blpop = BLPop::parse(
-            CmdUnparsed::from(["null", "1"].as_ref()),
+            gen_cmdunparsed_test(["null", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -961,163 +1103,162 @@ mod cmd_list_tests {
         );
     }
 
-    #[tokio::test]
-    async fn nblpop_test() {
-        test_init();
-
-        let (mut handler, _) = Handler::new_fake();
-
-        /************/
-        /* 普通测试 */
-        /************/
-        let lpush = LPush::parse(
-            CmdUnparsed::from(["l1", "key1a", "key1", "key1c"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(3)),
-            lpush.execute(&mut handler).await.unwrap()
-        );
-        // l1: key1c key1b key1a
-
-        let lpush = LPush::parse(
-            CmdUnparsed::from(["l2", "key2a", "key2", "key2c"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(3)),
-            lpush.execute(&mut handler).await.unwrap()
-        );
-        // l2: key2c key2b key2a
-
-        /**************/
-        /* 有超时时间 */
-        /**************/
-        let nblpop = NBLPop::parse(
-            CmdUnparsed::from(["list3", "2", "0"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        nblpop.execute(&mut handler).await.unwrap();
-
-        let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-        assert_eq!(
-            "PONG".to_string(),
-            ping.execute(&mut handler)
-                .await
-                .unwrap()
-                .unwrap()
-                .try_simple_string()
-                .unwrap()
-                .to_string()
-        );
-
-        sleep(Duration::from_millis(500)).await;
-        let lpush = LPush::parse(
-            CmdUnparsed::from(["list3", "key"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Resp3::new_integer(1),
-            lpush.execute(&mut handler).await.unwrap().unwrap()
-        );
-
-        assert_eq!(
-            &Resp3::new_array(vec![
-                Resp3::new_blob_string("list3".into()),
-                Resp3::new_blob_string("key".into())
-            ]),
-            handler
-                .context
-                .inbox
-                .recv_async()
-                .await
-                .as_resp3_unchecked()
-        );
-
-        /************************/
-        /* 有超时时间，超时测试 */
-        /************************/
-        let nblpop = NBLPop::parse(
-            CmdUnparsed::from(["whatever", "1", "0"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        nblpop.execute(&mut handler).await.unwrap();
-        assert_eq!(
-            &Resp3::new_null(),
-            handler
-                .context
-                .inbox
-                .recv_async()
-                .await
-                .as_resp3_unchecked()
-        );
-
-        /**************/
-        /* 无超时时间 */
-        /**************/
-        let nblpop = NBLPop::parse(
-            CmdUnparsed::from(["list3", "0", "0"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        nblpop.execute(&mut handler).await.unwrap();
-
-        let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-        assert_eq!(
-            "PONG".to_string(),
-            ping.execute(&mut handler)
-                .await
-                .unwrap()
-                .unwrap()
-                .try_simple_string()
-                .unwrap()
-                .to_string()
-        );
-
-        sleep(Duration::from_millis(500)).await;
-        let lpush = LPush::parse(
-            CmdUnparsed::from(["list3", "key"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Resp3::new_integer(1),
-            lpush.execute(&mut handler).await.unwrap().unwrap()
-        );
-
-        assert_eq!(
-            &Resp3::new_array(vec![
-                Resp3::new_blob_string("list3".into()),
-                Resp3::new_blob_string("key".into())
-            ]),
-            handler
-                .context
-                .inbox
-                .recv_async()
-                .await
-                .as_resp3_unchecked()
-        );
-    }
-
+    // #[tokio::test]
+    // async fn nblpop_test() {
+    //     test_init();
+    //
+    //     let (mut handler, _) = Handler::new_fake();
+    //
+    //     /************/
+    //     /* 普通测试 */
+    //     /************/
+    //     let lpush = LPush::parse(
+    //         gen_cmdunparsed_test(["l1", "key1a", "key1", "key1c"].as_ref()),
+    //         &AccessControl::new_loose(),
+    //     )
+    //     .unwrap();
+    //     assert_eq!(
+    //         Some(Resp3::new_integer(3)),
+    //         lpush.execute(&mut handler).await.unwrap()
+    //     );
+    //     // l1: key1c key1b key1a
+    //
+    //     let lpush = LPush::parse(
+    //         gen_cmdunparsed_test(["l2", "key2a", "key2", "key2c"].as_ref()),
+    //         &AccessControl::new_loose(),
+    //     )
+    //     .unwrap();
+    //     assert_eq!(
+    //         Some(Resp3::new_integer(3)),
+    //         lpush.execute(&mut handler).await.unwrap()
+    //     );
+    //     // l2: key2c key2b key2a
+    //
+    //     /**************/
+    //     /* 有超时时间 */
+    //     /**************/
+    //     let nblpop = NBLPop::parse(
+    //         gen_cmdunparsed_test(["list3", "2", "0"].as_ref()),
+    //         &AccessControl::new_loose(),
+    //     )
+    //     .unwrap();
+    //     nblpop.execute(&mut handler).await.unwrap();
+    //
+    //     let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+    //     assert_eq!(
+    //         "PONG".to_string(),
+    //         ping.execute(&mut handler)
+    //             .await
+    //             .unwrap()
+    //             .unwrap()
+    //             .try_simple_string()
+    //             .unwrap()
+    //             .to_string()
+    //     );
+    //
+    //     sleep(Duration::from_millis(500)).await;
+    //     let lpush = LPush::parse(
+    //         gen_cmdunparsed_test(["list3", "key"].as_ref()),
+    //         &AccessControl::new_loose(),
+    //     )
+    //     .unwrap();
+    //     assert_eq!(
+    //         Resp3::new_integer(1),
+    //         lpush.execute(&mut handler).await.unwrap().unwrap()
+    //     );
+    //
+    //     assert_eq!(
+    //         &Resp3::new_array(vec![
+    //             Resp3::new_blob_string("list3".into()),
+    //             Resp3::new_blob_string("key".into())
+    //         ]),
+    //         handler
+    //             .context
+    //             .inbox
+    //             .recv_async()
+    //             .await
+    //             .as_resp3_unchecked()
+    //     );
+    //
+    //     /************************/
+    //     /* 有超时时间，超时测试 */
+    //     /************************/
+    //     let nblpop = NBLPop::parse(
+    //         gen_cmdunparsed_test(["whatever", "1", "0"].as_ref()),
+    //         &AccessControl::new_loose(),
+    //     )
+    //     .unwrap();
+    //     nblpop.execute(&mut handler).await.unwrap();
+    //     assert_eq!(
+    //         &Resp3::new_null(),
+    //         handler
+    //             .context
+    //             .inbox
+    //             .recv_async()
+    //             .await
+    //             .as_resp3_unchecked()
+    //     );
+    //
+    //     /**************/
+    //     /* 无超时时间 */
+    //     /**************/
+    //     let nblpop = NBLPop::parse(
+    //         gen_cmdunparsed_test(["list3", "0", "0"].as_ref()),
+    //         &AccessControl::new_loose(),
+    //     )
+    //     .unwrap();
+    //     nblpop.execute(&mut handler).await.unwrap();
+    //
+    //     let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+    //     assert_eq!(
+    //         "PONG".to_string(),
+    //         ping.execute(&mut handler)
+    //             .await
+    //             .unwrap()
+    //             .unwrap()
+    //             .try_simple_string()
+    //             .unwrap()
+    //             .to_string()
+    //     );
+    //
+    //     sleep(Duration::from_millis(500)).await;
+    //     let lpush = LPush::parse(
+    //         gen_cmdunparsed_test(["list3", "key"].as_ref()),
+    //         &AccessControl::new_loose(),
+    //     )
+    //     .unwrap();
+    //     assert_eq!(
+    //         Resp3::new_integer(1),
+    //         lpush.execute(&mut handler).await.unwrap().unwrap()
+    //     );
+    //
+    //     assert_eq!(
+    //         &Resp3::new_array(vec![
+    //             Resp3::new_blob_string("list3".into()),
+    //             Resp3::new_blob_string("key".into())
+    //         ]),
+    //         handler
+    //             .context
+    //             .inbox
+    //             .recv_async()
+    //             .await
+    //             .as_resp3_unchecked()
+    //     );
+    // }
     #[tokio::test]
     async fn lpos_test() {
         test_init();
 
         let (mut handler, _) = Handler::new_fake();
         let lpush = LPush::parse(
-            CmdUnparsed::from(["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"].as_ref()),
+            gen_cmdunparsed_test(["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         lpush.execute(&mut handler).await.unwrap().unwrap();
 
         let lpos = LPos::parse(
-            CmdUnparsed::from(["list", "1"].as_ref()),
+            gen_cmdunparsed_test(["list", "1"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1125,40 +1266,40 @@ mod cmd_list_tests {
         assert_eq!(res.try_integer().unwrap(), 1);
 
         let lpos = LPos::parse(
-            CmdUnparsed::from(["list", "2", "count", "0"].as_ref()),
+            gen_cmdunparsed_test(["list", "2", "count", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         let res = lpos.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(
-            res.try_array().unwrap().to_vec(),
-            vec![
-                Resp3::new_integer(2),
-                Resp3::new_integer(3),
-                Resp3::new_integer(4)
+            res.try_array().unwrap(),
+            &[
+                CheapResp3::new_integer(2),
+                CheapResp3::new_integer(3),
+                CheapResp3::new_integer(4)
             ]
         );
 
         let lpos = LPos::parse(
-            CmdUnparsed::from(["list", "2", "rank", "2", "count", "2"].as_ref()),
+            gen_cmdunparsed_test(["list", "2", "rank", "2", "count", "2"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         let res = lpos.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(
-            res.try_array().unwrap().to_vec(),
-            vec![Resp3::new_integer(3), Resp3::new_integer(4)]
+            res.try_array().unwrap(),
+            &[CheapResp3::new_integer(3), CheapResp3::new_integer(4)]
         );
 
         let lpos = LPos::parse(
-            CmdUnparsed::from(["list", "2", "rank", "-1", "count", "3", "maxlen", "6"].as_ref()),
+            gen_cmdunparsed_test(["list", "2", "rank", "-1", "count", "3", "maxlen", "6"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
         let res = lpos.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(
-            res.try_array().unwrap().to_vec(),
-            vec![Resp3::new_integer(4), Resp3::new_integer(3)]
+            res.try_array().unwrap(),
+            &[CheapResp3::new_integer(4), CheapResp3::new_integer(3)]
         );
     }
 }

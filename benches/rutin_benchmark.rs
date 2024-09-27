@@ -4,25 +4,25 @@ use bytes::{Bytes, BytesMut};
 use bytestring::ByteString;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rutin::{
-    frame::{Resp3, Resp3Decoder, Resp3Encoder},
+    frame::{CheapResp3, StaticResp3, Resp3, Resp3Decoder, Resp3Encoder},
     server::{Handler, HandlerContext},
     shared::NULL_ID,
     util::get_test_shared,
 };
 use tokio_util::codec::{Decoder, Encoder};
 
-fn gen_get_cmd(key: &'static str) -> Resp3 {
-    Resp3::new_array(vec![
-        Resp3::<Bytes, ByteString>::new_blob_string("GET".into()),
-        Resp3::new_blob_string(key.into()),
+fn gen_get_cmd(key: &str) -> StaticResp3<'static> {
+    StaticResp3::new_array(vec![
+        StaticResp3::new_blob_string(b"GET".to_vec().leak()),
+        StaticResp3::new_blob_string(key.into()),
     ])
 }
 
-fn gen_set_cmd(key: &'static str, value: &'static str) -> Resp3 {
-    Resp3::new_array(vec![
-        Resp3::<Bytes, ByteString>::new_blob_string("SET".into()),
-        Resp3::new_blob_string(key.into()),
-        Resp3::new_blob_string(value.into()),
+fn gen_set_cmd(key: &str, value: &str) -> StaticResp3<'static> {
+    StaticResp3::new_array(vec![
+        StaticResp3::new_blob_string(b"SET".to_vec().leak()),
+        StaticResp3::new_blob_string(key.into()),
+        StaticResp3::new_blob_string(value.into()),
     ])
 }
 
@@ -91,6 +91,54 @@ fn bench_decode(c: &mut Criterion) {
         })
     });
 }
+
+// fn bench_decode2(c: &mut Criterion) {
+//     c.bench_function("bench_decode", |b| {
+//         b.iter_custom(|iters| {
+//             let mut buf = BytesMut::with_capacity(1024);
+//
+//             let resp3 = Resp3::<Bytes, ByteString>::new_array(vec![
+//                 Resp3::new_blob_string("GET".into()),
+//                 Resp3::new_blob_string("key".into()),
+//             ]);
+//
+//             let mut encoder = Resp3Encoder;
+//             encoder.encode(&resp3, &mut buf).unwrap();
+//
+//             let mut decoder = Resp3Decoder::default();
+//
+//             let start = Instant::now();
+//             for _ in 0..iters {
+//                 redis_protocol::resp3::decode::complete::decode(&mut buf.clone()).unwrap();
+//             }
+//             start.elapsed()
+//         })
+//     });
+// }
+//
+// fn bench_decode3(c: &mut Criterion) {
+//     c.bench_function("bench_decode", |b| {
+//         b.iter_custom(|iters| {
+//             let mut buf = BytesMut::with_capacity(1024);
+//
+//             let resp3 = Resp3::<Bytes, ByteString>::new_array(vec![
+//                 Resp3::new_blob_string("GET".into()),
+//                 Resp3::new_blob_string("key".into()),
+//             ]);
+//
+//             let mut encoder = Resp3Encoder;
+//             encoder.encode(&resp3, &mut buf).unwrap();
+//
+//             let mut decoder = Resp3Decoder::default();
+//
+//             let start = Instant::now();
+//             for _ in 0..iters {
+//                 redis_protocol::resp3::decode::complete::decode_range(&mut buf.clone()).unwrap();
+//             }
+//             start.elapsed()
+//         })
+//     });
+// }
 
 // bench_create_handler_cx    time:   [109.51 ns 111.18 ns 112.79 ns]
 fn bench_create_handler_cx(c: &mut Criterion) {
@@ -173,6 +221,8 @@ criterion_group!(
     benches,
     bench_encode,
     bench_decode,
+    // bench_decode2,
+    // bench_decode3,
     bench_create_handler_cx,
     bench_create_handler,
     bench_get_cmd,

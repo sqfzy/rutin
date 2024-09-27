@@ -3,12 +3,9 @@ use crate::{
     conf::{AccessControl, MasterInfo, DEFAULT_USER},
     error::{RutinError, RutinResult},
     frame::Resp3,
-    persist::{aof::Aof, rdb::rdb_load},
     server::{Handler, HandlerContext},
     shared::{Shared, SET_REPLICA_ID},
-    util::atoi,
 };
-use bytes::Buf;
 use bytestring::ByteString;
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::Mutex};
@@ -205,7 +202,7 @@ pub fn set_server_to_replica(
                     }
                     // 如果响应为ping命令，则代表同步成功
                     Resp3::Array { inner, .. }
-                        if inner.last().is_some_and(|resp3| {
+                        if inner.back().is_some_and(|resp3| {
                             resp3.to_string().eq_ignore_ascii_case("PING")
                         }) =>
                     {
@@ -242,23 +239,26 @@ fn get_handle_master_ac() -> AccessControl {
 async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
     // 接收RDB文件，格式为(末尾没有\r\n)：
     // $<len>\r\n<rdb data>
-    let mut len = handler.conn.read_line().await?;
-    len.advance(1); // 忽略'$'
-    let len: usize = atoi::<i128>(len.as_ref())? as usize;
-
-    Resp3::need_bytes_async(&mut handler.conn.stream, &mut handler.conn.reader_buf, len).await?;
-    let mut rdb = handler.conn.reader_buf.split_to(len);
-
-    rdb_load(&mut rdb, handler.shared.db(), false)
-        .await
-        .map_err(|e| RutinError::new_server_error(e.to_string()))?;
-
-    if let Some(aof_conf) = &handler.shared.conf().aof {
-        let mut aof = Aof::new(handler.shared, aof_conf.file_path.clone()).await?;
-        aof.rewrite()
-            .await
-            .map_err(|e| RutinError::new_server_error(e.to_string()))?;
-    }
+    // let mut len = handler.conn.read_line().await?;
+    // len.advance(1); // 忽略'$'
+    // let len: usize = atoi::<i128>(len.as_ref())? as usize;
+    //
+    // CheapResp3::need_bytes_async(&mut handler.conn.stream, &mut handler.conn.reader_buf, len)
+    //     .await?;
+    // let mut rdb = handler.conn.reader_buf.split_to(len);
+    //
+    // rdb_load(&mut rdb, handler.shared.db(), false)
+    //     .await
+    //     .map_err(|e| RutinError::new_server_error(e.to_string()))?;
+    //
+    // if let Some(aof_conf) = &handler.shared.conf().aof {
+    //     let mut aof = Aof::new(handler.shared, aof_conf.file_path.clone()).await?;
+    //     aof.rewrite()
+    //         .await
+    //         .map_err(|e| RutinError::new_server_error(e.to_string()))?;
+    // }
+    // TODO:
+    todo!();
 
     Ok(())
 }

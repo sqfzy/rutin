@@ -5,11 +5,12 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::{AsyncStream, Handler, NEVER_EXPIRE, UNIX_EPOCH},
-    shared::db::{ObjValueType, ObjectInner},
-    util::atoi,
-    Int, Key,
+    shared::db::{Object, ObjectValueType, Str},
+    util::{atoi, StaticBytes},
+    Int,
 };
 use bytes::Bytes;
+use itertools::Itertools;
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::instrument;
@@ -20,21 +21,24 @@ use tracing::instrument;
 /// **Integer reply:** the length of the string after the append operation.
 #[derive(Debug)]
 pub struct Append {
-    pub key: Key,
-    pub value: Bytes,
+    pub key: StaticBytes,
+    pub value: StaticBytes,
 }
 
 impl CmdExecutor for Append {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut length = None;
 
         handler
             .shared
             .db()
-            .update_or_create_object(self.key, ObjValueType::Str, |obj| {
+            .update_object_force(&self.key, ObjectValueType::Str, |obj| {
                 let str = obj.on_str_mut()?;
-                str.append(self.value);
+                str.append(&self.value);
 
                 length = Some(Resp3::new_integer(str.len() as Int));
                 Ok(())
@@ -55,7 +59,7 @@ impl CmdExecutor for Append {
         }
 
         Ok(Append {
-            key: key.into(),
+            key,
             value: args.next().unwrap(),
         })
     }
@@ -67,17 +71,20 @@ impl CmdExecutor for Append {
 /// **Integer reply:** the value of the key after decrementing it.
 #[derive(Debug)]
 pub struct Decr {
-    pub key: Key,
+    pub key: StaticBytes,
 }
 
 impl CmdExecutor for Decr {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut new_i = 0;
         handler
             .shared
             .db()
-            .update_object(self.key, |obj| {
+            .update_object(&self.key, |obj| {
                 let str = obj.on_str_mut()?;
                 new_i = str.decr_by(1)?;
                 Ok(())
@@ -97,7 +104,7 @@ impl CmdExecutor for Decr {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Decr { key: key.into() })
+        Ok(Decr { key })
     }
 }
 
@@ -107,18 +114,21 @@ impl CmdExecutor for Decr {
 /// **Integer reply:** the value of the key after decrementing it.
 #[derive(Debug)]
 pub struct DecrBy {
-    pub key: Key,
+    pub key: StaticBytes,
     pub decrement: Int,
 }
 
 impl CmdExecutor for DecrBy {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut new_i = 0;
         handler
             .shared
             .db()
-            .update_object(self.key, |obj| {
+            .update_object(&self.key, |obj| {
                 let str = obj.on_str_mut()?;
                 new_i = str.decr_by(self.decrement)?;
                 Ok(())
@@ -139,7 +149,7 @@ impl CmdExecutor for DecrBy {
         }
 
         Ok(DecrBy {
-            key: key.into(),
+            key,
             decrement: atoi(&args.next().unwrap())
                 .map_err(|_| RutinError::from("ERR decrement is not an integer"))?,
         })
@@ -152,13 +162,16 @@ impl CmdExecutor for DecrBy {
 /// **Null reply:** key does not exist.
 #[derive(Debug)]
 pub struct Get {
-    pub key: Key,
+    pub key: StaticBytes,
 }
 
 impl CmdExecutor for Get {
     #[inline]
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut res = None;
 
         handler
@@ -184,7 +197,7 @@ impl CmdExecutor for Get {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Get { key: key.into() })
+        Ok(Get { key })
     }
 }
 
@@ -194,14 +207,17 @@ impl CmdExecutor for Get {
 /// **Bulk string reply:** The substring of the string value stored at key, determined by the offsets start and end (both are inclusive).
 #[derive(Debug)]
 pub struct GetRange {
-    pub key: Key,
+    pub key: StaticBytes,
     pub start: Int,
     pub end: Int,
 }
 
 impl CmdExecutor for GetRange {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut res = "".into();
 
         handler
@@ -236,11 +252,7 @@ impl CmdExecutor for GetRange {
             RutinError::from("ERR index parameter is not a positive integer or out of range")
         })?;
 
-        Ok(GetRange {
-            key: key.into(),
-            start,
-            end,
-        })
+        Ok(GetRange { key, start, end })
     }
 }
 
@@ -251,21 +263,24 @@ impl CmdExecutor for GetRange {
 /// **Null reply:** if the key does not exist.
 #[derive(Debug)]
 pub struct GetSet {
-    pub key: Key,
-    pub new_value: Bytes,
+    pub key: StaticBytes,
+    pub new_value: Str,
 }
 
 impl CmdExecutor for GetSet {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut old = "".into();
 
         handler
             .shared
             .db()
-            .update_object(self.key, |obj| {
+            .update_object(&self.key, |obj| {
                 let str = obj.on_str_mut()?;
-                old = str.replce(self.new_value).to_bytes();
+                old = str.set(self.new_value).into();
                 Ok(())
             })
             .await?;
@@ -284,8 +299,8 @@ impl CmdExecutor for GetSet {
         }
 
         Ok(GetSet {
-            key: key.into(),
-            new_value: args.next().unwrap(),
+            key,
+            new_value: args.next().unwrap().into(),
         })
     }
 }
@@ -296,18 +311,21 @@ impl CmdExecutor for GetSet {
 /// **Integer reply:** the value of the key after the increment.
 #[derive(Debug)]
 pub struct Incr {
-    pub key: Key,
+    pub key: StaticBytes,
 }
 
 impl CmdExecutor for Incr {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut new_i = 0;
 
         handler
             .shared
             .db()
-            .update_object(self.key, |obj| {
+            .update_object(&self.key, |obj| {
                 let str = obj.on_str_mut()?;
                 new_i = str.incr_by(1)?;
                 Ok(())
@@ -327,7 +345,7 @@ impl CmdExecutor for Incr {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(Incr { key: key.into() })
+        Ok(Incr { key })
     }
 }
 
@@ -337,18 +355,21 @@ impl CmdExecutor for Incr {
 /// **Integer reply:** the value of the key after the increment.
 #[derive(Debug)]
 pub struct IncrBy {
-    pub key: Key,
+    pub key: StaticBytes,
     pub increment: Int,
 }
 
 impl CmdExecutor for IncrBy {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut new_i = 0;
         handler
             .shared
             .db()
-            .update_object(self.key, |obj| {
+            .update_object(&self.key, |obj| {
                 let str = obj.on_str_mut()?;
                 new_i = str.incr_by(self.increment)?;
                 Ok(())
@@ -369,7 +390,7 @@ impl CmdExecutor for IncrBy {
         }
 
         Ok(IncrBy {
-            key: key.into(),
+            key,
             increment: atoi(&args.next().unwrap())
                 .map_err(|_| RutinError::from("ERR increment is not an integer"))?,
         })
@@ -382,12 +403,15 @@ impl CmdExecutor for IncrBy {
 /// **Array reply:** a list of values at the specified keys.
 #[derive(Debug)]
 pub struct MGet {
-    pub keys: Vec<Key>,
+    pub keys: Vec<StaticBytes>,
 }
 
 impl CmdExecutor for MGet {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut res = Vec::with_capacity(self.keys.len());
         for key in self.keys.iter() {
             let mut str = "".into();
@@ -417,9 +441,9 @@ impl CmdExecutor for MGet {
                 if ac.deny_reading_or_writing_key(&k, Self::CATS_FLAG) {
                     return Err(RutinError::NoPermission);
                 }
-                Ok(k.into())
+                Ok(k)
             })
-            .collect::<RutinResult<Vec<Key>>>()?;
+            .try_collect()?;
 
         Ok(MGet { keys })
     }
@@ -431,18 +455,19 @@ impl CmdExecutor for MGet {
 /// **Simple string reply:** always OK because MSET can't fail.
 #[derive(Debug)]
 pub struct MSet {
-    pub pairs: Vec<(Key, Bytes)>,
+    pub pairs: Vec<(StaticBytes, Str)>,
 }
 
 impl CmdExecutor for MSet {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let db = handler.shared.db();
+
         for (key, value) in self.pairs {
-            handler
-                .shared
-                .db()
-                .insert_object(key, ObjectInner::new_str(value, *NEVER_EXPIRE))
-                .await?;
+            db.insert_object(&key, value.into()).await?;
         }
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
@@ -460,7 +485,7 @@ impl CmdExecutor for MSet {
                 return Err(RutinError::NoPermission);
             }
 
-            pairs.push((key.into(), value));
+            pairs.push((key, value.into()));
         }
 
         Ok(MSet { pairs })
@@ -474,23 +499,25 @@ impl CmdExecutor for MSet {
 /// **Integer reply:** 1 if all the keys were set.
 #[derive(Debug)]
 pub struct MSetNx {
-    pub pairs: Vec<(Key, Bytes)>,
+    pub pairs: Vec<(StaticBytes, Str)>,
 }
 
 impl CmdExecutor for MSetNx {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let db = handler.shared.db();
+
         for (key, _) in &self.pairs {
-            if handler.shared.db().contains_object(key).await {
+            if db.contains_object(key).await {
                 return Err(0.into());
             }
         }
 
         for (key, value) in self.pairs {
-            handler
-                .shared
-                .db()
-                .insert_object(key, ObjectInner::new_str(value, *NEVER_EXPIRE))
+            db.insert_object(&key, Object::with_expire(value, *NEVER_EXPIRE))
                 .await?;
         }
 
@@ -509,7 +536,7 @@ impl CmdExecutor for MSetNx {
                 return Err(RutinError::NoPermission);
             }
 
-            pairs.push((key.into(), value));
+            pairs.push((key, value.into()));
         }
 
         Ok(MSetNx { pairs })
@@ -524,8 +551,8 @@ impl CmdExecutor for MSetNx {
 /// **Bulk string reply:** GET given: The previous value of the key.
 #[derive(Debug)]
 pub struct Set {
-    key: Key,
-    value: Bytes,
+    key: StaticBytes,
+    value: StaticBytes,
     opt: Option<SetOpt>,
     get: bool,
     expire: Option<Instant>, // None代表无要求，Some(EPOCH)代表保持原expire
@@ -542,7 +569,12 @@ enum SetOpt {
 impl CmdExecutor for Set {
     #[inline]
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let db = handler.shared.db();
+
         // 1. 是否要求键存在？
         // 2. 满足命令对键的要求后，更新值
         // 3. 是否需要更新expire?
@@ -552,26 +584,29 @@ impl CmdExecutor for Set {
             Some(SetOpt::XX) => Some(true),
             _ => None,
         };
+
         if self.get {
             key_flag = Some(true);
         }
+
         if let Some(ex) = self.expire {
             if ex == *UNIX_EPOCH {
                 key_flag = Some(true);
             }
         }
 
-        let entry = handler.shared.db().get_mut(self.key).await?;
-        if let Some(flag) = key_flag {
-            if flag != entry.is_object_existed() {
-                return Err(RutinError::Null);
-            }
+        let entry = db.entry(&self.key).await?;
+        if let Some(flag) = key_flag
+            && flag != entry.is_occupied()
+        {
+            // 不满足键的要求
+            return Err(RutinError::Null);
         }
 
         let new_ex = if let Some(ex) = self.expire {
             if ex.duration_since(*UNIX_EPOCH) < Duration::from_millis(10) {
                 // 保持不变
-                entry.value().unwrap().expire_unchecked()
+                entry.expire().unwrap()
             } else {
                 // 更新
                 ex
@@ -581,12 +616,14 @@ impl CmdExecutor for Set {
             *NEVER_EXPIRE
         };
 
-        let new_obj = ObjectInner::new_str(self.value, new_ex);
-        let (_, old) = entry.insert_object(new_obj);
+        let new_obj = Object::with_expire(Str::from(self.value), new_ex);
+        let (_, old) = entry.insert2(new_obj);
 
         if self.get {
             Ok(Some(Resp3::new_blob_string(
-                old.unwrap().on_str()?.to_bytes(),
+                old.expect("old object must exist when 'get' option is set")
+                    .on_str()?
+                    .to_bytes(),
             )))
         } else {
             Ok(Some(Resp3::new_simple_string("OK".into())))
@@ -602,13 +639,9 @@ impl CmdExecutor for Set {
         if ac.deny_reading_or_writing_key(&key, Self::CATS_FLAG) {
             return Err(RutinError::NoPermission);
         }
-        let key = key.into();
-
         let value = args.next().unwrap();
 
-        let mut buf = [0; 7];
-        let mut next = args.get_uppercase(0, &mut buf);
-        let _ = args.advance_by(1);
+        let mut next = args.next_uppercase::<8>();
         let opt = match next {
             None => {
                 // 已经没有参数了
@@ -620,16 +653,14 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(opt) => {
-                match opt {
+            Some(ref opt) => {
+                match opt as &[u8] {
                     b"NX" => {
-                        next = args.get_uppercase(0, &mut buf);
-                        let _ = args.advance_by(1);
+                        next = args.next_uppercase::<8>();
                         Some(SetOpt::NX)
                     }
                     b"XX" => {
-                        next = args.get_uppercase(0, &mut buf);
-                        let _ = args.advance_by(1);
+                        next = args.next_uppercase::<8>();
                         Some(SetOpt::XX)
                     }
                     // 该参数不是设置选项的参数
@@ -649,11 +680,10 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(get) => {
-                match get {
+            Some(ref get) => {
+                match get as &[u8] {
                     b"GET" => {
-                        next = args.get_uppercase(0, &mut buf);
-                        let _ = args.advance_by(1);
+                        next = args.next_uppercase::<8>();
                         true
                     }
                     // 该参数不是设置GET的参数
@@ -673,8 +703,8 @@ impl CmdExecutor for Set {
                     expire: None,
                 });
             }
-            Some(ex) => {
-                match ex {
+            Some(ref ex) => {
+                match ex as &[u8] {
                     b"KEEPTTL" => Some(*UNIX_EPOCH),
                     b"EX" => {
                         let expire_value = args.next().ok_or(RutinError::WrongArgNum)?;
@@ -720,20 +750,23 @@ impl CmdExecutor for Set {
 /// **Simple string reply:** OK.
 #[derive(Debug)]
 pub struct SetEx {
-    pub key: Key,
+    pub key: StaticBytes,
     pub expire: Duration,
-    pub value: Bytes,
+    pub value: Str,
 }
 
 impl CmdExecutor for SetEx {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         handler
             .shared
             .db()
             .insert_object(
-                self.key,
-                ObjectInner::new_str(self.value, Instant::now() + self.expire),
+                &self.key,
+                Object::with_expire(self.value, Instant::now() + self.expire),
             )
             .await?;
 
@@ -751,13 +784,9 @@ impl CmdExecutor for SetEx {
         }
 
         let expire = Duration::from_secs(atoi(&args.next().unwrap())?);
-        let value = args.next().unwrap();
+        let value = args.next().unwrap().into();
 
-        Ok(SetEx {
-            key: key.into(),
-            value,
-            expire,
-        })
+        Ok(SetEx { key, value, expire })
     }
 }
 
@@ -768,22 +797,24 @@ impl CmdExecutor for SetEx {
 /// **Integer reply:** 1 if the key was set.
 #[derive(Debug)]
 pub struct SetNx {
-    pub key: Key,
-    pub value: Bytes,
+    pub key: StaticBytes,
+    pub value: StaticBytes,
 }
 
 impl CmdExecutor for SetNx {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
-        if handler.shared.db().contains_object(&self.key).await {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let db = handler.shared.db();
+
+        let entry = db.entry(&self.key).await?;
+        if entry.is_occupied() {
             return Err(0.into());
         }
 
-        handler
-            .shared
-            .db()
-            .insert_object(self.key, ObjectInner::new_str(self.value, *NEVER_EXPIRE))
-            .await?;
+        entry.insert1(Object::with_expire(Str::from(self.value), *NEVER_EXPIRE));
 
         Ok(Some(Resp3::new_integer(1)))
     }
@@ -799,7 +830,7 @@ impl CmdExecutor for SetNx {
         }
 
         Ok(SetNx {
-            key: key.into(),
+            key,
             value: args.next().unwrap(),
         })
     }
@@ -811,12 +842,15 @@ impl CmdExecutor for SetNx {
 /// **Integer reply:** the length of the string stored at key, or 0 when the key does not exist.
 #[derive(Debug)]
 pub struct StrLen {
-    pub key: Key,
+    pub key: StaticBytes,
 }
 
 impl CmdExecutor for StrLen {
     #[instrument(level = "debug", skip(handler), ret, err)]
-    async fn execute(self, handler: &mut Handler<impl AsyncStream>) -> RutinResult<Option<Resp3>> {
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
         let mut len = 0;
         handler
             .shared
@@ -840,7 +874,7 @@ impl CmdExecutor for StrLen {
             return Err(RutinError::NoPermission);
         }
 
-        Ok(StrLen { key: key.into() })
+        Ok(StrLen { key })
     }
 }
 
@@ -862,7 +896,7 @@ mod cmd_str_tests {
         /* 测试简单的无过期时间的键值对存取 */
         /************************************/
         let set = Set::parse(
-            ["key_never_expire", "value_never_expire"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_never_expire", "value_never_expire"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -877,7 +911,7 @@ mod cmd_str_tests {
         );
 
         let get = Get::parse(
-            ["key_never_expire"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_never_expire"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -896,7 +930,7 @@ mod cmd_str_tests {
         /* 测试带有NX和XX的键值对存取 */
         /******************************/
         let set = Set::parse(
-            ["key_nx", "value_nx", "NX"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_nx", "value_nx", "NX"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -910,7 +944,11 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(["key_nx"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_nx"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -922,7 +960,7 @@ mod cmd_str_tests {
         );
 
         let set = Set::parse(
-            ["key_nx", "value_nx", "NX"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_nx", "value_nx", "NX"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -932,7 +970,7 @@ mod cmd_str_tests {
         ));
 
         let set = Set::parse(
-            ["key_xx", "value_xx", "XX"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_xx", "value_xx", "XX"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -942,7 +980,7 @@ mod cmd_str_tests {
         ));
 
         let set = Set::parse(
-            ["key_nx", "value_xx", "XX"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_nx", "value_xx", "XX"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -956,7 +994,11 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(["key_nx"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_nx"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -971,9 +1013,7 @@ mod cmd_str_tests {
         /* 测试带有GET的键值对存取 */
         /******************************/
         let set = Set::parse(
-            ["key_never_expire", "value_never_expire", "GET"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key_never_expire", "value_never_expire", "GET"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -988,9 +1028,7 @@ mod cmd_str_tests {
         );
 
         let set = Set::parse(
-            ["key_never_exist", "value_never_exist", "GET"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key_never_exist", "value_never_exist", "GET"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1003,7 +1041,7 @@ mod cmd_str_tests {
         /* 测试带有EX过期时间的键值对存取 */
         /**********************************/
         let set = Set::parse(
-            ["key_expire", "value_expire", "ex", "1"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_expire", "value_expire", "ex", "1"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1017,7 +1055,11 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1029,7 +1071,11 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_secs(1));
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1039,7 +1085,7 @@ mod cmd_str_tests {
         /* 测试带有PX过期时间的键值对存取 */
         /**********************************/
         let set = Set::parse(
-            ["key_expire", "value_expire", "PX", "500"].as_ref().into(),
+            gen_cmdunparsed_test(&["key_expire", "value_expire", "PX", "500"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1053,7 +1099,11 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1065,7 +1115,11 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_millis(500));
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1080,14 +1134,12 @@ mod cmd_str_tests {
             .unwrap()
             .as_secs();
         let set = Set::parse(
-            [
+            gen_cmdunparsed_test(&[
                 "key_expire",
                 "value_expire",
                 "EXAT",
                 exat.to_string().as_str(),
-            ]
-            .as_ref()
-            .into(),
+            ]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1101,7 +1153,11 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1113,7 +1169,11 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_millis(1000));
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1129,14 +1189,12 @@ mod cmd_str_tests {
             .as_millis();
 
         let set = Set::parse(
-            [
+            gen_cmdunparsed_test(&[
                 "key_expire",
                 "value_expire",
                 "PXAT",
                 exat.to_string().as_str(),
-            ]
-            .as_ref()
-            .into(),
+            ]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1150,7 +1208,11 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert_eq!(
             get.execute(&mut handler)
                 .await
@@ -1162,7 +1224,11 @@ mod cmd_str_tests {
         );
 
         sleep(Duration::from_millis(500));
-        let get = Get::parse(["key_expire"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let get = Get::parse(
+            gen_cmdunparsed_test(&["key_expire"]),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         assert!(matches!(
             get.execute(&mut handler).await,
             Err(RutinError::Null)
@@ -1173,9 +1239,7 @@ mod cmd_str_tests {
         /***************/
         let now = Instant::now();
         let set = Set::parse(
-            ["key_expire", "value_expire", "PX", "100000"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key_expire", "value_expire", "PX", "100000"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1190,9 +1254,7 @@ mod cmd_str_tests {
         );
 
         let set = Set::parse(
-            ["key_expire", "value_expire_modified", "KEEPTTL"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(&["key_expire", "value_expire_modified", "KEEPTTL"]),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -1206,15 +1268,19 @@ mod cmd_str_tests {
             &"OK"
         );
 
-        let obj = handler.shared.db().get(&"key_expire".into()).await.unwrap();
+        let obj = handler
+            .shared
+            .db()
+            .get("key_expire".as_bytes())
+            .await
+            .unwrap();
         assert_eq!(
-            obj.on_str().unwrap().unwrap().to_bytes().as_ref(),
+            obj.on_str().unwrap().to_bytes().as_ref(),
             b"value_expire_modified"
         );
         assert!(
             // 误差在10ms以内
-            (obj.value().inner().unwrap().expire_unchecked() - now) - Duration::from_millis(100000)
-                < Duration::from_millis(10)
+            (obj.value().expire - now) - Duration::from_millis(100000) < Duration::from_millis(10)
         );
     }
 }

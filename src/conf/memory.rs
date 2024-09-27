@@ -1,7 +1,8 @@
 use crate::{
     error::{RutinError, RutinResult},
     server::USED_MEMORY,
-    shared::db::Db,
+    shared::db::{Atc, Db},
+    util::KeyWrapper,
 };
 use rand::seq::IteratorRandom;
 use serde::Deserialize;
@@ -18,20 +19,20 @@ pub struct MemoryConf {
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
 pub enum Policy {
-    #[serde(rename = "volatile_lru")]
-    VolatileLRU,
+    // #[serde(rename = "volatile_lru")]
+    // VolatileLRU,
     #[serde(rename = "allkeys_lru")]
     AllKeysLRU,
-    #[serde(rename = "volatile_lfu")]
-    VolatileLFU,
+    // #[serde(rename = "volatile_lfu")]
+    // VolatileLFU,
     #[serde(rename = "allkeys_lfu")]
     AllKeysLFU,
-    #[serde(rename = "volatile_random")]
-    VolatileRandom,
+    // #[serde(rename = "volatile_random")]
+    // VolatileRandom,
     #[serde(rename = "allkeys_random")]
     AllKeysRandom,
-    #[serde(rename = "volatile_ttl")]
-    VolatileTTL,
+    // #[serde(rename = "volatile_ttl")]
+    // VolatileTTL,
     #[default]
     #[serde(rename = "noeviction")]
     NoEviction,
@@ -51,8 +52,6 @@ impl MemoryConf {
                 return Ok(());
             }
 
-            // PERF:
-
             // 如果策略是不淘汰，或者采样数设为0，直接返回内存不足错误
             if matches!(self.maxmemory_policy, Policy::NoEviction) || self.maxmemory_samples == 0 {
                 error!(
@@ -71,17 +70,17 @@ impl MemoryConf {
                         let mut rng = rand::thread_rng();
 
                         let entry = db
-                            .entries()
+                            .entries
                             .iter()
                             .choose(&mut rng)
                             .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?;
 
-                        (entry.key().clone(), entry.atc())
+                        (entry.key().clone(), entry.atc.get())
                     };
 
                     // 如果是AllKeysRandom策略，直接删除样本对象
                     if matches!(self.maxmemory_policy, Policy::AllKeysRandom) {
-                        let _ = db.remove_object(sample).await;
+                        let _ = db.remove_object(&KeyWrapper::from(sample)).await;
                         return Ok(());
                     }
 
@@ -90,22 +89,22 @@ impl MemoryConf {
                         let mut rng = rand::thread_rng();
 
                         let entry = db
-                            .entries()
+                            .entries
                             .iter()
                             .choose(&mut rng)
                             .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?;
 
                         match self.maxmemory_policy {
                             Policy::AllKeysLRU => {
-                                let new_atc = entry.atc();
-                                if new_atc.access_time() < atc.access_time() {
+                                let new_atc = entry.atc.get();
+                                if Atc::access_time3(new_atc) < Atc::access_time3(atc) {
                                     atc = new_atc;
                                     sample = entry.key().clone();
                                 }
                             }
                             Policy::AllKeysLFU => {
-                                let new_atc = entry.atc();
-                                if new_atc.access_count() < atc.access_count() {
+                                let new_atc = entry.atc.get();
+                                if Atc::access_count3(new_atc) < Atc::access_count3(atc) {
                                     atc = new_atc;
                                     sample = entry.key().clone();
                                 }
@@ -115,75 +114,75 @@ impl MemoryConf {
                     }
 
                     // 删除样本对象
-                    let _ = db.remove_object(sample).await;
+                    let _ = db.remove_object(&KeyWrapper::from(sample)).await;
                 }
-                Policy::VolatileLRU
-                | Policy::VolatileLFU
-                | Policy::VolatileRandom
-                | Policy::VolatileTTL => {
-                    // 随机抽取一个样本
-                    let (mut sample, mut atc, mut ex) = loop {
-                        let record = {
-                            let mut rng = rand::thread_rng();
-
-                            db.entry_expire_records()
-                                .iter()
-                                .choose(&mut rng)
-                                .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?
-                        };
-                        if let Ok(entry) = db.get(&record.1).await {
-                            break (record.1.clone(), entry.atc(), record.0);
-                        }
-                    };
-
-                    // 如果是VolatileRandom策略，直接删除样本对象
-                    if matches!(self.maxmemory_policy, Policy::VolatileRandom) {
-                        let _ = db.remove_object(sample).await;
-                        return Ok(());
-                    }
-
-                    // 继续抽取样本，找到最适合删除的对象
-                    for _ in 1..self.maxmemory_samples {
-                        let (new_sample, new_atc, new_ex) = loop {
-                            let record = {
-                                let mut rng = rand::thread_rng();
-
-                                db.entry_expire_records()
-                                    .iter()
-                                    .choose(&mut rng)
-                                    .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?
-                            };
-                            if let Ok(entry) = db.get(&record.1).await {
-                                break (record.1.clone(), entry.atc(), record.0);
-                            }
-                        };
-
-                        match self.maxmemory_policy {
-                            Policy::VolatileLRU => {
-                                if new_atc.access_time() < atc.access_time() {
-                                    atc = new_atc;
-                                    sample = new_sample;
-                                }
-                            }
-                            Policy::VolatileLFU => {
-                                if new_atc.access_count() < atc.access_count() {
-                                    atc = new_atc;
-                                    sample = new_sample;
-                                }
-                            }
-                            Policy::VolatileTTL => {
-                                if new_ex < ex {
-                                    ex = new_ex;
-                                    sample = new_sample;
-                                }
-                            }
-                            _ => unreachable!(),
-                        }
-                    }
-
-                    // 删除样本对象
-                    let _ = db.remove_object(sample).await;
-                }
+                // Policy::VolatileLRU
+                // | Policy::VolatileLFU
+                // | Policy::VolatileRandom
+                // | Policy::VolatileTTL => {
+                //     // 随机抽取一个样本
+                //     let (mut sample, mut atc, mut ex) = loop {
+                //         let record = {
+                //             let mut rng = rand::thread_rng();
+                //
+                //             db.entry_expire_records()
+                //                 .iter()
+                //                 .choose(&mut rng)
+                //                 .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?
+                //         };
+                //         if let Ok(entry) = db.get(&record.1).await {
+                //             break (record.1.clone(), entry.atc.get(), record.0);
+                //         }
+                //     };
+                //
+                //     // 如果是VolatileRandom策略，直接删除样本对象
+                //     if matches!(self.maxmemory_policy, Policy::VolatileRandom) {
+                //         let _ = db.remove_object(sample).await;
+                //         return Ok(());
+                //     }
+                //
+                //     // 继续抽取样本，找到最适合删除的对象
+                //     for _ in 1..self.maxmemory_samples {
+                //         let (new_sample, new_atc, new_ex) = loop {
+                //             let record = {
+                //                 let mut rng = rand::thread_rng();
+                //
+                //                 db.entry_expire_records()
+                //                     .iter()
+                //                     .choose(&mut rng)
+                //                     .ok_or_else(|| RutinError::new_oom(used_mem, self.maxmemory))?
+                //             };
+                //             if let Ok(entry) = db.get(&record.1).await {
+                //                 break (record.1.clone(), entry.atc(), record.0);
+                //             }
+                //         };
+                //
+                //         match self.maxmemory_policy {
+                //             Policy::VolatileLRU => {
+                //                 if new_atc.access_time() < atc.access_time() {
+                //                     atc = new_atc;
+                //                     sample = new_sample;
+                //                 }
+                //             }
+                //             Policy::VolatileLFU => {
+                //                 if new_atc.access_count() < atc.access_count() {
+                //                     atc = new_atc;
+                //                     sample = new_sample;
+                //                 }
+                //             }
+                //             Policy::VolatileTTL => {
+                //                 if new_ex < ex {
+                //                     ex = new_ex;
+                //                     sample = new_sample;
+                //                 }
+                //             }
+                //             _ => unreachable!(),
+                //         }
+                //     }
+                //
+                //     // 删除样本对象
+                //     let _ = db.remove_object1(&sample).await;
+                // }
                 Policy::NoEviction => unreachable!(),
             }
 

@@ -7,7 +7,7 @@
 use core::panic;
 use std::{cell::UnsafeCell, fmt::Debug, sync::Arc};
 
-use crate::{frame::Resp3, server::Handler, Id};
+use crate::{frame::CheapResp3, server::Handler, Id};
 use bytes::{Bytes, BytesMut};
 use dashmap::{DashMap, Entry};
 use event_listener::Event;
@@ -194,8 +194,8 @@ impl PostOffice {
     }
 
     #[inline]
-    pub fn remove(&self, id: Id) -> Option<(Id, (Outbox, Inbox))> {
-        self.inner.remove(&id)
+    pub fn remove(&self, id: &Id) -> Option<(Id, (Outbox, Inbox))> {
+        self.inner.remove(id)
     }
 
     #[inline]
@@ -370,7 +370,7 @@ pub enum Letter {
     },
 
     // 用于客户端之间重定向
-    Resp3(Resp3),
+    Resp3(CheapResp3),
 
     Wcmd(BytesMut),
     Psync {
@@ -426,7 +426,7 @@ impl Clone for Letter {
 
 impl Letter {
     // TODO: 使用过程宏自动生成
-    pub fn as_resp3_unchecked(&self) -> &Resp3 {
+    pub fn as_resp3_unchecked(&self) -> &CheapResp3 {
         match self {
             Letter::Resp3(resp) => resp,
             _ => panic!("Letter is not Resp3"),

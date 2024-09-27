@@ -9,6 +9,8 @@
 #![feature(once_cell_get_mut)]
 #![feature(async_closure)]
 #![feature(core_intrinsics)]
+#![feature(vec_pop_if)]
+// #![feature(closure_lifetime_binder)]
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -23,6 +25,6 @@ pub mod server;
 pub mod shared;
 pub mod util;
 
-pub type Key = shared::db::Str;
+pub type Key = bytes::Bytes;
 pub type Int = i128;
 pub type Id = u64;

@@ -1,15 +1,16 @@
+mod key_wrapper;
 mod master;
 mod replica;
+mod r#static;
 mod test;
 mod unsafe_lazy;
 
+pub use key_wrapper::*;
 pub use master::*;
+pub use r#static::*;
 pub use replica::*;
 pub use test::*;
 pub use unsafe_lazy::*;
-
-use bytes::Bytes;
-use snafu::OptionExt;
 
 use crate::{
     error::{A2IParseSnafu, RutinError, RutinResult},
@@ -17,6 +18,8 @@ use crate::{
     Int,
 };
 use atoi::FromRadix10SignedChecked;
+use bytes::Bytes;
+use snafu::OptionExt;
 
 // 模拟服务端，接收客户端的命令并打印
 #[cfg(feature = "debug_server")]
@@ -71,7 +74,8 @@ pub async fn debug_client() {
     let stream = TcpStream::connect("127.0.0.1:6379".to_string())
         .await
         .unwrap();
-    let mut conn = crate::Connection::new(stream, 0);
+
+    let mut conn = crate::server::Connection::new(stream, 0);
 
     let cmd = cmd
         .inner
@@ -103,47 +107,47 @@ pub fn atof(text: &[u8]) -> RutinResult<f64> {
         })
 }
 
-pub fn uppercase(src: &[u8], buf: &mut [u8]) -> RutinResult<usize> {
-    let len = src.len();
-    if len > buf.len() {
-        return Err(RutinError::ServerErr {
-            msg: "buffer is too small".into(),
-        });
-    }
-
-    buf[..len].copy_from_slice(src);
-    buf[..len].make_ascii_uppercase();
-
-    Ok(len)
-}
-
-pub fn get_uppercase<'a>(src: &[u8], buf: &'a mut [u8]) -> RutinResult<&'a [u8]> {
-    let len = src.len();
-    if len > buf.len() {
-        return Err(RutinError::ServerErr {
-            msg: "buffer is too small".into(),
-        });
-    }
-
-    buf[..len].copy_from_slice(src);
-    buf[..len].make_ascii_uppercase();
-
-    Ok(&buf[..len])
-}
-
-pub fn get_lowercase<'a>(src: &[u8], buf: &'a mut [u8]) -> RutinResult<&'a [u8]> {
-    let len = src.len();
-    if len > buf.len() {
-        return Err(RutinError::ServerErr {
-            msg: "buffer is too small".into(),
-        });
-    }
-
-    buf[..len].copy_from_slice(src);
-    buf[..len].make_ascii_lowercase();
-
-    Ok(&buf[..len])
-}
+// pub fn uppercase(src: &[u8], buf: &mut [u8]) -> RutinResult<usize> {
+//     let len = src.len();
+//     if len > buf.len() {
+//         return Err(RutinError::ServerErr {
+//             msg: "buffer is too small".into(),
+//         });
+//     }
+//
+//     buf[..len].copy_from_slice(src);
+//     buf[..len].make_ascii_uppercase();
+//
+//     Ok(len)
+// }
+//
+// pub fn get_uppercase<'a>(src: &[u8], buf: &'a mut [u8]) -> RutinResult<&'a [u8]> {
+//     let len = src.len();
+//     if len > buf.len() {
+//         return Err(RutinError::ServerErr {
+//             msg: "buffer is too small".into(),
+//         });
+//     }
+//
+//     buf[..len].copy_from_slice(src);
+//     buf[..len].make_ascii_uppercase();
+//
+//     Ok(&buf[..len])
+// }
+//
+// pub fn get_lowercase<'a>(src: &[u8], buf: &'a mut [u8]) -> RutinResult<&'a [u8]> {
+//     let len = src.len();
+//     if len > buf.len() {
+//         return Err(RutinError::ServerErr {
+//             msg: "buffer is too small".into(),
+//         });
+//     }
+//
+//     buf[..len].copy_from_slice(src);
+//     buf[..len].make_ascii_lowercase();
+//
+//     Ok(&buf[..len])
+// }
 
 pub fn to_valid_range(start: Int, end: Int, len: usize) -> Option<(usize, usize)> {
     if start == 0 || end == 0 {

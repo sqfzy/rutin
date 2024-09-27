@@ -3,14 +3,14 @@ use crate::{
     cmd::dispatch,
     conf::{AccessControl, DEFAULT_USER},
     error::RutinResult,
-    frame::Resp3,
+    frame::{CheapResp3, StaticResp3, Resp3},
     server::{AsyncStream, Connection, FakeStream},
     shared::{Inbox, Letter, Outbox, Shared, NULL_ID},
     util::{get_test_shared, BackLog},
     Id, Key,
 };
 use bytes::BytesMut;
-use event_listener::listener;
+use event_listener::{listener, Event, EventListener};
 use futures::pin_mut;
 use std::{sync::Arc, time::Duration};
 use tracing::{error, instrument};
@@ -31,6 +31,10 @@ impl<S: AsyncStream> Handler<S> {
         }
     }
 
+    pub fn shutdown_listener(&self) -> EventListener<> {
+        self.context.shutdown.listen()
+    }
+
     #[inline]
     #[instrument(level = "debug", skip(self), fields(client_id), err)]
     pub async fn run(mut self) -> RutinResult<()> {
@@ -39,21 +43,25 @@ impl<S: AsyncStream> Handler<S> {
             let inbox_fut = inbox.recv_async();
             pin_mut!(inbox_fut);
 
+            let mut frames_buf = Vec::with_capacity(16);
             loop {
                 tokio::select! {
                     biased; // 有序轮询
 
                     // 等待客户端请求
-                    frames = self.conn.read_frames() => {
-                        if let Some(frames) = frames? {
-                            for f in frames.into_iter() {
-                                if let Some(resp) = dispatch(f, &mut self).await? {
-                                    self.conn.write_frames(&resp).await?;
-                                }
-                            }
-                        } else {
+                    res = self.conn.read_frames_buf(&mut frames_buf) => {
+                        if res?.is_none() {
                             return Ok(());
                         }
+
+                        for f in frames_buf.iter_mut() {
+                            if let Some(resp) = dispatch(f, &mut self).await? {
+                                self.conn.write_frames(&resp).await?;
+                            }
+                        }
+
+                        // 清空读缓冲区，所有RefMutResp3失效
+                        self.conn.finish_read_frames();
                     }
                     letter = &mut inbox_fut => {
                         match letter {
@@ -74,6 +82,15 @@ impl<S: AsyncStream> Handler<S> {
                         inbox_fut .set(inbox.recv_async());
                     } 
                 };
+
+
+                // let bg_tasks = &mut self.context.background_tasks;
+                // if !bg_tasks.is_empty() {
+                //     // 移除已经完成的后台任务
+                //     bg_tasks.retain(|task| {
+                //         !task.is_finished()
+                //     });
+                // }
             }
         })
         .await
@@ -99,6 +116,8 @@ impl<S: AsyncStream> Handler<S> {
             let inbox = self.context.inbox.clone();
             let inbox_fut = inbox.recv_async();
             pin_mut!(inbox_fut);
+
+
             loop {
                 tokio::select! {
                     biased;
@@ -122,9 +141,9 @@ impl<S: AsyncStream> Handler<S> {
                         inbox_fut .set(inbox.recv_async());
                     } 
                     // 等待master请求(一般为master传播的写命令)
-                    frames = self.conn.read_frames() => {
-                        if let Some(frames) = frames? {
-                            for f in frames.into_iter() {
+                    res = self.conn.read_frames() => {
+                        if let Some(mut frames) = res? {
+                            for f in frames.iter_mut() {
                                 // 如果从节点返回响应的话，主节点为了区分响应和请求
                                 // 就需要同步等待响应，为了避免等待，从节点只发送请
                                 // 求，不会发送响应(除了REPLCONF GETACK命令)
@@ -132,6 +151,9 @@ impl<S: AsyncStream> Handler<S> {
                                 dispatch(f, &mut self).await?;
                                 *offset += size;
                             }
+
+                            // 清空读缓冲区，所有RefMutResp3失效
+                            self.conn.finish_read_frames();
                         } else {
                             return Ok(());
                         }
@@ -152,15 +174,36 @@ impl<S: AsyncStream> Handler<S> {
                 };
             }
 
+            // let bg_tasks = &mut self.context.background_tasks;
+            // if !bg_tasks.is_empty() {
+            //     // 移除已经完成的后台任务
+            //     bg_tasks.retain(|task| {
+            //         !task.is_finished()
+            //     });
+            // }
+
             Ok(())
         })
         .await
     }
 
     #[inline]
-    pub async fn dispatch(&mut self, cmd_frame: Resp3) -> RutinResult<Option<Resp3>> {
+    pub async fn dispatch(&mut self, cmd_frame: &mut StaticResp3) -> RutinResult<Option<CheapResp3>> {
         ID.scope(self.context.id, dispatch(cmd_frame, self)).await
     }
+}
+
+impl<S: AsyncStream> Drop for Handler<S> {
+    fn drop(&mut self) {
+        let Handler { shared, context: HandlerContext {id, /* background_tasks: background_task , */ .. }  ,.. } = self;
+        // 移除注册的信箱
+        shared.post_office().remove(id);
+        
+        // // 中断后台任务
+        // for task in background_task {
+        //     task.abort();
+        // }
+    } 
 }
 
 #[derive(Debug)]
@@ -173,14 +216,19 @@ pub struct HandlerContext {
     pub outbox: Outbox,
 
     // 客户端订阅的频道
-    pub subscribed_channels: Option<Vec<Key>>,
+    pub subscribed_channels: Vec<Key>,
 
     // 是否开启缓存追踪
     pub client_track: Option<Outbox>,
 
+    // // 后台任务
+    // pub background_tasks: Vec<tokio::task::AbortHandle>,
+
     // 用于缓存需要传播的写命令
     pub wcmd_buf: BytesMut,
     pub back_log: Option<BackLog>,
+
+    pub shutdown: Event,
 }
 
 impl HandlerContext {
@@ -204,18 +252,19 @@ impl HandlerContext {
             user,
             inbox,
             outbox,
-            subscribed_channels: None,
+            subscribed_channels: Vec::new(),
             client_track: None,
             wcmd_buf: BytesMut::new(),
             back_log: None,
+            shutdown: Event::new(),
         }
     }
 
-    pub fn clear(&mut self) {
-        self.subscribed_channels = None;
-        self.client_track = None;
-        self.wcmd_buf.clear();
-    }
+    // pub fn clear(&mut self) {
+    //     self.subscribed_channels = None;
+    //     self.client_track = None;
+    //     self.wcmd_buf.clear();
+    // }
 }
 
 // impl Clone for HandlerContext {

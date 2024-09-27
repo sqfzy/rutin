@@ -4,7 +4,7 @@ use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
-    Ident, Lit, LitByteStr, Pat, PatLit, Token,
+    Generics, Ident, ItemEnum, ItemStruct, Lifetime, Lit, LitByteStr, Pat, PatLit, Token,
 };
 
 /// # Example:
@@ -12,6 +12,7 @@ use syn::{
 /// Get(string, read)
 struct Command {
     name: Ident,
+    lifetime: Option<Generics>,
     categories: Punctuated<Ident, Token![,]>,
 }
 
@@ -19,13 +20,18 @@ struct Command {
 impl Parse for Command {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let name: Ident = input.parse()?;
+        let lifetime = input.parse().ok();
 
         let content;
         syn::parenthesized!(content in input);
 
         let categories = Punctuated::parse_terminated(&content)?;
 
-        Ok(Command { name, categories })
+        Ok(Command {
+            name,
+            lifetime,
+            categories,
+        })
     }
 }
 
@@ -75,6 +81,7 @@ pub fn gen_flag(input: TokenStream) -> TokenStream {
 
     for command in &commands {
         let name = &command.name;
+        let lifetime = &command.lifetime;
 
         let flag_ident = Ident::new(
             &format!("{}_CMD_FLAG", name.to_string().to_uppercase()),
@@ -145,7 +152,7 @@ pub fn gen_flag(input: TokenStream) -> TokenStream {
         let name_uppercase_ident = format_ident!("{}", name_uppercase);
 
         impl_command_flag.push(quote! {
-            impl CommandFlag for #name {
+            impl #lifetime CommandFlag for #name #lifetime {
                 const NAME: &'static str = stringify!(#name_uppercase_ident);
                 const CATS_FLAG: CatFlag = #(#cats_flag_def)|*;
                 const CMD_FLAG: CmdFlag = #flag_ident;
