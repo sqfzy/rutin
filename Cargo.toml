@@ -13,7 +13,7 @@ categories = ["database"]
 
 [workspace]
 # members = ["rutin_proc"]
-members = ["rutin_proc", "dashmap"]
+members = ["rutin_proc", "rutin_dashmap"]
 
 [dependencies]
 rutin_proc = { path = "rutin_proc" }
@@ -22,7 +22,7 @@ bytes = { version = "1", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
 # config = "0.14.0"
 crc = "3.0.1"
-dashmap = { path = "dashmap", features = [
+dashmap = { path = "rutin_dashmap", features = [
   "raw-api",
   "inline",
   "rayon",
