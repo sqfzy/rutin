@@ -5,7 +5,7 @@ use crate::shared::{
 };
 use ahash::{AHashMap, AHashSet};
 use anyhow::bail;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use skiplist::OrderedSkipList;
 use std::collections::VecDeque;
 use tokio::{
@@ -763,201 +763,230 @@ mod lzf {
     }
 }
 
-// #[cfg(test)]
-// mod rdb_test {
-//     use super::rdb_load::*;
-//     use super::rdb_save::*;
-//     use super::*;
-//     use crate::{
-//         server::*,
-//         shared::db::ObjectInner,
-//         util::{get_test_shared, test_init},
-//     };
-//     use bytes::BytesMut;
-//     use tokio::time::Instant;
-//
-//     #[test]
-//     fn rdb_length_codec_test() {
-//         test_init();
-//
-//         let mut buf = BytesMut::with_capacity(1024);
-//         encode_length(&mut buf, 0, None);
-//         assert_eq!(buf.as_ref(), [0]);
-//         let len = decode_length(&mut buf).unwrap();
-//         if let Length::Len(len) = len {
-//             assert_eq!(len, 0);
-//         } else {
-//             panic!("decode length failed");
-//         }
-//         buf.clear();
-//
-//         encode_length(&mut buf, 63, None);
-//         assert_eq!(buf.as_ref(), [63]);
-//         let len = decode_length(&mut buf).unwrap();
-//         if let Length::Len(len) = len {
-//             assert_eq!(len, 63);
-//         } else {
-//             panic!("decode length failed");
-//         }
-//         buf.clear();
-//
-//         encode_length(&mut buf, 64, None);
-//         assert_eq!(buf.as_ref(), [0x40, 64]);
-//         let len = decode_length(&mut buf).unwrap();
-//         if let Length::Len(len) = len {
-//             assert_eq!(len, 64);
-//         } else {
-//             panic!("decode length failed");
-//         }
-//         buf.clear();
-//
-//         encode_length(&mut buf, 16383, None);
-//         assert_eq!(buf.as_ref(), [0x7f, 0xff]);
-//         let len = decode_length(&mut buf).unwrap();
-//         if let Length::Len(len) = len {
-//             assert_eq!(len, 16383);
-//         } else {
-//             panic!("decode length failed");
-//         }
-//         buf.clear();
-//
-//         encode_length(&mut buf, 16384, None);
-//         assert_eq!(buf.as_ref(), [0x80, 0, 0, 0x40, 0]);
-//         let len = decode_length(&mut buf).unwrap();
-//         if let Length::Len(len) = len {
-//             assert_eq!(len, 16384);
-//         } else {
-//             panic!("decode length failed");
-//         }
-//         buf.clear();
-//     }
-//
-//     #[test]
-//     fn rdb_key_codec_test() {
-//         test_init();
-//
-//         let mut buf = BytesMut::with_capacity(1024);
-//         encode_key(&mut buf, "key".as_bytes());
-//         assert_eq!(buf.as_ref(), [3, 107, 101, 121]);
-//         let key = decode_key(&mut buf).unwrap();
-//         assert_eq!(key, "key".as_bytes());
-//         buf.clear();
-//     }
-//
-//     #[tokio::test]
-//     async fn rdb_save_and_load_test() {
-//         test_init();
-//
-//         let shared = get_test_shared();
-//         let db = shared.db();
-//
-//         let str1 = ObjectInner::new_str("hello", *NEVER_EXPIRE);
-//         let str2 = ObjectInner::new_str("10", *NEVER_EXPIRE);
-//         let str3 = ObjectInner::new_str("200", Instant::now() + Duration::from_secs(10));
-//         let str4 = ObjectInner::new_str("hello", Instant::now() + Duration::from_secs(10));
-//
-//         db.insert_object("str1".into(), str1.clone()).await.unwrap();
-//         db.insert_object("str2".into(), str2.clone()).await.unwrap();
-//         db.insert_object("str3".into(), str3.clone()).await.unwrap();
-//         db.insert_object("str4".into(), str4.clone()).await.unwrap();
-//
-//         let l1 = ObjectInner::new_list(List::default(), *NEVER_EXPIRE);
-//         let l2 = ObjectInner::new_list(["v1".into(), "v2".into()], *NEVER_EXPIRE);
-//         let l3 = ObjectInner::new_list(List::default(), Instant::now() + Duration::from_secs(10));
-//         let l4 = ObjectInner::new_list(
-//             vec!["v1".into(), "v2".into()],
-//             Instant::now() + Duration::from_secs(10),
-//         );
-//
-//         db.insert_object("l1".into(), l1.clone()).await.unwrap();
-//         db.insert_object("l2".into(), l2.clone()).await.unwrap();
-//         db.insert_object("l3".into(), l3.clone()).await.unwrap();
-//         db.insert_object("l4".into(), l4.clone()).await.unwrap();
-//
-//         let s1 = ObjectInner::new_set(Set::default(), *NEVER_EXPIRE);
-//         let s2 = ObjectInner::new_set(["v1".into(), "v2".into()], *NEVER_EXPIRE);
-//         let s3 = ObjectInner::new_set(Set::default(), Instant::now() + Duration::from_secs(10));
-//         let s4 = ObjectInner::new_set(
-//             ["v1".into(), "v2".into()],
-//             Instant::now() + Duration::from_secs(10),
-//         );
-//
-//         db.insert_object("s1".into(), s1.clone()).await.unwrap();
-//         db.insert_object("s2".into(), s2.clone()).await.unwrap();
-//         db.insert_object("s3".into(), s3.clone()).await.unwrap();
-//         db.insert_object("s4".into(), s4.clone()).await.unwrap();
-//
-//         let h1 = ObjectInner::new_hash(Hash::default(), *NEVER_EXPIRE);
-//         let h2 = ObjectInner::new_hash(
-//             [("f1".into(), "v1".into()), ("f2".into(), "v2".into())],
-//             *NEVER_EXPIRE,
-//         );
-//         let h3 = ObjectInner::new_hash(Hash::default(), Instant::now() + Duration::from_secs(10));
-//         let h4 = ObjectInner::new_hash(
-//             [("f1".into(), "v1".into()), ("f2".into(), "v2".into())],
-//             Instant::now() + Duration::from_secs(10),
-//         );
-//
-//         db.insert_object("h1".into(), h1.clone()).await.unwrap();
-//         db.insert_object("h2".into(), h2.clone()).await.unwrap();
-//         db.insert_object("h3".into(), h3.clone()).await.unwrap();
-//         db.insert_object("h4".into(), h4.clone()).await.unwrap();
-//
-//         let zs1 = ObjectInner::new_zset(ZSet::default(), *NEVER_EXPIRE);
-//         let zs2 = ObjectInner::new_zset([(1_f64, "v1"), (2_f64, "v2")], *NEVER_EXPIRE);
-//         let zs3 = ObjectInner::new_zset(ZSet::default(), Instant::now() + Duration::from_secs(10));
-//         let zs4 = ObjectInner::new_zset(
-//             [(1_f64, "v1"), (2_f64, "v2")],
-//             Instant::now() + Duration::from_secs(10),
-//         );
-//
-//         db.insert_object("zs1".into(), zs1.clone()).await.unwrap();
-//         db.insert_object("zs2".into(), zs2.clone()).await.unwrap();
-//         db.insert_object("zs3".into(), zs3.clone()).await.unwrap();
-//         db.insert_object("zs4".into(), zs4.clone()).await.unwrap();
-//
-//         let mut rdb = Rdb::new(shared, "tests/rdb/rdb_test.rdb".into(), true);
-//         rdb.save().await.unwrap();
-//
-//         let shared = get_test_shared();
-//         let mut rdb = Rdb::new(shared, "tests/rdb/rdb_test.rdb".into(), true);
-//         rdb.load().await.unwrap();
-//
-//         assert_eq!(
-//             db.get(&"str1".into()).await.unwrap().inner_unchecked(),
-//             &str1
-//         );
-//         assert_eq!(
-//             db.get(&"str2".into()).await.unwrap().inner_unchecked(),
-//             &str2
-//         );
-//         assert_eq!(
-//             db.get(&"str3".into()).await.unwrap().inner_unchecked(),
-//             &str3
-//         );
-//         assert_eq!(
-//             db.get(&"str4".into()).await.unwrap().inner_unchecked(),
-//             &str4
-//         );
-//
-//         assert_eq!(db.get(&"l1".into()).await.unwrap().inner_unchecked(), &l1);
-//         assert_eq!(db.get(&"l2".into()).await.unwrap().inner_unchecked(), &l2);
-//         assert_eq!(db.get(&"l3".into()).await.unwrap().inner_unchecked(), &l3);
-//         assert_eq!(db.get(&"l4".into()).await.unwrap().inner_unchecked(), &l4);
-//
-//         assert_eq!(db.get(&"s1".into()).await.unwrap().inner_unchecked(), &s1);
-//         assert_eq!(db.get(&"s2".into()).await.unwrap().inner_unchecked(), &s2);
-//         assert_eq!(db.get(&"s3".into()).await.unwrap().inner_unchecked(), &s3);
-//         assert_eq!(db.get(&"s4".into()).await.unwrap().inner_unchecked(), &s4);
-//
-//         assert_eq!(db.get(&"h1".into()).await.unwrap().inner_unchecked(), &h1);
-//         assert_eq!(db.get(&"h2".into()).await.unwrap().inner_unchecked(), &h2);
-//         assert_eq!(db.get(&"h3".into()).await.unwrap().inner_unchecked(), &h3);
-//         assert_eq!(db.get(&"h4".into()).await.unwrap().inner_unchecked(), &h4);
-//
-//         assert_eq!(db.get(&"zs1".into()).await.unwrap().inner_unchecked(), &zs1);
-//         assert_eq!(db.get(&"zs2".into()).await.unwrap().inner_unchecked(), &zs2);
-//         assert_eq!(db.get(&"zs3".into()).await.unwrap().inner_unchecked(), &zs3);
-//         assert_eq!(db.get(&"zs4".into()).await.unwrap().inner_unchecked(), &zs4);
-//     }
-// }
+#[cfg(test)]
+mod rdb_test {
+    use super::rdb_load::*;
+    use super::rdb_save::*;
+    use super::*;
+    use crate::{
+        server::*,
+        shared::db::Object,
+        util::{gen_test_shared, test_init, KeyWrapper},
+    };
+    use bytes::BytesMut;
+    use tokio::time::Instant;
+
+    #[test]
+    fn rdb_length_codec_test() {
+        test_init();
+
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_length(&mut buf, 0, None);
+        assert_eq!(buf.as_ref(), [0]);
+        let len = decode_length(&mut buf).unwrap();
+        if let Length::Len(len) = len {
+            assert_eq!(len, 0);
+        } else {
+            panic!("decode length failed");
+        }
+        buf.clear();
+
+        encode_length(&mut buf, 63, None);
+        assert_eq!(buf.as_ref(), [63]);
+        let len = decode_length(&mut buf).unwrap();
+        if let Length::Len(len) = len {
+            assert_eq!(len, 63);
+        } else {
+            panic!("decode length failed");
+        }
+        buf.clear();
+
+        encode_length(&mut buf, 64, None);
+        assert_eq!(buf.as_ref(), [0x40, 64]);
+        let len = decode_length(&mut buf).unwrap();
+        if let Length::Len(len) = len {
+            assert_eq!(len, 64);
+        } else {
+            panic!("decode length failed");
+        }
+        buf.clear();
+
+        encode_length(&mut buf, 16383, None);
+        assert_eq!(buf.as_ref(), [0x7f, 0xff]);
+        let len = decode_length(&mut buf).unwrap();
+        if let Length::Len(len) = len {
+            assert_eq!(len, 16383);
+        } else {
+            panic!("decode length failed");
+        }
+        buf.clear();
+
+        encode_length(&mut buf, 16384, None);
+        assert_eq!(buf.as_ref(), [0x80, 0, 0, 0x40, 0]);
+        let len = decode_length(&mut buf).unwrap();
+        if let Length::Len(len) = len {
+            assert_eq!(len, 16384);
+        } else {
+            panic!("decode length failed");
+        }
+        buf.clear();
+    }
+
+    #[test]
+    fn rdb_key_codec_test() {
+        test_init();
+
+        let mut buf = BytesMut::with_capacity(1024);
+        encode_key(&mut buf, "key".as_bytes());
+        assert_eq!(buf.as_ref(), [3, 107, 101, 121]);
+        let key = decode_key(&mut buf).unwrap();
+        assert_eq!(key.0, "key".as_bytes());
+        buf.clear();
+    }
+
+    #[tokio::test]
+    async fn rdb_save_and_load_test() {
+        test_init();
+
+        let shared = gen_test_shared();
+        let db = shared.db();
+
+        let str1 = Object::with_expire(Str::from("hello"), *NEVER_EXPIRE);
+        let str2 = Object::with_expire(Str::from("10"), *NEVER_EXPIRE);
+        let str3 = Object::with_expire(Str::from("200"), Instant::now() + Duration::from_secs(10));
+        let str4 =
+            Object::with_expire(Str::from("hello"), Instant::now() + Duration::from_secs(10));
+
+        db.insert_object(&KeyWrapper::from("str1"), str1.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("str2"), str2.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("str3"), str3.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("str4"), str4.clone())
+            .await
+            .unwrap();
+
+        let l1 = Object::with_expire(List::default(), *NEVER_EXPIRE);
+        let l2 = Object::with_expire(List::from(["v1".into(), "v2".into()]), *NEVER_EXPIRE);
+        let l3 = Object::with_expire(List::default(), Instant::now() + Duration::from_secs(10));
+        let l4 = Object::with_expire(
+            List::from(["v1".into(), "v2".into()]),
+            Instant::now() + Duration::from_secs(10),
+        );
+
+        db.insert_object(&KeyWrapper::from("l1"), l1.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("l2"), l2.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("l3"), l3.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("l4"), l4.clone())
+            .await
+            .unwrap();
+
+        let s1 = Object::with_expire(Set::default(), *NEVER_EXPIRE);
+        let s2 = Object::with_expire(Set::from(["v1".into(), "v2".into()]), *NEVER_EXPIRE);
+        let s3 = Object::with_expire(Set::default(), Instant::now() + Duration::from_secs(10));
+        let s4 = Object::with_expire(
+            Set::from(["v1".into(), "v2".into()]),
+            Instant::now() + Duration::from_secs(10),
+        );
+
+        db.insert_object(&KeyWrapper::from("s1"), s1.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("s2"), s2.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("s3"), s3.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("s4"), s4.clone())
+            .await
+            .unwrap();
+
+        let h1 = Object::with_expire(Hash::default(), *NEVER_EXPIRE);
+        let h2 = Object::with_expire(
+            Hash::from([("f1".into(), "v1".into()), ("f2".into(), "v2".into())]),
+            *NEVER_EXPIRE,
+        );
+        let h3 = Object::with_expire(Hash::default(), Instant::now() + Duration::from_secs(10));
+        let h4 = Object::with_expire(
+            Hash::from([("f1".into(), "v1".into()), ("f2".into(), "v2".into())]),
+            Instant::now() + Duration::from_secs(10),
+        );
+
+        db.insert_object(&KeyWrapper::from("h1"), h1.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("h2"), h2.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("h3"), h3.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("h4"), h4.clone())
+            .await
+            .unwrap();
+
+        let zs1 = Object::with_expire(ZSet::default(), *NEVER_EXPIRE);
+        let zs2 = Object::with_expire(ZSet::from([(1_f64, "v1"), (2_f64, "v2")]), *NEVER_EXPIRE);
+        let zs3 = Object::with_expire(ZSet::default(), Instant::now() + Duration::from_secs(10));
+        let zs4 = Object::with_expire(
+            ZSet::from([(1_f64, "v1"), (2_f64, "v2")]),
+            Instant::now() + Duration::from_secs(10),
+        );
+
+        db.insert_object(&KeyWrapper::from("zs1"), zs1.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("zs2"), zs2.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("zs3"), zs3.clone())
+            .await
+            .unwrap();
+        db.insert_object(&KeyWrapper::from("zs4"), zs4.clone())
+            .await
+            .unwrap();
+
+        let mut rdb = Rdb::new(shared, "tests/rdb/rdb_test.rdb".into(), true);
+        rdb.save().await.unwrap();
+
+        let shared = gen_test_shared();
+        let mut rdb = Rdb::new(shared, "tests/rdb/rdb_test.rdb".into(), true);
+        rdb.load().await.unwrap();
+
+        assert_eq!(db.get("str1".as_bytes()).await.unwrap().value(), &str1);
+        assert_eq!(db.get("str2".as_bytes()).await.unwrap().value(), &str2);
+        assert_eq!(db.get("str3".as_bytes()).await.unwrap().value(), &str3);
+        assert_eq!(db.get("str4".as_bytes()).await.unwrap().value(), &str4);
+
+        assert_eq!(db.get("l1".as_bytes()).await.unwrap().value(), &l1);
+        assert_eq!(db.get("l2".as_bytes()).await.unwrap().value(), &l2);
+        assert_eq!(db.get("l3".as_bytes()).await.unwrap().value(), &l3);
+        assert_eq!(db.get("l4".as_bytes()).await.unwrap().value(), &l4);
+
+        assert_eq!(db.get("s1".as_bytes()).await.unwrap().value(), &s1);
+        assert_eq!(db.get("s2".as_bytes()).await.unwrap().value(), &s2);
+        assert_eq!(db.get("s3".as_bytes()).await.unwrap().value(), &s3);
+        assert_eq!(db.get("s4".as_bytes()).await.unwrap().value(), &s4);
+
+        assert_eq!(db.get("h1".as_bytes()).await.unwrap().value(), &h1);
+        assert_eq!(db.get("h2".as_bytes()).await.unwrap().value(), &h2);
+        assert_eq!(db.get("h3".as_bytes()).await.unwrap().value(), &h3);
+        assert_eq!(db.get("h4".as_bytes()).await.unwrap().value(), &h4);
+
+        assert_eq!(db.get("zs1".as_bytes()).await.unwrap().value(), &zs1);
+        assert_eq!(db.get("zs2".as_bytes()).await.unwrap().value(), &zs2);
+        assert_eq!(db.get("zs3".as_bytes()).await.unwrap().value(), &zs3);
+        assert_eq!(db.get("zs4".as_bytes()).await.unwrap().value(), &zs4);
+    }
+}

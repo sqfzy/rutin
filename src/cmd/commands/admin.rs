@@ -561,171 +561,171 @@ impl CmdExecutor for ReplicaOf {
     }
 }
 
-// #[tokio::test]
-// async fn cmd_acl_tests() {
-//     use crate::util::TEST_AC_USERNAME;
-//     crate::util::test_init();
-//
-//     let mut handler = Handler::new_fake().0;
-//
-//     let acl_set_user = AclSetUser::parse(
-//         CmdUnparsed::from(
-//             [
-//                 "default_ac",
-//                 "enable",
-//                 "PWD",
-//                 "password",
-//                 "ALLOWCMD",
-//                 "get",
-//                 "DENYCMD",
-//                 "set",
-//                 "ALLOWCAT",
-//                 "string",
-//                 "DENYCAT",
-//                 "hash",
-//                 "DENYRKEY",
-//                 r"foo\d+",
-//                 "DENYWKEY",
-//                 r"bar\d+",
-//                 "DENYCHANNEL",
-//                 "channel*",
-//             ]
-//             .as_ref(),
-//         ),
-//         &AccessControl::new_loose(),
-//     )
-//     .unwrap();
-//
-//     let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
-//     assert_eq!(resp.as_simple_string_uncheckd(), "OK");
-//
-//     let acl_set_user = AclSetUser::parse(
-//         CmdUnparsed::from(
-//             [
-//                 "user",
-//                 "enable",
-//                 "PWD",
-//                 "password",
-//                 "ALLOWCMD",
-//                 "get",
-//                 "DENYCMD",
-//                 "set",
-//                 "ALLOWCAT",
-//                 "string",
-//                 "DENYCAT",
-//                 "hash",
-//                 "DENYRKEY",
-//                 r"foo\d+",
-//                 "DENYWKEY",
-//                 r"bar\d+",
-//                 "DENYCHANNEL",
-//                 "channel*",
-//             ]
-//             .as_ref(),
-//         ),
-//         &AccessControl::new_loose(),
-//     )
-//     .unwrap();
-//
-//     let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
-//     assert_eq!(resp.as_simple_string_uncheckd(), "OK");
-//
-//     {
-//         let default_ac = handler.shared.conf().security.default_ac.load();
-//         let user_ac = handler
-//             .shared
-//             .conf()
-//             .security
-//             .acl
-//             .as_ref()
-//             .unwrap()
-//             .get("user".as_bytes())
-//             .unwrap();
-//
-//         assert_eq!(default_ac.enable, user_ac.enable);
-//         assert_eq!(default_ac.password, user_ac.password);
-//         assert_eq!(
-//             default_ac
-//                 .deny_read_key_patterns
-//                 .as_ref()
-//                 .unwrap()
-//                 .patterns(),
-//             user_ac.deny_read_key_patterns.as_ref().unwrap().patterns()
-//         );
-//         assert_eq!(
-//             default_ac
-//                 .deny_write_key_patterns
-//                 .as_ref()
-//                 .unwrap()
-//                 .patterns(),
-//             user_ac.deny_write_key_patterns.as_ref().unwrap().patterns()
-//         );
-//         assert_eq!(
-//             default_ac
-//                 .deny_channel_patterns
-//                 .as_ref()
-//                 .unwrap()
-//                 .patterns(),
-//             user_ac.deny_channel_patterns.as_ref().unwrap().patterns()
-//         );
-//     }
-//
-//     {
-//         let user = handler
-//             .shared
-//             .conf()
-//             .security
-//             .acl
-//             .as_ref()
-//             .unwrap()
-//             .get("user".as_bytes())
-//             .unwrap();
-//         let ac = user.value();
-//
-//         assert!(ac.enable);
-//         assert_eq!(ac.password.as_ref(), b"password");
-//
-//         assert!(!ac.is_forbidden_cmd(Get::CMD_FLAG));
-//         assert!(ac.is_forbidden_cmd(Set::CMD_FLAG));
-//         assert!(ac.is_forbidden_cmd(HDel::CMD_FLAG));
-//         assert!(!ac.is_forbidden_cmd(MSet::CMD_FLAG));
-//
-//         assert!(ac.deny_reading_or_writing_key(b"foo1", READ_CAT_FLAG));
-//         assert!(!ac.deny_reading_or_writing_key(b"foo", READ_CAT_FLAG));
-//         assert!(ac.deny_reading_or_writing_key(b"bar1", WRITE_CAT_FLAG));
-//         assert!(!ac.deny_reading_or_writing_key(b"bar", WRITE_CAT_FLAG));
-//
-//         assert!(ac.is_forbidden_channel(b"channel"));
-//         assert!(!ac.is_forbidden_channel(b"chan"));
-//     }
-//
-//     let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-//
-//     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
-//     let res = resp.as_array_uncheckd();
-//     assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
-//     assert!(res.contains(&Resp3::new_blob_string("user".into())));
-//     assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
-//
-//     let acl_whoami = AclWhoAmI::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-//     AclWhoAmI::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-//
-//     let resp = acl_whoami.execute(&mut handler).await.unwrap().unwrap();
-//     assert_eq!(resp.as_blob_string_uncheckd(), "default_ac");
-//
-//     let acl_deluser = AclDelUser::parse(
-//         CmdUnparsed::from(["user"].as_ref()),
-//         &AccessControl::new_loose(),
-//     )
-//     .unwrap();
-//
-//     let resp = acl_deluser.execute(&mut handler).await.unwrap().unwrap();
-//     assert_eq!(resp.as_integer_uncheckd(), 1);
-//
-//     let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-//
-//     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
-//     let res = resp.as_array_uncheckd();
-//     assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
-//     assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
-// }
+#[tokio::test]
+async fn cmd_acl_tests() {
+    use crate::util::TEST_AC_USERNAME;
+    crate::util::test_init();
+
+    let mut handler = Handler::new_fake().0;
+
+    let acl_set_user = AclSetUser::parse(
+        gen_cmdunparsed_test(
+            [
+                "default_ac",
+                "enable",
+                "PWD",
+                "password",
+                "ALLOWCMD",
+                "get",
+                "DENYCMD",
+                "set",
+                "ALLOWCAT",
+                "string",
+                "DENYCAT",
+                "hash",
+                "DENYRKEY",
+                r"foo\d+",
+                "DENYWKEY",
+                r"bar\d+",
+                "DENYCHANNEL",
+                "channel*",
+            ]
+            .as_ref(),
+        ),
+        &AccessControl::new_loose(),
+    )
+    .unwrap();
+
+    let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
+    assert_eq!(resp.as_simple_string_uncheckd(), "OK");
+
+    let acl_set_user = AclSetUser::parse(
+        gen_cmdunparsed_test(
+            [
+                "user",
+                "enable",
+                "PWD",
+                "password",
+                "ALLOWCMD",
+                "get",
+                "DENYCMD",
+                "set",
+                "ALLOWCAT",
+                "string",
+                "DENYCAT",
+                "hash",
+                "DENYRKEY",
+                r"foo\d+",
+                "DENYWKEY",
+                r"bar\d+",
+                "DENYCHANNEL",
+                "channel*",
+            ]
+            .as_ref(),
+        ),
+        &AccessControl::new_loose(),
+    )
+    .unwrap();
+
+    let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
+    assert_eq!(resp.as_simple_string_uncheckd(), "OK");
+
+    {
+        let default_ac = handler.shared.conf().security.default_ac.load();
+        let user_ac = handler
+            .shared
+            .conf()
+            .security
+            .acl
+            .as_ref()
+            .unwrap()
+            .get("user".as_bytes())
+            .unwrap();
+
+        assert_eq!(default_ac.enable, user_ac.enable);
+        assert_eq!(default_ac.password, user_ac.password);
+        assert_eq!(
+            default_ac
+                .deny_read_key_patterns
+                .as_ref()
+                .unwrap()
+                .patterns(),
+            user_ac.deny_read_key_patterns.as_ref().unwrap().patterns()
+        );
+        assert_eq!(
+            default_ac
+                .deny_write_key_patterns
+                .as_ref()
+                .unwrap()
+                .patterns(),
+            user_ac.deny_write_key_patterns.as_ref().unwrap().patterns()
+        );
+        assert_eq!(
+            default_ac
+                .deny_channel_patterns
+                .as_ref()
+                .unwrap()
+                .patterns(),
+            user_ac.deny_channel_patterns.as_ref().unwrap().patterns()
+        );
+    }
+
+    {
+        let user = handler
+            .shared
+            .conf()
+            .security
+            .acl
+            .as_ref()
+            .unwrap()
+            .get("user".as_bytes())
+            .unwrap();
+        let ac = user.value();
+
+        assert!(ac.enable);
+        assert_eq!(ac.password.as_ref(), b"password");
+
+        assert!(!ac.is_forbidden_cmd(Get::CMD_FLAG));
+        assert!(ac.is_forbidden_cmd(Set::CMD_FLAG));
+        assert!(ac.is_forbidden_cmd(HDel::CMD_FLAG));
+        assert!(!ac.is_forbidden_cmd(MSet::CMD_FLAG));
+
+        assert!(ac.deny_reading_or_writing_key(b"foo1", READ_CAT_FLAG));
+        assert!(!ac.deny_reading_or_writing_key(b"foo", READ_CAT_FLAG));
+        assert!(ac.deny_reading_or_writing_key(b"bar1", WRITE_CAT_FLAG));
+        assert!(!ac.deny_reading_or_writing_key(b"bar", WRITE_CAT_FLAG));
+
+        assert!(ac.is_forbidden_channel(b"channel"));
+        assert!(!ac.is_forbidden_channel(b"chan"));
+    }
+
+    let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+
+    let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
+    let res = resp.as_array_uncheckd();
+    assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
+    assert!(res.contains(&Resp3::new_blob_string("user".into())));
+    assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
+
+    let acl_whoami = AclWhoAmI::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+    AclWhoAmI::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+
+    let resp = acl_whoami.execute(&mut handler).await.unwrap().unwrap();
+    assert_eq!(resp.as_blob_string_uncheckd(), "default_ac");
+
+    let acl_deluser = AclDelUser::parse(
+        gen_cmdunparsed_test(["user"].as_ref()),
+        &AccessControl::new_loose(),
+    )
+    .unwrap();
+
+    let resp = acl_deluser.execute(&mut handler).await.unwrap().unwrap();
+    assert_eq!(resp.as_integer_uncheckd(), 1);
+
+    let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
+
+    let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
+    let res = resp.as_array_uncheckd();
+    assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
+    assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
+}

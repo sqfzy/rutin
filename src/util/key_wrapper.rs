@@ -3,7 +3,7 @@ use equivalent::Equivalent;
 use crate::Key;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct KeyWrapper(Key);
+pub struct KeyWrapper(pub Key);
 
 impl Equivalent<Key> for KeyWrapper {
     fn equivalent(&self, other: &Key) -> bool {

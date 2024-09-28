@@ -1,9 +1,8 @@
 use crate::{frame::leak_bytes, shared::db::Str, Key};
 use bytes::BytesMut;
 use equivalent::Equivalent;
-use std::{cmp::PartialEq, ops::Deref};
+use std::{cmp::PartialEq, fmt::Debug, hash::Hash, ops::Deref};
 
-#[derive(Debug, Hash, PartialEq, Eq)]
 pub enum StaticBytes {
     Const(&'static [u8]),
     Mut(&'static mut [u8]),
@@ -38,7 +37,10 @@ impl StaticBytes {
                 let mut buf = [0; L];
                 buf[..s.len()].copy_from_slice(s);
                 buf.make_ascii_uppercase();
-                Uppercase::Const(buf)
+                Uppercase::Const {
+                    data: buf,
+                    len: s.len(),
+                }
             }
             Self::Mut(s) => {
                 s.make_ascii_uppercase();
@@ -52,6 +54,18 @@ impl StaticBytes {
             Self::Const(_) => panic!("cannot mutate const bytes"),
             Self::Mut(s) => s,
         }
+    }
+}
+
+impl Hash for StaticBytes {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_ref().hash(state)
+    }
+}
+
+impl PartialEq<StaticBytes> for StaticBytes {
+    fn eq(&self, other: &StaticBytes) -> bool {
+        self.as_ref() == other.as_ref()
     }
 }
 
@@ -126,6 +140,15 @@ impl AsRef<[u8]> for StaticBytes {
     }
 }
 
+impl Debug for StaticBytes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Const(s) => write!(f, "{}", String::from_utf8_lossy(s)),
+            Self::Mut(s) => write!(f, "{}", String::from_utf8_lossy(s)),
+        }
+    }
+}
+
 impl mlua::FromLua<'_> for StaticBytes {
     fn from_lua(value: mlua::Value<'_>, _lua: &'_ mlua::Lua) -> mlua::Result<Self> {
         match value {
@@ -146,7 +169,7 @@ impl mlua::IntoLua<'_> for StaticBytes {
 }
 
 pub enum Uppercase<const L: usize> {
-    Const([u8; L]),
+    Const { data: [u8; L], len: usize },
     Mut(StaticBytes),
 }
 
@@ -161,8 +184,17 @@ impl<const L: usize> Deref for Uppercase<L> {
 impl<const L: usize> AsRef<[u8]> for Uppercase<L> {
     fn as_ref(&self) -> &[u8] {
         match self {
-            Self::Const(s) => s,
+            Self::Const { data, len } => &data[..*len],
             Self::Mut(s) => s.as_ref(),
+        }
+    }
+}
+
+impl PartialEq<[u8]> for Uppercase<32> {
+    fn eq(&self, other: &[u8]) -> bool {
+        match self {
+            Self::Const { data, len } => &data[..*len] == other,
+            Self::Mut(s) => s == other,
         }
     }
 }

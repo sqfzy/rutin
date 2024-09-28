@@ -3,16 +3,13 @@ mod object_entry;
 
 use std::fmt::Debug;
 
-use bytes::Bytes;
 pub use object::*;
 pub use object_entry::ObjectEntry;
 
 use crate::{
     conf::MemoryConf,
     error::{RutinError, RutinResult},
-    server::NEVER_EXPIRE,
     shared::Outbox,
-    util::StaticBytes,
     Key,
 };
 use ahash::RandomState;

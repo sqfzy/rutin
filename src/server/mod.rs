@@ -29,7 +29,10 @@ use std::{
 use tokio::{task_local, time::Instant};
 use tracing::{error, info};
 
+#[cfg(not(feature = "test_util"))]
 pub static SHARED: LazyLock<Shared> = LazyLock::new(Shared::new);
+#[cfg(feature = "test_util")]
+pub static SHARED: LazyLock<Shared> = LazyLock::new(crate::util::gen_test_shared);
 
 // 程序运行前或测试前需要进行初始化
 pub fn preface() {

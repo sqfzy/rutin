@@ -1,11 +1,11 @@
 use crate::{
     error::{RutinError, RutinResult},
-    util::{to_valid_range, StaticBytes},
+    util::to_valid_range,
     Int,
 };
 use atoi::atoi;
 use bytes::{BufMut, Bytes, BytesMut};
-use std::{borrow::Borrow, mem::size_of};
+use std::mem::size_of;
 use strum::{EnumDiscriminants, IntoStaticStr};
 
 pub macro str_as_bytes($str:expr) {
@@ -146,7 +146,7 @@ impl Str {
             }
             Self::Int(i) => {
                 let mut raw = BytesMut::from(itoa::Buffer::new().format(*i).as_bytes());
-                raw.put_slice(&other);
+                raw.put_slice(other);
                 // 尝试将新的Str解析为Int，如果解析成功则更新Int的值，否则变为Raw
                 if let Some(new_num) = atoi(&raw) {
                     *i = new_num;

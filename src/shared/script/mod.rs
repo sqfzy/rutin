@@ -6,17 +6,17 @@ pub use lua::*;
 
 #[derive(Debug, Default)]
 pub struct Script {
-    // pub lua_script: LuaScript,
+    pub lua_script: LuaScript,
 }
 
 impl Script {
     pub fn new() -> Self {
         Script {
-            // lua_script: LuaScript::default(),
+            lua_script: LuaScript::default(),
         }
     }
 
     pub fn clear(&self) {
-        // self.lua_script.clear();
+        self.lua_script.clear();
     }
 }

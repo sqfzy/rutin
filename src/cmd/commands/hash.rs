@@ -209,12 +209,12 @@ impl CmdExecutor for HSet {
 #[cfg(test)]
 mod cmd_hash_tests {
     use super::*;
-    use crate::util::test_init;
+    use crate::util::{gen_test_handler, test_init};
 
     #[tokio::test]
     async fn hdel_test() {
         test_init();
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let hset = HSet::parse(
             gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
@@ -251,7 +251,7 @@ mod cmd_hash_tests {
     #[tokio::test]
     async fn hexists_test() {
         test_init();
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let hset = HSet::parse(
             gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
@@ -287,7 +287,7 @@ mod cmd_hash_tests {
     #[tokio::test]
     async fn hget_test() {
         test_init();
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let hset = HSet::parse(
             gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
@@ -320,7 +320,7 @@ mod cmd_hash_tests {
     #[tokio::test]
     async fn hset_test() {
         test_init();
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let hset = HSet::parse(
             gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),

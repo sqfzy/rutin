@@ -128,71 +128,72 @@ pub async fn dispatch(
         Auth::NAME => Auth::apply(cmd, handler).await,
         Echo::NAME => Echo::apply(cmd, handler).await,
         Ping::NAME => Ping::apply(cmd, handler).await,
-        // /************/
-        // /* keyspace */
-        // /************/
-        // Del::NAME => Del::apply(cmd, handler).await,
-        // Dump::NAME => Dump::apply(cmd, handler).await,
-        // Exists::NAME => Exists::apply(cmd, handler).await,
-        // Expire::NAME => Expire::apply(cmd, handler).await,
-        // ExpireAt::NAME => ExpireAt::apply(cmd, handler).await,
-        // ExpireTime::NAME => ExpireTime::apply(cmd, handler).await,
-        // Keys::NAME => Keys::apply(cmd, handler).await,
+        /************/
+        /* keyspace */
+        /************/
+        Del::NAME => Del::apply(cmd, handler).await,
+        Dump::NAME => Dump::apply(cmd, handler).await,
+        Exists::NAME => Exists::apply(cmd, handler).await,
+        Expire::NAME => Expire::apply(cmd, handler).await,
+        ExpireAt::NAME => ExpireAt::apply(cmd, handler).await,
+        ExpireTime::NAME => ExpireTime::apply(cmd, handler).await,
+        Keys::NAME => Keys::apply(cmd, handler).await,
         // NBKeys::NAME => NBKeys::apply(cmd, handler).await,
-        // Persist::NAME => Persist::apply(cmd, handler).await,
-        // Pttl::NAME => Pttl::apply(cmd, handler).await,
-        // Ttl::NAME => Ttl::apply(cmd, handler).await,
-        // Type::NAME => Type::apply(cmd, handler).await,
+        Persist::NAME => Persist::apply(cmd, handler).await,
+        Pttl::NAME => Pttl::apply(cmd, handler).await,
+        Ttl::NAME => Ttl::apply(cmd, handler).await,
+        Type::NAME => Type::apply(cmd, handler).await,
         /**********/
         /* string */
         /**********/
-        // Append::NAME => Append::apply(cmd, handler).await,
-        // Decr::NAME => Decr::apply(cmd, handler).await,
-        // DecrBy::NAME => DecrBy::apply(cmd, handler).await,
+        Append::NAME => Append::apply(cmd, handler).await,
+        Decr::NAME => Decr::apply(cmd, handler).await,
+        DecrBy::NAME => DecrBy::apply(cmd, handler).await,
         Get::NAME => Get::apply(cmd, handler).await,
-        // GetRange::NAME => GetRange::apply(cmd, handler).await,
-        // GetSet::NAME => GetSet::apply(cmd, handler).await,
-        // Incr::NAME => Incr::apply(cmd, handler).await,
-        // IncrBy::NAME => IncrBy::apply(cmd, handler).await,
-        // MGet::NAME => MGet::apply(cmd, handler).await,
-        // MSet::NAME => MSet::apply(cmd, handler).await,
-        // MSetNx::NAME => MSetNx::apply(cmd, handler).await,
+        GetRange::NAME => GetRange::apply(cmd, handler).await,
+        GetSet::NAME => GetSet::apply(cmd, handler).await,
+        Incr::NAME => Incr::apply(cmd, handler).await,
+        IncrBy::NAME => IncrBy::apply(cmd, handler).await,
+        MGet::NAME => MGet::apply(cmd, handler).await,
+        MSet::NAME => MSet::apply(cmd, handler).await,
+        MSetNx::NAME => MSetNx::apply(cmd, handler).await,
         Set::NAME => Set::apply(cmd, handler).await,
-        // SetEx::NAME => SetEx::apply(cmd, handler).await,
-        // SetNx::NAME => SetNx::apply(cmd, handler).await,
-        // StrLen::NAME => StrLen::apply(cmd, handler).await,
-        // /********/
-        // /* list */
-        // /********/
-        // BLMove::NAME => BLMove::apply(cmd, handler).await,
-        // BLPop::NAME => BLPop::apply(cmd, handler).await,
-        // LLen::NAME => LLen::apply(cmd, handler).await,
-        // LPop::NAME => LPop::apply(cmd, handler).await,
-        // LPos::NAME => LPos::apply(cmd, handler).await,
-        // LPush::NAME => LPush::apply(cmd, handler).await,
+        SetEx::NAME => SetEx::apply(cmd, handler).await,
+        SetNx::NAME => SetNx::apply(cmd, handler).await,
+        StrLen::NAME => StrLen::apply(cmd, handler).await,
+        /********/
+        /* list */
+        /********/
+        BLMove::NAME => BLMove::apply(cmd, handler).await,
+        BLPop::NAME => BLPop::apply(cmd, handler).await,
+        LLen::NAME => LLen::apply(cmd, handler).await,
+        LPop::NAME => LPop::apply(cmd, handler).await,
+        LPos::NAME => LPos::apply(cmd, handler).await,
+        LPush::NAME => LPush::apply(cmd, handler).await,
         // NBLPop::NAME => NBLPop::apply(cmd, handler).await,
-        // /********/
-        // /* hash */
-        // /********/
-        // HDel::NAME => HDel::apply(cmd, handler).await,
-        // HExists::NAME => HExists::apply(cmd, handler).await,
-        // HGet::NAME => HGet::apply(cmd, handler).await,
-        // HSet::NAME => HSet::apply(cmd, handler).await,
-        // /**********/
-        // /* pubsub */
-        // /**********/
-        // Publish::NAME => Publish::apply(cmd, handler).await,
-        // Subscribe::NAME => Subscribe::apply(cmd, handler).await,
-        // Unsubscribe::NAME => Unsubscribe::apply(cmd, handler).await,
-        // /*************/
-        // /* scripting */
-        // /*************/
-        // Eval::NAME => Eval::apply(cmd, handler).await,
-        // EvalName::NAME => EvalName::apply(cmd, handler).await,
+        /********/
+        /* hash */
+        /********/
+        HDel::NAME => HDel::apply(cmd, handler).await,
+        HExists::NAME => HExists::apply(cmd, handler).await,
+        HGet::NAME => HGet::apply(cmd, handler).await,
+        HSet::NAME => HSet::apply(cmd, handler).await,
+        /**********/
+        /* pubsub */
+        /**********/
+        Publish::NAME => Publish::apply(cmd, handler).await,
+        Subscribe::NAME => Subscribe::apply(cmd, handler).await,
+        Unsubscribe::NAME => Unsubscribe::apply(cmd, handler).await,
+        /*************/
+        /* scripting */
+        /*************/
+        Eval::NAME => Eval::apply(cmd, handler).await,
+        EvalName::NAME => EvalName::apply(cmd, handler).await,
 
         // 命令中包含子命令
         _ => {
-            let sub_cmd_name = cmd.next_uppercase::<16>().ok_or(RutinError::Syntax)?;
+            let sub_cmd_name = cmd.next_uppercase::<16>().ok_or(RutinError::UnknownCmd)?;
+
             let sub_cmd_name = if let Ok(s) = std::str::from_utf8(sub_cmd_name.as_ref()) {
                 s
             } else {
@@ -318,7 +319,9 @@ impl<'a> TryFrom<&'a mut StaticResp3> for CmdUnparsed<'a> {
     fn try_from(value: &'a mut StaticResp3) -> Result<Self, Self::Error> {
         match value {
             Resp3::Array { inner, .. } => Ok(Self { inner }),
-            _ => Err(RutinError::Syntax),
+            _ => Err(RutinError::Other {
+                msg: "ERR the command frame is not an array type".into(),
+            }),
         }
     }
 }

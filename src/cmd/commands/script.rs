@@ -4,16 +4,16 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
-    util::{atoi, StaticBytesMut},
+    util::{atoi, StaticBytes},
 };
 use bytes::Bytes;
 use tracing::instrument;
 
 #[derive(Debug)]
 pub struct Eval {
-    script: StaticBytesMut,
-    keys: Vec<Bytes>,
-    args: Vec<Bytes>,
+    script: StaticBytes,
+    keys: Vec<StaticBytes>,
+    args: Vec<StaticBytes>,
 }
 
 impl CmdExecutor for Eval {
@@ -26,7 +26,7 @@ impl CmdExecutor for Eval {
             .shared
             .script()
             .lua_script
-            .eval(handler, self.script, self.keys, self.args)
+            .eval(handler, &self.script, self.keys, self.args)
             .await?;
 
         Ok(Some(res))
@@ -57,9 +57,9 @@ impl CmdExecutor for Eval {
 
 #[derive(Debug)]
 pub struct EvalName {
-    name: Bytes,
-    keys: Vec<Bytes>,
-    args: Vec<Bytes>,
+    name: StaticBytes,
+    keys: Vec<StaticBytes>,
+    args: Vec<StaticBytes>,
 }
 
 impl CmdExecutor for EvalName {
@@ -72,7 +72,7 @@ impl CmdExecutor for EvalName {
             .shared
             .script()
             .lua_script
-            .eval_name(handler, self.name, self.keys, self.args)
+            .eval_name(handler, &self.name, self.keys, self.args)
             .await?;
 
         Ok(Some(res))
@@ -103,7 +103,7 @@ impl CmdExecutor for EvalName {
 
 #[derive(Debug)]
 pub struct ScriptExists {
-    names: Vec<Bytes>,
+    names: Vec<StaticBytes>,
 }
 
 impl CmdExecutor for ScriptExists {
@@ -116,7 +116,7 @@ impl CmdExecutor for ScriptExists {
             .names
             .iter()
             .map(|name| {
-                let res = handler.shared.script().lua_script.contain(name);
+                let res = handler.shared.script().lua_script.contain(name.as_ref());
                 Resp3::<Bytes, bytestring::ByteString>::new_boolean(res)
             })
             .collect();
@@ -160,8 +160,8 @@ impl CmdExecutor for ScriptFlush {
 
 #[derive(Debug)]
 pub struct ScriptRegister {
-    name: Bytes,
-    script: Bytes,
+    name: StaticBytes,
+    script: StaticBytes,
 }
 
 impl CmdExecutor for ScriptRegister {
@@ -174,7 +174,7 @@ impl CmdExecutor for ScriptRegister {
             .shared
             .script()
             .lua_script
-            .register_script(self.name, self.script)?;
+            .register_script(&self.name, &self.script)?;
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
@@ -193,14 +193,16 @@ impl CmdExecutor for ScriptRegister {
 
 #[cfg(test)]
 mod cmd_script_tests {
+    use crate::{cmd::gen_cmdunparsed_test, util::gen_test_handler};
+
     use super::*;
 
     #[tokio::test]
     async fn eval_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let eval = Eval::parse(
-            ["return 1", "0"].as_ref().into(),
+            gen_cmdunparsed_test(["return 1", "0"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -208,9 +210,9 @@ mod cmd_script_tests {
         assert_eq!(res, Resp3::new_integer(1));
 
         let eval = Eval::parse(
-            ["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(
+                ["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"].as_ref(),
+            ),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -218,9 +220,7 @@ mod cmd_script_tests {
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let eval = Eval::parse(
-            ["return redis.call('get', KEYS[1])", "1", "key"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(["return redis.call('get', KEYS[1])", "1", "key"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -230,12 +230,10 @@ mod cmd_script_tests {
 
     #[tokio::test]
     async fn script_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let script_register = ScriptRegister::parse(
-            ["test", "redis.call('set', KEYS[1], ARGV[1])"]
-                .as_ref()
-                .into(),
+            gen_cmdunparsed_test(["test", "redis.call('set', KEYS[1], ARGV[1])"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -247,7 +245,7 @@ mod cmd_script_tests {
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
         let script_exists = ScriptExists::parse(
-            ["test", "nothing"].as_ref().into(),
+            gen_cmdunparsed_test(["test", "nothing"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -258,7 +256,7 @@ mod cmd_script_tests {
         );
 
         let eval_name = EvalName::parse(
-            ["test", "1", "key", "value"].as_ref().into(),
+            gen_cmdunparsed_test(["test", "1", "key", "value"].as_ref()),
             &AccessControl::new_loose(),
         )
         .unwrap();
@@ -270,8 +268,11 @@ mod cmd_script_tests {
         let res = script_flush.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_simple_string("OK".into()));
 
-        let script_exists =
-            ScriptExists::parse(["test"].as_ref().into(), &AccessControl::new_loose()).unwrap();
+        let script_exists = ScriptExists::parse(
+            gen_cmdunparsed_test(["test"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
         let res = script_exists.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(res, Resp3::new_array(vec![Resp3::new_boolean(false)]));
     }

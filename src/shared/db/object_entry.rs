@@ -5,11 +5,11 @@ use crate::{
     error::{RutinError, RutinResult},
     Key,
 };
-use dashmap::mapref::{entry::OccupiedEntry, entry_ref};
+use dashmap::mapref::entry_ref;
 
 pub type StaticEntryRef<'a, 'b, Q> = entry_ref::EntryRef<'a, 'b, Key, Q, Object>;
 pub type StaticOccupiedEntryRef<'a> = entry_ref::OccupiedEntryRef<'a, Key, Object>;
-pub type StaticVacantEntryRef<'a, Q> = entry_ref::VacantEntryRef<'a, 'static, Key, Q, Object>;
+// pub type StaticVacantEntryRef<'a, Q> = entry_ref::VacantEntryRef<'a, 'static, Key, Q, Object>;
 
 // ObjectEntry的对象在一定时间内是合法的，应当尽快使用
 //
@@ -19,12 +19,6 @@ pub type StaticVacantEntryRef<'a, Q> = entry_ref::VacantEntryRef<'a, 'static, Ke
 pub struct ObjectEntry<'a, 'b, Q: ?Sized> {
     pub(super) inner: StaticEntryRef<'a, 'b, Q>,
 }
-
-// impl<'a> ObjectEntry<'a> {
-//     pub fn new(entry: Entry<'a, Key, Object>, db: &'a Db) -> Self {
-//         Self { inner: entry, db }
-//     }
-// }
 
 impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
     #[inline]
@@ -49,7 +43,7 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
     pub fn expire(&self) -> Option<Instant> {
         if let StaticEntryRef::Occupied(e) = &self.inner {
             let obj = e.get();
-            Events::try_trigger_read_event(&obj);
+            Events::try_trigger_read_event(obj);
 
             return Some(obj.expire);
         }
@@ -140,7 +134,7 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
         match self.inner {
             StaticEntryRef::Occupied(_) => self,
             StaticEntryRef::Vacant(e) => {
-                let new_entry = e.insert_entry(value.into());
+                let new_entry = e.insert_entry(value);
 
                 StaticEntryRef::Occupied(new_entry).into()
             }
@@ -155,7 +149,7 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
         match self.inner {
             StaticEntryRef::Occupied(_) => self,
             StaticEntryRef::Vacant(e) => {
-                let new_entry = e.insert_entry(value().into());
+                let new_entry = e.insert_entry(value());
 
                 StaticEntryRef::Occupied(new_entry).into()
             }
@@ -173,7 +167,7 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
         match self.inner {
             StaticEntryRef::Occupied(_) => Ok(self),
             StaticEntryRef::Vacant(e) => {
-                let new_entry = e.insert_entry(value()?.into());
+                let new_entry = e.insert_entry(value()?);
 
                 Ok(StaticEntryRef::Occupied(new_entry).into())
             }

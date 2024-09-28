@@ -5,16 +5,15 @@ use crate::{
         object_entry::{StaticEntryRef, StaticOccupiedEntryRef},
         Object,
     },
-    util::StaticBytes,
     Id, Key,
 };
 use ahash::RandomState;
 use dashmap::{
     mapref::{
-        entry_ref::{EntryRef, OccupiedEntryRef},
+        entry_ref::EntryRef,
         one::{Ref, RefMut},
     },
-    DashMap, OccupiedEntry,
+    DashMap,
 };
 use std::{
     fmt::{self, Debug, Formatter},

@@ -10,7 +10,7 @@ mod hash;
 mod key;
 mod list;
 mod pub_sub;
-// mod script;
+mod script;
 // mod set;
 mod str;
 // mod zset;
@@ -21,7 +21,7 @@ pub use hash::*;
 pub use key::*;
 pub use list::*;
 pub use pub_sub::*;
-// pub use script::*;
+pub use script::*;
 pub use str::*;
 
 use super::*;
@@ -108,14 +108,14 @@ gen_flag!(
     Publish(pubsub),
     Subscribe(pubsub),
     Unsubscribe(pubsub),
-    // /*************/
-    // /* scripting */
-    // /*************/
-    // Eval(scripting),
-    // EvalName(scripting),
-    // ScriptExists(scripting),
-    // ScriptFlush(scripting),
-    // ScriptRegister(scripting)
+    /*************/
+    /* scripting */
+    /*************/
+    Eval(scripting),
+    EvalName(scripting),
+    ScriptExists(scripting),
+    ScriptFlush(scripting),
+    ScriptRegister(scripting)
 );
 
 // 调用前应将name转为大写

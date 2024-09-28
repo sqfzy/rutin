@@ -1,12 +1,14 @@
+#![allow(unreachable_code)]
+
 use crate::{
-    cmd::commands::{CmdFlag /*  EXISTS_CMD_FLAG */},
+    cmd::commands::CmdFlag,
     conf::{
         gen_run_id, AccessControl, Acl, AofConf, Conf, MasterConf, MemoryConf, RdbConf,
         ReplicaConf, SecurityConf, ServerConf,
     },
     persist::aof::AppendFSync,
-    server::preface,
-    shared::{db::Db, Shared},
+    server::{preface, FakeHandler},
+    shared::Shared,
 };
 use arc_swap::ArcSwap;
 use std::sync::Once;
@@ -24,6 +26,9 @@ pub const TEST_AC_PASSWORD: &str = "test_pwd";
 pub const TEST_AC_CMDS_FLAG: CmdFlag = 1;
 
 pub fn test_init() {
+    #[cfg(not(feature = "test_util"))]
+    panic!("need to enable test_util feature");
+
     static INIT: Once = Once::new();
 
     INIT.call_once(|| {
@@ -35,7 +40,10 @@ pub fn test_init() {
     });
 }
 
-pub fn get_test_config() -> Conf {
+pub fn gen_test_config() -> Conf {
+    #[cfg(not(feature = "test_util"))]
+    panic!("need to enable test_util feature");
+
     let acl = Acl::new();
     acl.insert(
         TEST_AC_USERNAME.into(),
@@ -93,10 +101,16 @@ pub fn get_test_config() -> Conf {
     }
 }
 
-pub fn get_test_db() -> Db {
-    Db::new(get_test_config().memory.clone())
+pub fn gen_test_handler() -> FakeHandler {
+    #[cfg(not(feature = "test_util"))]
+    panic!("need to enable test_util feature");
+
+    FakeHandler::new_fake_with(Shared::with_conf(gen_test_config()), None, None).0
 }
 
-pub fn get_test_shared() -> Shared {
-    Shared::with_conf(get_test_config())
+pub fn gen_test_shared() -> Shared {
+    #[cfg(not(feature = "test_util"))]
+    panic!("need to enable test_util feature");
+
+    Shared::with_conf(gen_test_config())
 }

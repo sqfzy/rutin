@@ -845,13 +845,13 @@ impl TryFrom<&[u8]> for Where {
 #[cfg(test)]
 mod cmd_list_tests {
     use super::*;
-    use crate::util::test_init;
+    use crate::util::{gen_test_handler, test_init};
     use tokio::time::sleep;
 
     #[tokio::test]
     async fn llen_test() {
         test_init();
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let llen = LLen::parse(
             gen_cmdunparsed_test(["list"].as_ref()),
@@ -907,7 +907,7 @@ mod cmd_list_tests {
     #[tokio::test]
     async fn push_pop_test() {
         test_init();
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
 
         let lpush = LPush::parse(
             gen_cmdunparsed_test(["list", "key1"].as_ref()),
@@ -972,7 +972,7 @@ mod cmd_list_tests {
         /***************/
         /* 非阻塞测试 */
         /***************/
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let lpush = LPush::parse(
             gen_cmdunparsed_test(["l1", "key1a", "key1", "key1c"].as_ref()),
             &AccessControl::new_loose(),
@@ -1107,7 +1107,7 @@ mod cmd_list_tests {
     // async fn nblpop_test() {
     //     test_init();
     //
-    //     let (mut handler, _) = Handler::new_fake();
+    //     let mut handler = gen_test_handler();
     //
     //     /************/
     //     /* 普通测试 */
@@ -1249,7 +1249,7 @@ mod cmd_list_tests {
     async fn lpos_test() {
         test_init();
 
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let lpush = LPush::parse(
             gen_cmdunparsed_test(["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"].as_ref()),
             &AccessControl::new_loose(),

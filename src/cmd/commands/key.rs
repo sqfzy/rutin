@@ -733,7 +733,7 @@ mod cmd_key_tests {
     use crate::{
         server::{NEVER_EXPIRE, UNIX_EPOCH},
         shared::db::{Hash, List, Object, Set, Str, ZSet},
-        util::KeyWrapper,
+        util::{gen_test_handler, KeyWrapper},
     };
 
     // 允许的时间误差
@@ -741,7 +741,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn del_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -774,7 +774,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn exists_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -806,7 +806,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn expire_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -987,7 +987,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn expire_at_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -1172,7 +1172,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn expire_time_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -1223,7 +1223,7 @@ mod cmd_key_tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn keys_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -1309,7 +1309,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn persist_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -1365,7 +1365,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn pttl_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -1423,7 +1423,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn ttl_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(
@@ -1481,7 +1481,7 @@ mod cmd_key_tests {
 
     #[tokio::test]
     async fn type_test() {
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
         let db = handler.shared.db();
 
         db.insert_object(

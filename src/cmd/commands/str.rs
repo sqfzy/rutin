@@ -881,7 +881,7 @@ impl CmdExecutor for StrLen {
 #[cfg(test)]
 mod cmd_str_tests {
     use super::*;
-    use crate::util::test_init;
+    use crate::util::{gen_test_handler, test_init};
     use std::{
         thread::sleep,
         time::{Duration, SystemTime},
@@ -890,7 +890,23 @@ mod cmd_str_tests {
     #[tokio::test]
     async fn get_and_set_test() {
         test_init();
-        let (mut handler, _) = Handler::new_fake();
+        let mut handler = gen_test_handler();
+
+        handler
+            .shared
+            .db()
+            .entry(&StaticBytes::from("key".as_bytes()))
+            .await
+            .unwrap()
+            .insert2(Object::with_expire(Str::from("value"), *NEVER_EXPIRE));
+
+        assert!(
+            handler
+                .shared
+                .db()
+                .contains_object(&StaticBytes::from("key".as_bytes()))
+                .await
+        );
 
         /************************************/
         /* 测试简单的无过期时间的键值对存取 */

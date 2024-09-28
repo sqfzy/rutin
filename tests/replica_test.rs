@@ -11,8 +11,7 @@ fn check_command_installed(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-// TODO:
-// #[test]
+#[test]
 fn replica_redis_test() {
     test_init();
 

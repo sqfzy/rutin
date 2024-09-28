@@ -65,8 +65,8 @@ pub type Attributes<B, S> = AHashMap<Resp3<B, S>, Resp3<B, S>>;
 #[strum_discriminants(vis(pub), name(Resp3Type))]
 pub enum Resp3<B, S>
 where
-    B: AsRef<[u8]> + PartialEq + std::fmt::Debug + PartialEq,
-    S: AsRef<str> + PartialEq + std::fmt::Debug + PartialEq,
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
 {
     // +<str>\r\n
     SimpleString {
@@ -2137,7 +2137,11 @@ where
 {
 }
 
-impl<S: AsRef<str> + PartialEq + std::fmt::Debug> mlua::IntoLua<'_> for Resp3<Bytes, S> {
+impl<B, S> mlua::IntoLua<'_> for Resp3<B, S>
+where
+    B: AsRef<[u8]> + PartialEq + std::fmt::Debug,
+    S: AsRef<str> + PartialEq + std::fmt::Debug,
+{
     fn into_lua(self, lua: &'_ Lua) -> LuaResult<LuaValue<'_>> {
         match self {
             // SimpleString -> Lua Table { ok: Lua String }
@@ -2179,7 +2183,7 @@ impl<S: AsRef<str> + PartialEq + std::fmt::Debug> mlua::IntoLua<'_> for Resp3<By
                 Ok(LuaValue::Table(table))
             }
             // BlobError -> Lua String
-            Resp3::BlobError { inner, .. } => inner.into_lua(lua),
+            Resp3::BlobError { inner, .. } => inner.as_ref().into_lua(lua),
             // Lua table with a single verbatim_string field containing a Lua table with two fields, string and format, representing the verbatim string and its format, respectively.
             // VerbatimString -> Lua Table { verbatim_string: Lua Table { string: Lua String, format: Lua String } }
             Resp3::VerbatimString {
@@ -2404,6 +2408,162 @@ impl FromLua<'_> for StaticResp3 {
                 for pair in table.pairs::<usize, Value>() {
                     let ele = pair?.1;
                     array.push_back(Resp3::from_lua(ele, lua)?);
+                }
+
+                Ok(Resp3::Array {
+                    inner: array,
+                    attributes: None,
+                })
+            }
+            _ => Err(mlua::Error::FromLuaConversionError {
+                from: value.type_name(),
+                to: "RESP3",
+                message: Some("invalid value type".to_string()),
+            }),
+        }
+    }
+}
+
+impl FromLua<'_> for CheapResp3 {
+    fn from_lua(value: LuaValue<'_>, _lua: &'_ Lua) -> LuaResult<Self> {
+        match value {
+            // Lua String -> Blob
+            LuaValue::String(s) => Ok(Resp3::BlobString {
+                inner: Bytes::copy_from_slice(s.as_bytes()),
+                attributes: None,
+            }),
+            // Lua String -> SimpleError
+            LuaValue::Integer(n) => Ok(Resp3::Integer {
+                inner: n as Int,
+                attributes: None,
+            }),
+            // Lua Number -> Double
+            LuaValue::Number(n) => Ok(Resp3::Double {
+                inner: n,
+                attributes: None,
+            }),
+            // Lua Nil -> Null
+            LuaValue::Nil => Ok(Resp3::Null),
+            // Lua Boolean -> Boolean
+            LuaValue::Boolean(b) => Ok(Resp3::Boolean {
+                inner: b,
+                attributes: None,
+            }),
+            // Lua Table { ok: Lua String } -> SimpleString
+            // Lua Table { err: Lua String } -> SimpleError
+            // Lua Table { verbatim_string: Lua Table { string: Lua String, format: Lua String } } -> VerbatimString
+            // Lua Table { map: Lua Table } -> Map
+            // Lua Table { set: Lua Table } -> Set
+            // Lua Table { push: Lua Table } -> Push
+            // Lua Table -> Array
+            LuaValue::Table(table) => {
+                let ok = table.raw_get("ok")?;
+
+                if let LuaValue::String(state) = ok {
+                    return Ok(Resp3::SimpleString {
+                        inner: ByteString::from(state.to_str()?),
+                        attributes: None,
+                    });
+                }
+
+                let err = table.raw_get("err")?;
+
+                if let LuaValue::String(e) = err {
+                    return Ok(Resp3::SimpleError {
+                        inner: ByteString::from(e.to_str()?),
+                        attributes: None,
+                    });
+                }
+
+                let verbatim_string = table.raw_get("verbatim_string")?;
+
+                if let LuaValue::Table(verbatim_string) = verbatim_string {
+                    let format: mlua::String = verbatim_string.raw_get("format")?;
+                    let format = format.as_bytes().try_into().map_err(|_| {
+                        mlua::Error::FromLuaConversionError {
+                            from: "table",
+                            to: "RESP3::VerbatimString",
+                            message: Some("invalid encoding format".to_string()),
+                        }
+                    })?;
+
+                    let data: mlua::String = verbatim_string.raw_get("string")?;
+
+                    return Ok(Resp3::VerbatimString {
+                        format,
+                        data: Bytes::copy_from_slice(data.as_bytes()),
+                        attributes: None,
+                    });
+                }
+
+                let map = table.raw_get("map")?;
+
+                if let LuaValue::Table(map) = map {
+                    let mut map_table = AHashMap::new();
+                    for pair in map.pairs::<LuaValue, LuaValue>() {
+                        let (k, v) = pair?;
+                        let k = Resp3::from_lua(k, _lua)?;
+                        let v = Resp3::from_lua(v, _lua)?;
+                        map_table.insert(k, v);
+                    }
+
+                    return Ok(Resp3::Map {
+                        inner: map_table,
+                        attributes: None,
+                    });
+                }
+
+                let set = table.raw_get("set")?;
+
+                if let LuaValue::Table(set) = set {
+                    let mut set_table = AHashSet::new();
+                    for pair in set.pairs::<LuaValue, bool>() {
+                        let (f, _) = pair?;
+                        let f = Resp3::from_lua(f, _lua)?;
+                        set_table.insert(f);
+                    }
+
+                    return Ok(Resp3::Set {
+                        inner: set_table,
+                        attributes: None,
+                    });
+                }
+
+                // let push = table.raw_get("push")?;
+                //
+                // if let LuaValue::Table(push) = push {
+                //     let mut push_table = Vec::with_capacity(push.raw_len());
+                //     for pair in push.pairs::<usize, LuaValue>() {
+                //         let ele = pair?.1;
+                //         push_table.push(RESP3::from_lua(ele, _lua)?);
+                //     }
+                //
+                //     return Ok(RESP3::Push {
+                //         inner: push_table,
+                //         attributes: None,
+                //     });
+                // }
+                //
+                // let chunk = table.raw_get("chunk")?;
+                //
+                // if let LuaValue::Table(chunk) = chunk {
+                //     let mut chunk_table = Vec::with_capacity(chunk.raw_len());
+                //     for pair in chunk.pairs::<usize, LuaValue>() {
+                //         let ele = pair?.1;
+                //
+                //         debug_assert!(ele.is_string());
+                //
+                //         let ele = ele.as_string().unwrap();
+                //         chunk_table.push(Bytes::copy_from_slice(ele.as_bytes()));
+                //     }
+                //
+                //     return Ok(RESP3::ChunkedString(chunk_table));
+                // }
+
+                let mut array = VecDeque::with_capacity(table.raw_len());
+                for pair in table.pairs::<usize, Value>() {
+                    let ele = pair?.1;
+                    array.push_back(Resp3::from_lua(ele, _lua)?);
                 }
 
                 Ok(Resp3::Array {
@@ -2797,14 +2957,14 @@ mod frame_tests {
         let cases = vec![
             (
                 StaticResp3::SimpleString {
-                    inner: leak_str("OK"),
+                    inner: leak_str_mut("OK".to_string().leak()),
                     attributes: None,
                 },
                 b"+OK\r\n".to_vec(),
             ),
             (
                 StaticResp3::SimpleError {
-                    inner: leak_str("ERR"),
+                    inner: leak_str_mut("ERR".to_string().leak()),
                     attributes: None,
                 },
                 b"-ERR\r\n".to_vec(),
@@ -2887,11 +3047,11 @@ mod frame_tests {
                         let mut map = AHashMap::new();
                         map.insert(
                             StaticResp3::SimpleString {
-                                inner: leak_str("key"),
+                                inner: leak_str_mut("key".to_string().leak()),
                                 attributes: None,
                             },
                             StaticResp3::SimpleString {
-                                inner: leak_str("value"),
+                                inner: leak_str_mut("value".to_string().leak()),
                                 attributes: None,
                             },
                         );
@@ -2906,7 +3066,7 @@ mod frame_tests {
                     inner: {
                         let mut set = AHashSet::new();
                         set.insert(StaticResp3::SimpleString {
-                            inner: leak_str("element"),
+                            inner: leak_str_mut("element".to_string().leak()),
                             attributes: None,
                         });
                         set
@@ -2918,7 +3078,7 @@ mod frame_tests {
             (
                 StaticResp3::Push {
                     inner: vec![StaticResp3::SimpleString {
-                        inner: leak_str("push"),
+                        inner: leak_str_mut("push".to_string().leak()),
                         attributes: None,
                     }],
                     attributes: None,
@@ -2936,7 +3096,10 @@ mod frame_tests {
             (
                 StaticResp3::Hello {
                     version: 1,
-                    auth: Some((leak_str("user"), leak_str("password"))),
+                    auth: Some((
+                        leak_str_mut("user".to_string().leak()),
+                        leak_str_mut("password".to_string().leak()),
+                    )),
                 },
                 b"HELLO 1 AUTH user password\r\n".to_vec(),
             ),

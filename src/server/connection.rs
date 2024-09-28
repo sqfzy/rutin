@@ -1,6 +1,7 @@
 use crate::{
     error::{RutinError, RutinResult},
     frame::{decode, Resp3, StaticResp3},
+    util::StaticBytes,
 };
 use bytes::{Buf, BytesMut};
 use flume::{
@@ -99,11 +100,11 @@ impl<S: AsyncStream> Connection<S> {
         self.stream.read_buf(self.reader_buf.get_mut()).await
     }
 
-    // pub async fn read_line(&mut self) -> RutinResult<BytesMut> {
-    //     let mut cursor = Cursor::new(&mut self.reader_buf);
-    //
-    //     Resp3::decode_line_async(&mut self.stream, &mut Cursor::new(&mut self.reader_buf)).await
-    // }
+    pub async fn read_line(&mut self) -> RutinResult<StaticBytes> {
+        Resp3::decode_line_async(&mut self.stream, &mut self.reader_buf)
+            .await
+            .map(|b| b.into())
+    }
 
     #[inline]
     pub async fn write_buf<B: Buf>(&mut self, buf: &mut B) -> io::Result<usize> {
@@ -473,7 +474,7 @@ impl PinnedDrop for FakeStream {
 #[cfg(test)]
 mod fake_cs_tests {
     use super::*;
-    use crate::{frame::leak_str, util::test_init};
+    use crate::{frame::leak_str_mut, util::test_init};
     use bytes::Bytes;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -547,15 +548,15 @@ mod fake_cs_tests {
         }
 
         let right_res = vec![
-            StaticResp3::new_simple_string(leak_str("OK")),
-            StaticResp3::new_simple_error(leak_str("Error message")),
+            StaticResp3::new_simple_string(leak_str_mut("OK".to_string().leak())),
+            StaticResp3::new_simple_error(leak_str_mut("Error message".to_string().leak())),
             StaticResp3::new_integer(1000),
             StaticResp3::new_blob_string(b"foobar".as_ref().into()),
             StaticResp3::new_blob_string(b"".as_ref().into()),
             StaticResp3::new_null(),
             StaticResp3::new_array(vec![
-                StaticResp3::new_simple_string(leak_str("simple")),
-                StaticResp3::new_simple_error(leak_str("error")),
+                StaticResp3::new_simple_string(leak_str_mut("simple".to_string().leak())),
+                StaticResp3::new_simple_error(leak_str_mut("error".to_string().leak())),
                 StaticResp3::new_integer(1000),
                 StaticResp3::new_blob_string(b"bulk".as_ref().into()),
                 StaticResp3::new_null(),
@@ -669,15 +670,15 @@ mod fake_cs_tests {
         }
 
         let right_res = vec![
-            StaticResp3::new_simple_string(leak_str("OK")),
-            StaticResp3::new_simple_error(leak_str("Error message")),
+            StaticResp3::new_simple_string(leak_str_mut("OK".to_string().leak())),
+            StaticResp3::new_simple_error(leak_str_mut("Error message".to_string().leak())),
             StaticResp3::new_integer(1000),
             StaticResp3::new_blob_string(b"foobar".as_ref().into()),
             StaticResp3::new_blob_string(b"".as_ref().into()),
             StaticResp3::new_null(),
             StaticResp3::new_array(vec![
-                StaticResp3::new_simple_string(leak_str("simple")),
-                StaticResp3::new_simple_error(leak_str("error")),
+                StaticResp3::new_simple_string(leak_str_mut("simple".to_string().leak())),
+                StaticResp3::new_simple_error(leak_str_mut("error".to_string().leak())),
                 StaticResp3::new_integer(1000),
                 StaticResp3::new_blob_string(b"bulk".as_ref().into()),
                 StaticResp3::new_null(),

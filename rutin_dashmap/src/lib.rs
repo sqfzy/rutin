@@ -474,36 +474,36 @@ impl<'a, K: 'a + Eq + Hash, V: 'a, S: BuildHasher + Clone> DashMap<K, V, S> {
         self._insert(key, value)
     }
 
-    pub fn insert2<Q>(&self, key: &Q, value: V, f: impl FnOnce(&Q) -> K) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: Hash + Eq + ?Sized,
-    {
-        let hash = self.hash_u64(&key);
-
-        let idx = self.determine_shard(hash as usize);
-
-        let mut shard = unsafe { self._yield_write_shard(idx) };
-
-        match shard.find_or_find_insert_slot(
-            hash,
-            |(k, _v)| key == k.borrow(),
-            |(k, _v)| {
-                let mut hasher = self.hasher.build_hasher();
-                k.hash(&mut hasher);
-                hasher.finish()
-            },
-        ) {
-            Ok(elem) => {
-                let (_k, v) = unsafe { elem.as_mut() };
-                Some(std::mem::replace(v.get_mut(), value))
-            }
-            Err(slot) => unsafe {
-                shard.insert_in_slot(hash, slot, (f(key), SharedValue::new(value)));
-                None
-            },
-        }
-    }
+    // pub fn insert2<Q>(&self, key: &Q, value: V, f: impl FnOnce(&Q) -> K) -> Option<V>
+    // where
+    //     K: Borrow<Q>,
+    //     Q: Hash + Eq + ?Sized,
+    // {
+    //     let hash = self.hash_u64(&key);
+    //
+    //     let idx = self.determine_shard(hash as usize);
+    //
+    //     let mut shard = unsafe { self._yield_write_shard(idx) };
+    //
+    //     match shard.find_or_find_insert_slot(
+    //         hash,
+    //         |(k, _v)| key == k.borrow(),
+    //         |(k, _v)| {
+    //             let mut hasher = self.hasher.build_hasher();
+    //             k.hash(&mut hasher);
+    //             hasher.finish()
+    //         },
+    //     ) {
+    //         Ok(elem) => {
+    //             let (_k, v) = unsafe { elem.as_mut() };
+    //             Some(std::mem::replace(v.get_mut(), value))
+    //         }
+    //         Err(slot) => unsafe {
+    //             shard.insert_in_slot(hash, slot, (f(key), SharedValue::new(value)));
+    //             None
+    //         },
+    //     }
+    // }
 
     /// Removes an entry from the map, returning the key and value if they existed in the map.
     ///

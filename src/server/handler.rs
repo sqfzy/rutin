@@ -3,10 +3,10 @@ use crate::{
     cmd::dispatch,
     conf::{AccessControl, DEFAULT_USER},
     error::RutinResult,
-    frame::{CheapResp3, StaticResp3, Resp3},
-    server::{AsyncStream, Connection, FakeStream},
+    frame::{CheapResp3, Resp3, StaticResp3},
+    server::{AsyncStream, Connection, FakeStream, SHARED},
     shared::{Inbox, Letter, Outbox, Shared, NULL_ID},
-    util::{get_test_shared, BackLog},
+    util::BackLog,
     Id, Key,
 };
 use bytes::BytesMut;
@@ -289,11 +289,11 @@ pub type FakeHandler = Handler<FakeStream>;
 
 impl Handler<FakeStream> {
     pub fn new_fake() -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(get_test_shared(), None, None)
+        Self::new_fake_with(*SHARED, None, None)
     }
 
     pub fn with_capacity(capacity: usize) -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(get_test_shared(), None, Some(capacity))
+        Self::new_fake_with(*SHARED, None, Some(capacity))
     }
 
     pub fn with_shared(shared: Shared) -> (Self, Connection<FakeStream>) {

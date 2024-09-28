@@ -1,28 +1,27 @@
 use std::time::Instant;
 
-use bytes::{Bytes, BytesMut};
-use bytestring::ByteString;
+use bytes::BytesMut;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rutin::{
-    frame::{CheapResp3, StaticResp3, Resp3, Resp3Decoder, Resp3Encoder},
+    frame::{leak_bytes, Resp3Decoder, Resp3Encoder, StaticResp3},
     server::{Handler, HandlerContext},
     shared::NULL_ID,
     util::get_test_shared,
 };
 use tokio_util::codec::{Decoder, Encoder};
 
-fn gen_get_cmd(key: &str) -> StaticResp3<'static> {
+fn gen_get_cmd(key: &str) -> StaticResp3 {
     StaticResp3::new_array(vec![
-        StaticResp3::new_blob_string(b"GET".to_vec().leak()),
-        StaticResp3::new_blob_string(key.into()),
+        StaticResp3::new_blob_string(leak_bytes(b"GET")),
+        StaticResp3::new_blob_string(leak_bytes(key.as_ref())),
     ])
 }
 
-fn gen_set_cmd(key: &str, value: &str) -> StaticResp3<'static> {
+fn gen_set_cmd(key: &str, value: &str) -> StaticResp3 {
     StaticResp3::new_array(vec![
-        StaticResp3::new_blob_string(b"SET".to_vec().leak()),
-        StaticResp3::new_blob_string(key.into()),
-        StaticResp3::new_blob_string(value.into()),
+        StaticResp3::new_blob_string(leak_bytes(b"SET")),
+        StaticResp3::new_blob_string(leak_bytes(key.as_bytes())),
+        StaticResp3::new_blob_string(leak_bytes(value.as_bytes())),
     ])
 }
 
@@ -50,9 +49,9 @@ fn bench_encode(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut buf = BytesMut::with_capacity(1024);
 
-            let resp3 = Resp3::<Bytes, ByteString>::new_array(vec![
-                Resp3::new_blob_string("GET".into()),
-                Resp3::new_blob_string("key".into()),
+            let resp3 = StaticResp3::new_array(vec![
+                StaticResp3::new_blob_string(leak_bytes(b"GET")),
+                StaticResp3::new_blob_string(leak_bytes(b"key")),
             ]);
 
             let mut encoder = Resp3Encoder;
@@ -73,9 +72,9 @@ fn bench_decode(c: &mut Criterion) {
         b.iter_custom(|iters| {
             let mut buf = BytesMut::with_capacity(1024);
 
-            let resp3 = Resp3::<Bytes, ByteString>::new_array(vec![
-                Resp3::new_blob_string("GET".into()),
-                Resp3::new_blob_string("key".into()),
+            let resp3 = StaticResp3::new_array(vec![
+                StaticResp3::new_blob_string(leak_bytes(b"GET")),
+                StaticResp3::new_blob_string(leak_bytes(b"key")),
             ]);
 
             let mut encoder = Resp3Encoder;
@@ -177,21 +176,17 @@ fn bench_create_handler(c: &mut Criterion) {
 fn bench_get_cmd(c: &mut Criterion) {
     c.bench_function("bench_get_cmd", |b| {
         let rt = tokio::runtime::Runtime::new().unwrap();
+
         b.to_async(rt).iter_custom(|iters| async move {
+            let mut set_cmd = gen_set_cmd(black_box("key"), black_box("value"));
+            let mut get_cmd = gen_get_cmd(black_box("key"));
+
             let (mut handler, _client) = Handler::new_fake();
-            handler
-                .dispatch(gen_set_cmd(black_box("key"), black_box("value")))
-                .await
-                .unwrap()
-                .unwrap();
+            handler.dispatch(&mut set_cmd).await.unwrap().unwrap();
 
             let start = Instant::now();
             for _ in 0..iters {
-                handler
-                    .dispatch(gen_get_cmd(black_box("key")))
-                    .await
-                    .unwrap()
-                    .unwrap();
+                handler.dispatch(&mut get_cmd).await.unwrap().unwrap();
             }
             start.elapsed()
         })
@@ -202,15 +197,15 @@ fn bench_get_cmd(c: &mut Criterion) {
 fn bench_set_cmd(c: &mut Criterion) {
     c.bench_function("bench_set_cmd", |b| {
         let rt = tokio::runtime::Runtime::new().unwrap();
+
         b.to_async(rt).iter_custom(|iters| async move {
+            let mut set_cmd = gen_set_cmd(black_box("key"), black_box("value"));
+
             let (mut handler, _client) = Handler::new_fake();
+
             let start = Instant::now();
             for _ in 0..iters {
-                handler
-                    .dispatch(gen_set_cmd(black_box("key"), black_box("value")))
-                    .await
-                    .unwrap()
-                    .unwrap();
+                handler.dispatch(&mut set_cmd).await.unwrap().unwrap();
             }
             start.elapsed()
         })

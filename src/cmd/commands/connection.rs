@@ -219,66 +219,68 @@ impl CmdExecutor for ClientTracking {
     }
 }
 
-// #[cfg(test)]
-// mod cmd_other_tests {
-//     use super::*;
-//     use crate::{
-//         conf::AccessControl,
-//         util::{get_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD, TEST_AC_USERNAME},
-//     };
-//
-//     #[tokio::test]
-//     async fn auth_test() {
-//         test_init();
-//
-//         let shared = get_test_shared();
-//         let (mut handler, _) = Handler::new_fake_with(shared, None, None);
-//
-//         let auth = Auth::parse(
-//             CmdUnparsed::from([TEST_AC_USERNAME, "1234567"].as_ref()),
-//             &AccessControl::new_loose(),
-//         )
-//         .unwrap();
-//         let res = auth.execute(&mut handler).await;
-//         assert_eq!(res.unwrap_err().to_string(), "ERR invalid password");
-//
-//         let auth = Auth::parse(
-//             CmdUnparsed::from(["admin1", TEST_AC_PASSWORD].as_ref()),
-//             &AccessControl::new_loose(),
-//         )
-//         .unwrap();
-//         let res = auth.execute(&mut handler).await;
-//         assert_eq!(res.unwrap_err().to_string(), "ERR invalid username");
-//
-//         let auth = Auth::parse(
-//             CmdUnparsed::from([TEST_AC_USERNAME, TEST_AC_PASSWORD].as_ref()),
-//             &AccessControl::new_loose(),
-//         )
-//         .unwrap();
-//         auth.execute(&mut handler).await.unwrap();
-//         assert_eq!(handler.context.ac.cmd_flag(), TEST_AC_CMDS_FLAG);
-//     }
-//
-//     #[tokio::test]
-//     async fn client_tracking_test() {
-//         test_init();
-//
-//         let (mut handler, _) = Handler::new_fake();
-//
-//         let tracking = ClientTracking::parse(
-//             CmdUnparsed::from(["ON"].as_ref()),
-//             &AccessControl::new_loose(),
-//         )
-//         .unwrap();
-//         tracking.execute(&mut handler).await.unwrap();
-//         assert!(handler.context.client_track.is_some());
-//
-//         let tracking = ClientTracking::parse(
-//             CmdUnparsed::from(["OFF"].as_ref()),
-//             &AccessControl::new_loose(),
-//         )
-//         .unwrap();
-//         tracking.execute(&mut handler).await.unwrap();
-//         assert!(handler.context.client_track.is_none());
-//     }
-// }
+#[cfg(test)]
+mod cmd_other_tests {
+    use super::*;
+    use crate::{
+        cmd::gen_cmdunparsed_test,
+        conf::AccessControl,
+        server::SHARED,
+        util::{gen_test_handler, gen_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD, TEST_AC_USERNAME},
+    };
+
+    #[tokio::test]
+    async fn auth_test() {
+        test_init();
+
+        let shared = gen_test_shared();
+        let (mut handler, _) = Handler::new_fake_with(shared, None, None);
+
+        let auth = Auth::parse(
+            gen_cmdunparsed_test([TEST_AC_USERNAME, "1234567"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let res = auth.execute(&mut handler).await;
+        assert_eq!(res.unwrap_err().to_string(), "ERR invalid password");
+
+        let auth = Auth::parse(
+            gen_cmdunparsed_test(["admin1", TEST_AC_PASSWORD].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        let res = auth.execute(&mut handler).await;
+        assert_eq!(res.unwrap_err().to_string(), "ERR invalid username");
+
+        let auth = Auth::parse(
+            gen_cmdunparsed_test([TEST_AC_USERNAME, TEST_AC_PASSWORD].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        auth.execute(&mut handler).await.unwrap();
+        assert_eq!(handler.context.ac.cmd_flag(), TEST_AC_CMDS_FLAG);
+    }
+
+    #[tokio::test]
+    async fn client_tracking_test() {
+        test_init();
+
+        let mut handler = gen_test_handler();
+
+        let tracking = ClientTracking::parse(
+            gen_cmdunparsed_test(["ON"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        tracking.execute(&mut handler).await.unwrap();
+        assert!(handler.context.client_track.is_some());
+
+        let tracking = ClientTracking::parse(
+            gen_cmdunparsed_test(["OFF"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        tracking.execute(&mut handler).await.unwrap();
+        assert!(handler.context.client_track.is_none());
+    }
+}
