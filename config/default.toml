@@ -1,10 +1,10 @@
 [server]
 host = "127.0.0.1"
-port = 6379                     # 服务器端口
-expire_check_interval_secs = 10 # 检查过期键的频率，单位为秒
-log_level = "off"               # 日志级别
-max_connections = 256           # 最大连接数
-max_batch = 2                   # 最大批量操作数
+port = 6379        # 服务器端口
+# expire_check_interval_secs = 10 # 检查过期键的频率，单位为秒
+log_level = "off"     # 日志级别
+max_connections = 256 # 最大连接数
+max_batch = 2         # 最大批量操作数
 
 [security]
 # 默认ACL，必须设置。设置后，所有连接初始化时都会使用该ACL。default_ac不设置密码
@@ -57,7 +57,12 @@ read_only = true
 # # auto-aof-rewrite-percentage 100
 # # auto-aof-rewrite-min-size 64mb
 
-# [memory]
+[memory]
+
+[memory.expiration_evict]
+samples_count = 800
+
+# [memory.oom]
 #
 # maxmemory = 1844674407370955161
 #
@@ -90,7 +95,7 @@ read_only = true
 #
 # maxmemory_policy = "noeviction"
 #
-# maxmemory_samples = 5
+# maxmemory_samples_count = 5
 
 # [tls]
 # port = 6379

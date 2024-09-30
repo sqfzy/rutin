@@ -26,7 +26,7 @@ impl Shared {
     }
 
     pub fn with_conf(conf: Conf) -> Self {
-        let db = Db::new(conf.memory.clone());
+        let db = Db::new(conf.memory.oom.clone());
         let script = Script::new();
         let post_office = PostOffice::new();
 

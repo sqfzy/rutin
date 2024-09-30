@@ -34,7 +34,7 @@ pub struct Conf {
     pub replica: ReplicaConf,
     pub rdb: Option<RdbConf>,
     pub aof: Option<AofConf>,
-    pub memory: Option<MemoryConf>,
+    pub memory: MemoryConf,
     pub tls: Option<TLSConf>,
 }
 

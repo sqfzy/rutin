@@ -4,6 +4,7 @@ mod replica;
 mod r#static;
 mod test;
 mod unsafe_lazy;
+mod uppercase;
 
 pub use key_wrapper::*;
 pub use master::*;
@@ -11,6 +12,7 @@ pub use r#static::*;
 pub use replica::*;
 pub use test::*;
 pub use unsafe_lazy::*;
+pub use uppercase::*;
 
 use crate::{
     error::{A2IParseSnafu, RutinError, RutinResult},

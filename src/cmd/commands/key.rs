@@ -8,7 +8,7 @@ use crate::{
         encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
     },
     server::{AsyncStream, Handler, NEVER_EXPIRE, UNIX_EPOCH},
-    shared::db::ObjectValueType,
+    shared::{db::ObjectValueType, Letter},
     util::atoi,
     Int,
 };
@@ -430,18 +430,20 @@ pub struct Keys {
     pub pattern: StaticBytes,
 }
 
-// TODO: 提供非阻塞操作
 impl CmdExecutor for Keys {
     #[instrument(level = "debug", skip(handler), ret, err)]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
+        let shared = handler.shared;
+        let outbox = handler.context.outbox.clone();
         let re = regex::bytes::Regex::new(std::str::from_utf8(&self.pattern)?)?;
 
-        let matched_keys = tokio::task::block_in_place(|| {
-            let db = handler.shared.db();
-            let matched_keys = db
+        // 避免阻塞woker thread
+        tokio::task::spawn_blocking(move || {
+            let matched_keys = shared
+                .db()
                 .entries
                 .iter()
                 .filter_map(|entry| {
@@ -450,10 +452,12 @@ impl CmdExecutor for Keys {
                 })
                 .collect::<Vec<CheapResp3>>();
 
-            matched_keys
+            outbox
+                .send(Letter::Resp3(Resp3::new_array(matched_keys)))
+                .ok();
         });
 
-        Ok(Some(Resp3::new_array(matched_keys)))
+        Ok(None)
     }
 
     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
@@ -816,7 +820,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         assert_eq!(
-            db.get("key1".as_bytes()).await.unwrap().expire,
+            db.get_object("key1".as_bytes()).await.unwrap().expire,
             *NEVER_EXPIRE
         );
 
@@ -831,7 +835,7 @@ mod cmd_key_tests {
         assert!(!handler
             .shared
             .db()
-            .get("key1".as_bytes())
+            .get_object("key1".as_bytes())
             .await
             .unwrap()
             .is_never_expired(),);
@@ -996,7 +1000,11 @@ mod cmd_key_tests {
         )
         .await
         .unwrap();
-        assert!(db.get("key1".as_bytes()).await.unwrap().is_never_expired());
+        assert!(db
+            .get_object("key1".as_bytes())
+            .await
+            .unwrap()
+            .is_never_expired());
 
         // case: 键存在，设置过期时间
         let expire_at = ExpireAt::parse(
@@ -1015,7 +1023,7 @@ mod cmd_key_tests {
         assert!(!handler
             .shared
             .db()
-            .get("key1".as_bytes())
+            .get_object("key1".as_bytes())
             .await
             .unwrap()
             .is_never_expired());
@@ -1181,7 +1189,11 @@ mod cmd_key_tests {
         )
         .await
         .unwrap();
-        assert!(db.get("key1".as_bytes()).await.unwrap().is_never_expired());
+        assert!(db
+            .get_object("key1".as_bytes())
+            .await
+            .unwrap()
+            .is_never_expired());
         let expire = Instant::now() + Duration::from_secs(10);
         db.insert_object(
             &KeyWrapper::from("key_with_ex"),
@@ -1256,11 +1268,12 @@ mod cmd_key_tests {
             &AccessControl::new_loose(),
         )
         .unwrap();
-        let result = keys
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
+        keys.execute(&mut handler).await.unwrap();
+        let result = handler
+            .context
+            .inbox
+            .recv()
+            .as_resp3_unchecked()
             .try_array()
             .unwrap()
             .clone();
@@ -1276,11 +1289,12 @@ mod cmd_key_tests {
             &AccessControl::new_loose(),
         )
         .unwrap();
-        let result = keys
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
+        keys.execute(&mut handler).await.unwrap();
+        let result = handler
+            .context
+            .inbox
+            .recv()
+            .as_resp3_unchecked()
             .try_array()
             .unwrap()
             .clone();
@@ -1296,11 +1310,12 @@ mod cmd_key_tests {
             &AccessControl::new_loose(),
         )
         .unwrap();
-        let result = keys
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
+        keys.execute(&mut handler).await.unwrap();
+        let result = handler
+            .context
+            .inbox
+            .recv()
+            .as_resp3_unchecked()
             .try_array()
             .unwrap()
             .clone();
@@ -1339,7 +1354,7 @@ mod cmd_key_tests {
         assert!(handler
             .shared
             .db()
-            .get("key_with_ex".as_bytes())
+            .get_object("key_with_ex".as_bytes())
             .await
             .unwrap()
             .is_never_expired());
@@ -1375,7 +1390,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         assert_eq!(
-            db.get("key1".as_bytes()).await.unwrap().expire,
+            db.get_object("key1".as_bytes()).await.unwrap().expire,
             *NEVER_EXPIRE
         );
         let dur = Duration::from_secs(10);
@@ -1433,7 +1448,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         assert_eq!(
-            db.get("key1".as_bytes()).await.unwrap().expire,
+            db.get_object("key1".as_bytes()).await.unwrap().expire,
             *NEVER_EXPIRE
         );
         let dur = Duration::from_secs(10);

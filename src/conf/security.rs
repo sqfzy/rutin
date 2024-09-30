@@ -157,7 +157,7 @@ impl AccessControl {
         if let Some(mut allow_categories) = other.allow_categories {
             for category_name in &mut allow_categories {
                 category_name.make_ascii_uppercase();
-                let flag = cat_name_to_cmds_flag(category_name.as_ref())?;
+                let flag = cat_name_to_cmds_flag(category_name.as_mut())?;
 
                 self.cmds_flag |= flag; // 允许某类命令执行
             }
@@ -169,8 +169,7 @@ impl AccessControl {
                     self.cmds_flag = ALL_CMDS_FLAG; // 允许所有命令执行，后面的命令无效
                     break;
                 }
-                cmd_name.make_ascii_uppercase();
-                let flag = cmd_name_to_flag(cmd_name.as_ref())?;
+                let flag = cmd_name_to_flag(cmd_name.as_mut())?;
                 self.cmds_flag |= flag; // 允许命令执行
             }
         }

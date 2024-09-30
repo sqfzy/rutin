@@ -31,26 +31,27 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
         }
 
         let post_office = handler.shared.post_office();
-        let wcmd =
-            if cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG) && post_office.need_send_wcmd() {
-                let wcmd = using_local_buf(|buf| {
-                    buf.put_u8(ARRAY_PREFIX);
-                    buf.put_slice(itoa::Buffer::new().format(args.len() + 1).as_bytes());
-                    buf.put_slice(CRLF);
 
-                    let cmd_name_frame: Resp3<&[u8], String> =
-                        Resp3::new_blob_string(Self::NAME.as_bytes());
-                    cmd_name_frame.encode_buf(buf);
+        let should_send_wcmd =
+            cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG) && post_office.need_send_wcmd();
 
-                    for frame in args.inner.iter() {
-                        frame.encode_buf(buf);
-                    }
-                });
+        if should_send_wcmd {
+            let buf = &mut handler.context.wcmd_buf;
 
-                Some(wcmd)
-            } else {
-                None
-            };
+            buf.put_u8(ARRAY_PREFIX);
+            buf.put_slice(itoa::Buffer::new().format(args.len() + 1).as_bytes());
+            buf.put_slice(CRLF);
+
+            let cmd_name_frame: Resp3<&[u8], String> =
+                Resp3::new_blob_string(Self::NAME.as_bytes());
+            cmd_name_frame.encode_buf(buf);
+
+            for frame in args.inner.iter() {
+                frame.encode_buf(buf);
+            }
+
+            Some(wcmd)
+        }
 
         let cmd = Self::parse(args, &handler.context.ac)?;
 
@@ -59,9 +60,7 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
         // 如果使用了pipline则该批命令视为一个整体命令。当最后一个命令执行完毕后，才发送写命令，
         // 避免性能瓶颈。如果执行过程中程序崩溃，则客户端会报错，用户会视为该批命令没有执行成
         // 功，也不会传播该批命令，符合一致性。
-        if let Some(wcmd) = wcmd {
-            let wcmd_buf = &mut handler.context.wcmd_buf;
-
+        if should_send_wcmd {
             if handler.conn.unhandled_count() <= 1 {
                 if wcmd_buf.is_empty() {
                     post_office.send_wcmd(wcmd).await;
@@ -202,9 +201,9 @@ pub async fn dispatch(
 
             match sub_cmd_name {
                 ClientTracking::NAME => ClientTracking::apply(cmd, handler).await,
-                // ScriptExists::NAME => ScriptExists::apply(cmd, handler).await,
-                // ScriptFlush::NAME => ScriptFlush::apply(cmd, handler).await,
-                // ScriptRegister::NAME => ScriptRegister::apply(cmd, handler).await,
+                ScriptExists::NAME => ScriptExists::apply(cmd, handler).await,
+                ScriptFlush::NAME => ScriptFlush::apply(cmd, handler).await,
+                ScriptRegister::NAME => ScriptRegister::apply(cmd, handler).await,
                 _ => Err(RutinError::UnknownCmd),
             }
         }
@@ -246,7 +245,7 @@ impl CmdUnparsed<'_> {
     //     }
     // }
 
-    pub fn next_uppercase<const L: usize>(&mut self) -> Option<Uppercase<L>> {
+    pub fn next_uppercase<const L: usize>(&mut self) -> Option<Uppercase<L, StaticBytes>> {
         self.next().map(|b| b.into_uppercase())
     }
 }

@@ -97,7 +97,7 @@ impl Events {
                     Event::Read(ReadEvent::FnOnce { deadline, callback }) => {
                         if let Ok(mut guard) = callback.lock()
                             && let Some(c) = guard.take()
-                            && deadline.map_or(true, |d| Instant::now() < d)
+                            && Instant::now() < *deadline
                         {
                             c(object).ok();
                         }
@@ -106,7 +106,7 @@ impl Events {
                     Event::Read(ReadEvent::FnMut { deadline, callback }) => {
                         if let Ok(mut guard) = callback.lock()
                             && let Some(mut c) = guard.take()
-                            && deadline.map_or(true, |d| Instant::now() < d)
+                            && Instant::now() < *deadline
                             && c(object).is_err()
                         {
                             should_remove_read_flag = false;
@@ -149,7 +149,7 @@ impl Events {
             {
                 match event {
                     Event::Write(WriteEvent::FnOnce { deadline, callback }) => {
-                        if deadline.map_or(true, |d| Instant::now() < d) {
+                        if Instant::now() < deadline {
                             callback(object).ok();
                         }
                     }
@@ -157,9 +157,7 @@ impl Events {
                         deadline,
                         mut callback,
                     }) => {
-                        if deadline.map_or(true, |d| Instant::now() < d)
-                            && callback(object).is_err()
-                        {
+                        if Instant::now() < deadline && callback(object).is_err() {
                             object
                                 .events
                                 .inner
@@ -169,7 +167,7 @@ impl Events {
                     }
                     Event::Read(ReadEvent::FnOnce { deadline, callback }) => {
                         if let Ok(Some(c)) = callback.into_inner()
-                            && deadline.map_or(true, |d| Instant::now() < d)
+                            && Instant::now() < deadline
                         {
                             c(object).ok();
                         }
@@ -179,7 +177,7 @@ impl Events {
                         mut callback,
                     }) => {
                         if let Ok(Some(c)) = callback.get_mut()
-                            && deadline.map_or(true, |d| Instant::now() < d)
+                            && Instant::now() < deadline
                             && c(object).is_err()
                         {
                             object
@@ -455,13 +453,13 @@ pub enum Event {
 pub enum ReadEvent {
     // 返回Err则终止执行
     FnOnce {
-        deadline: Option<Instant>,
+        deadline: Instant,
         callback: Mutex<Option<Box<dyn FnOnce(&Object) -> RutinResult<()>>>>,
     },
 
     // 返回Err则终止并等待下一次执行
     FnMut {
-        deadline: Option<Instant>,
+        deadline: Instant,
         callback: Mutex<Option<Box<dyn FnMut(&Object) -> RutinResult<()>>>>,
     },
 }
@@ -479,13 +477,13 @@ impl Debug for ReadEvent {
 pub enum WriteEvent {
     // 返回Err则终止执行
     FnOnce {
-        deadline: Option<Instant>,
+        deadline: Instant,
         callback: Box<dyn FnOnce(&mut Object) -> RutinResult<()>>,
     },
 
     // 返回Err则终止并等待下一次执行
     FnMut {
-        deadline: Option<Instant>,
+        deadline: Instant,
         callback: Box<dyn FnMut(&mut Object) -> RutinResult<()>>,
     },
 }

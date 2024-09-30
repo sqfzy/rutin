@@ -4,7 +4,7 @@ use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
-    Generics, Ident, ItemEnum, ItemStruct, Lifetime, Lit, LitByteStr, Pat, PatLit, Token,
+    Generics, Ident, Lit, LitByteStr, Pat, PatLit, Token,
 };
 
 /// # Example:

@@ -13,7 +13,11 @@ use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
     persist::{aof::Aof, rdb::Rdb},
-    shared::{db::Atc, post_office::Letter, Shared, MAIN_ID},
+    shared::{
+        db::{Atc, Events},
+        post_office::Letter,
+        Shared, MAIN_ID,
+    },
     util::{set_server_to_master, set_server_to_replica, UnsafeLazy},
     Id,
 };
@@ -26,7 +30,10 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use tokio::{task_local, time::Instant};
+use tokio::{
+    task_local,
+    time::{interval, Instant},
+};
 use tracing::{error, info};
 
 #[cfg(not(feature = "test_util"))]
@@ -190,42 +197,74 @@ pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
     /**********************/
     /* 开启过期键定时检查 */
     /**********************/
-    let period = Duration::from_secs(conf.server.expire_check_interval_secs);
     shared.pool().spawn_pinned(move || async move {
-        let mut interval = tokio::time::interval(period);
-        let mut rng = rand::thread_rng();
+        let samples_count = conf.memory.expiration_evict.samples_count;
+        let map = &shared.db().entries;
 
-        // TODO:
-        // loop {
-        //     interval.tick().await;
-        //
-        //     if let Some(record) = shared.db().entry_expire_records().iter().choose(&mut rng)
-        //         && record.0 <= Instant::now()
-        //     {
-        //         tracing::trace!("key {:?} is expired", record.1);
-        //
-        //         shared.db().remove_object1(record.1.clone()).await;
-        //     }
-        // }
+        // 运行的间隔时间，受**内存使用情况**和**过期键比例**影响
+        let mut millis = 1000;
+        let mut interval = interval(Duration::from_millis(millis)); // 100ms ~ 1000ms
+
+        let mut expiration_proportion = 0_u64; // 过期键比例
+        let mut new_value_influence = 70_u64; // 新expiration_proportion的影响占比。50% ~ 70%
+        let mut old_value_influence = 100_u64 - new_value_influence; // 旧expiration_proportion的影响占比。30% ~ 50%
+
+        fn adjust_millis(expiration_proportion: u64) -> u64 {
+            1000 - 10 * expiration_proportion
+        }
+
+        fn adjust_new_value_influence(millis: u64) -> u64 {
+            millis / 54 + 430 / 9
+        }
+
+        loop {
+            interval.tick().await;
+
+            let now = Instant::now();
+
+            // 随机选出samples_count个数据，保留过期的数据
+            let mut samples = fastrand::choose_multiple(map.iter(), samples_count as usize);
+            samples.retain(|data| data.expire < now);
+            let expired_samples = samples;
+
+            let expired_samples_count = expired_samples.len();
+
+            // 移除过期数据，并触发事件
+            for sample in expired_samples.into_iter() {
+                if let Some((_, mut object)) = map.remove(sample.key()) {
+                    Events::try_trigger_read_and_write_event(&mut object);
+                }
+            }
+
+            let new_expiration_proportion = (expired_samples_count as u64 / samples_count) * 100;
+
+            expiration_proportion = (expiration_proportion * old_value_influence
+                + new_expiration_proportion * new_value_influence)
+                / 100;
+
+            millis = adjust_millis(expiration_proportion);
+            interval.reset_after(Duration::from_millis(millis));
+            new_value_influence = adjust_new_value_influence(millis);
+            old_value_influence = 100 - new_value_influence;
+        }
     });
 
-    if conf.memory.is_some() {
-        // 定时更新内存使用情况
-        shared.pool().spawn_pinned(move || async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+    // 定时更新内存使用情况
+    shared.pool().spawn_pinned(move || async move {
+        // TODO: configable
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
 
-            let mut system = sysinfo::System::new();
-            let pid = sysinfo::get_current_pid().unwrap();
-            let kind = ProcessRefreshKind::new().with_memory();
+        let mut system = sysinfo::System::new();
+        let pid = sysinfo::get_current_pid().unwrap();
+        let kind = ProcessRefreshKind::new().with_memory();
 
-            loop {
-                interval.tick().await;
-                system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), kind);
-                let new_used_mem = system.process(pid).unwrap().memory();
-                USED_MEMORY.store(new_used_mem, Ordering::Relaxed);
-            }
-        });
-    };
+        loop {
+            interval.tick().await;
+            system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), kind);
+            let new_used_mem = system.process(pid).unwrap().memory();
+            USED_MEMORY.store(new_used_mem, Ordering::Relaxed);
+        }
+    });
 
     // 定时(每分钟)更新LRU_CLOCK
     shared.pool().spawn_pinned(move || async move {

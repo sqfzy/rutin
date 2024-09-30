@@ -35,6 +35,7 @@ impl<S: AsyncStream> Handler<S> {
         self.context.shutdown.listen()
     }
 
+
     #[inline]
     #[instrument(level = "debug", skip(self), fields(client_id), err)]
     pub async fn run(mut self) -> RutinResult<()> {
@@ -266,6 +267,11 @@ impl HandlerContext {
     //     self.wcmd_buf.clear();
     // }
 }
+
+// struct WcmdBuf {
+//     buf: BytesMut,
+//     
+// }
 
 // impl Clone for HandlerContext {
 //     fn clone(&self) -> Self {

@@ -1,4 +1,4 @@
-use crate::{frame::leak_bytes, shared::db::Str, Key};
+use crate::{frame::leak_bytes, shared::db::Str, util::Uppercase, Key};
 use bytes::BytesMut;
 use equivalent::Equivalent;
 use std::{cmp::PartialEq, fmt::Debug, hash::Hash, ops::Deref};
@@ -27,21 +27,9 @@ impl StaticBytes {
         }
     }
 
-    pub fn into_uppercase<const L: usize>(mut self) -> Uppercase<L> {
+    pub fn into_uppercase<const L: usize>(mut self) -> Uppercase<L, StaticBytes> {
         match &mut self {
-            Self::Const(s) => {
-                if s.len() > L {
-                    panic!("buffer too small");
-                }
-
-                let mut buf = [0; L];
-                buf[..s.len()].copy_from_slice(s);
-                buf.make_ascii_uppercase();
-                Uppercase::Const {
-                    data: buf,
-                    len: s.len(),
-                }
-            }
+            Self::Const(s) => Uppercase::from_const(s),
             Self::Mut(s) => {
                 s.make_ascii_uppercase();
                 Uppercase::Mut(self)
@@ -165,37 +153,6 @@ impl mlua::FromLua<'_> for StaticBytes {
 impl mlua::IntoLua<'_> for StaticBytes {
     fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
         lua.create_string(self.as_ref()).map(mlua::Value::String)
-    }
-}
-
-pub enum Uppercase<const L: usize> {
-    Const { data: [u8; L], len: usize },
-    Mut(StaticBytes),
-}
-
-impl<const L: usize> Deref for Uppercase<L> {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl<const L: usize> AsRef<[u8]> for Uppercase<L> {
-    fn as_ref(&self) -> &[u8] {
-        match self {
-            Self::Const { data, len } => &data[..*len],
-            Self::Mut(s) => s.as_ref(),
-        }
-    }
-}
-
-impl PartialEq<[u8]> for Uppercase<32> {
-    fn eq(&self, other: &[u8]) -> bool {
-        match self {
-            Self::Const { data, len } => &data[..*len] == other,
-            Self::Mut(s) => s == other,
-        }
     }
 }
 

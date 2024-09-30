@@ -266,7 +266,7 @@ async fn aof_test() {
     let db = shared.db();
     // 断言AOF文件中的内容已经加载到内存中
     assert_eq!(
-        db.get("key:000000000015".as_bytes())
+        db.get_object("key:000000000015".as_bytes())
             .await
             .unwrap()
             .on_str()
@@ -275,7 +275,7 @@ async fn aof_test() {
         b"VXK"
     );
     assert_eq!(
-        db.get("key:000000000003".as_bytes())
+        db.get_object("key:000000000003".as_bytes())
             .await
             .unwrap()
             .on_str()
@@ -284,7 +284,7 @@ async fn aof_test() {
         b"VXK"
     );
     assert_eq!(
-        db.get("key:000000000025".as_bytes())
+        db.get_object("key:000000000025".as_bytes())
             .await
             .unwrap()
             .on_str()

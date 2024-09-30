@@ -225,8 +225,10 @@ mod cmd_other_tests {
     use crate::{
         cmd::gen_cmdunparsed_test,
         conf::AccessControl,
-        server::SHARED,
-        util::{gen_test_handler, gen_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD, TEST_AC_USERNAME},
+        util::{
+            gen_test_handler, gen_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD,
+            TEST_AC_USERNAME,
+        },
     };
 
     #[tokio::test]

@@ -1,10 +1,10 @@
 #![allow(unreachable_code)]
 
 use crate::{
-    cmd::commands::CmdFlag,
+    cmd::commands::{CmdFlag, EXISTS_CMD_FLAG},
     conf::{
-        gen_run_id, AccessControl, Acl, AofConf, Conf, MasterConf, MemoryConf, RdbConf,
-        ReplicaConf, SecurityConf, ServerConf,
+        gen_run_id, AccessControl, Acl, AofConf, Conf, ExpirationEvict, MasterConf, MemoryConf,
+        OomConf, RdbConf, ReplicaConf, SecurityConf, ServerConf,
     },
     persist::aof::AppendFSync,
     server::{preface, FakeHandler},
@@ -21,9 +21,7 @@ pub fn bytes_to_string(bytes: &[u8]) -> String {
 
 pub const TEST_AC_USERNAME: &str = "test_ac";
 pub const TEST_AC_PASSWORD: &str = "test_pwd";
-// pub const TEST_AC_CMDS_FLAG: CmdFlag = EXISTS_CMD_FLAG;
-// TODO:
-pub const TEST_AC_CMDS_FLAG: CmdFlag = 1;
+pub const TEST_AC_CMDS_FLAG: CmdFlag = EXISTS_CMD_FLAG;
 
 pub fn test_init() {
     #[cfg(not(feature = "test_util"))]
@@ -59,7 +57,6 @@ pub fn gen_test_config() -> Conf {
             host: "127.0.0.1".into(),
             port: 6379,
             run_id: gen_run_id(),
-            expire_check_interval_secs: 1,
             log_level: "info".into(),
             max_connections: 1024,
             max_batch: 1024,
@@ -92,11 +89,14 @@ pub fn gen_test_config() -> Conf {
             append_fsync: AppendFSync::EverySec,
             auto_aof_rewrite_min_size: 128,
         }),
-        memory: Some(MemoryConf {
-            maxmemory: u64::MAX,
-            maxmemory_policy: Default::default(),
-            maxmemory_samples: 5,
-        }),
+        memory: MemoryConf {
+            oom: Some(OomConf {
+                maxmemory: u64::MAX,
+                maxmemory_policy: Default::default(),
+                maxmemory_samples_count: 5,
+            }),
+            expiration_evict: ExpirationEvict { samples_count: 800 },
+        },
         tls: None,
     }
 }

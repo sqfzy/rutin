@@ -595,7 +595,7 @@ impl CmdExecutor for Set {
             }
         }
 
-        let entry = db.entry(&self.key).await?;
+        let entry = db.object_entry(&self.key).await?;
         if let Some(flag) = key_flag
             && flag != entry.is_occupied()
         {
@@ -809,7 +809,7 @@ impl CmdExecutor for SetNx {
     ) -> RutinResult<Option<CheapResp3>> {
         let db = handler.shared.db();
 
-        let entry = db.entry(&self.key).await?;
+        let entry = db.object_entry(&self.key).await?;
         if entry.is_occupied() {
             return Err(0.into());
         }
@@ -895,7 +895,7 @@ mod cmd_str_tests {
         handler
             .shared
             .db()
-            .entry(&StaticBytes::from("key".as_bytes()))
+            .object_entry(&StaticBytes::from("key".as_bytes()))
             .await
             .unwrap()
             .insert2(Object::with_expire(Str::from("value"), *NEVER_EXPIRE));
@@ -1287,7 +1287,7 @@ mod cmd_str_tests {
         let obj = handler
             .shared
             .db()
-            .get("key_expire".as_bytes())
+            .get_object("key_expire".as_bytes())
             .await
             .unwrap();
         assert_eq!(

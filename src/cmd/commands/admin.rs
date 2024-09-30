@@ -12,7 +12,7 @@ use crate::{
 use bytes::{Bytes, BytesMut};
 use bytestring::ByteString;
 use itertools::Itertools;
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 use tokio::net::TcpStream;
 
 /// # Reply:
@@ -133,7 +133,7 @@ impl CmdExecutor for AclSetUser {
 
             default_ac.merge(self.aci)?;
 
-            security.default_ac.store(std::sync::Arc::new(default_ac));
+            security.default_ac.store(Arc::new(default_ac));
         } else if let Some(acl) = &handler.shared.conf().security.acl {
             if let Some(mut ac) = acl.get_mut(&self.name) {
                 // 如果存在则合并

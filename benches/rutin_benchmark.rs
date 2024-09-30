@@ -6,7 +6,7 @@ use rutin::{
     frame::{leak_bytes, Resp3Decoder, Resp3Encoder, StaticResp3},
     server::{Handler, HandlerContext},
     shared::NULL_ID,
-    util::get_test_shared,
+    util::gen_test_shared,
 };
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -143,7 +143,7 @@ fn bench_decode(c: &mut Criterion) {
 fn bench_create_handler_cx(c: &mut Criterion) {
     c.bench_function("bench_create_handler_cx", |b| {
         b.iter_custom(|iters| {
-            let shared = get_test_shared();
+            let shared = gen_test_shared();
             let post_office = shared.post_office();
 
             let start = Instant::now();
@@ -161,7 +161,7 @@ fn bench_create_handler_cx(c: &mut Criterion) {
 fn bench_create_handler(c: &mut Criterion) {
     c.bench_function("bench_create_handler", |b| {
         b.iter_custom(|iters| {
-            let shared = get_test_shared();
+            let shared = gen_test_shared();
 
             let start = Instant::now();
             for _ in 0..iters {

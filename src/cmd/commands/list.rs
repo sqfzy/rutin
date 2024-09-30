@@ -42,7 +42,7 @@ impl CmdExecutor for BLMove {
         } = handler;
         let db = shared.db();
 
-        let mut source_entry = db.entry(&self.source).await?;
+        let mut source_entry = db.object_entry(&self.source).await?;
         let mut elem = None;
 
         // 1. 尝试弹出元素
@@ -80,9 +80,9 @@ impl CmdExecutor for BLMove {
         // 3. 如果不存在弹出元素，加入监听事件
 
         let deadline = if self.timeout == 0 {
-            None
+            *NEVER_EXPIRE
         } else {
-            Some(Instant::now() + Duration::from_secs(self.timeout))
+            Instant::now() + Duration::from_secs(self.timeout)
         };
 
         let (tx, rx) = flume::bounded(1);
@@ -91,7 +91,6 @@ impl CmdExecutor for BLMove {
         let callback = {
             let mut shutdown = context.shutdown.listen();
 
-            // TODO: 将该类型闭包(需要检测连接是否已关闭)提取成函数
             move |obj: &mut Object| -> RutinResult<()> {
                 // 客户端已经断开连接则事件结束并中断超时任务
                 if (&mut shutdown).now_or_never().is_some() {
@@ -129,7 +128,7 @@ impl CmdExecutor for BLMove {
 
         tokio::select! {
             // 超时，返回Null
-            _ = sleep_until(deadline.unwrap_or(*NEVER_EXPIRE)), if deadline.is_some() => {
+            _ = sleep_until(deadline), if deadline != *NEVER_EXPIRE => {
                 Ok(Some(Resp3::Null))
             },
             elem = rx.recv_async() => {
@@ -203,7 +202,7 @@ impl CmdExecutor for BLPop {
         let db = shared.db();
 
         for key in &self.keys {
-            let source_entry = db.entry(key).await?;
+            let source_entry = db.object_entry(key).await?;
             let mut elem = None;
 
             if source_entry.is_occupied() {
@@ -226,9 +225,9 @@ impl CmdExecutor for BLPop {
         // 所有列表都没有元素，加入监听事件
 
         let deadline = if self.timeout == 0 {
-            None
+            *NEVER_EXPIRE
         } else {
-            Some(Instant::now() + Duration::from_secs(self.timeout))
+            Instant::now() + Duration::from_secs(self.timeout)
         };
 
         let keys = self
@@ -267,7 +266,7 @@ impl CmdExecutor for BLPop {
                 }
             };
 
-            db.entry(&key).await?.add_write_event_force(
+            db.object_entry(&key).await?.add_write_event_force(
                 ObjectValueType::List,
                 WriteEvent::FnMut {
                     deadline,
@@ -278,7 +277,7 @@ impl CmdExecutor for BLPop {
 
         tokio::select! {
             // 超时，返回Null
-            _ = sleep_until(deadline.unwrap_or(*NEVER_EXPIRE)), if deadline.is_some() => {
+            _ = sleep_until(deadline), if deadline != *NEVER_EXPIRE => {
                 Ok(Some(Resp3::Null))
             },
             // 接受并处理首个消息
@@ -727,121 +726,6 @@ impl TryFrom<&[u8]> for Where {
     }
 }
 
-// async fn first_round(db: &Db, keys: &[Key], where_: Where) -> RutinResult<Option<CheapResp3>> {
-//     let mut res = None;
-//     // 先尝试一轮pop
-//     for key in keys.iter() {
-//         let update_res = db
-//             .update_object(key.clone(), |obj| {
-//                 let list = obj.on_list_mut()?;
-//
-//                 if let Some(value) = list.pop_front() {
-//                     res = Some(Resp3::new_array(vec![
-//                         Resp3::new_blob_string(key.to_bytes()),
-//                         Resp3::new_blob_string(value.to_bytes()),
-//                     ]));
-//                 }
-//
-//                 Ok(())
-//             })
-//             .await;
-//
-//         // pop成功
-//         if res.is_some() {
-//             return Ok(res);
-//         }
-//
-//         // 忽略空键的错误
-//         if !matches!(update_res, Err(RutinError::Null)) {
-//             update_res?;
-//         }
-//     }
-//
-//     Ok(None)
-// }
-//
-// async fn pop_timeout_at(
-//     shared: Shared,
-//     key_tx: Sender<Key>,
-//     key_rx: Receiver<Key>,
-//     deadline: Option<Instant>,
-// ) -> RutinResult<Resp3> {
-//     let db = shared.db();
-//     let mut res = None;
-//
-//     trace!("listening for list keys..., deadline: {deadline:?}");
-//     loop {
-//         // 存在超时时间
-//         if let Some(dl) = deadline {
-//             match tokio::time::timeout_at(dl, key_rx.recv_async()).await {
-//                 Ok(Ok(key)) => {
-//                     let update_res = db
-//                         .update_object(key.clone(), |obj| {
-//                             let list = obj.on_list_mut()?;
-//
-//                             if let Some(value) = list.pop_front() {
-//                                 res = Some(Resp3::new_array(vec![
-//                                     Resp3::new_blob_string(key.to_bytes()),
-//                                     Resp3::new_blob_string(value.to_bytes()),
-//                                 ]));
-//                             }
-//
-//                             Ok(())
-//                         })
-//                         .await;
-//
-//                     if let Some(res) = res {
-//                         // 如果next确实成功了，则退出循环
-//                         break Ok(res);
-//                     }
-//
-//                     // 如果next失败了，则重新加入事件
-//                     db.add_may_update_event(key.clone(), key_tx.clone()).await?;
-//
-//                     // 忽略空键的错误
-//                     if !matches!(update_res, Err(RutinError::Null)) {
-//                         update_res?;
-//                     }
-//                 }
-//                 // 超时
-//                 Err(_) => break Ok(Resp3::Null),
-//                 _ => continue,
-//             }
-//         }
-//
-//         // 不存在超时时间
-//         if let Ok(key) = key_rx.recv_async().await {
-//             let update_res = shared
-//                 .db()
-//                 .update_object(key.clone(), |obj| {
-//                     let list = obj.on_list_mut()?;
-//
-//                     if let Some(value) = list.pop_front() {
-//                         res = Some(Resp3::new_array(vec![
-//                             Resp3::new_blob_string(key.to_bytes()),
-//                             Resp3::new_blob_string(value.to_bytes()),
-//                         ]));
-//                     }
-//
-//                     Ok(())
-//                 })
-//                 .await;
-//
-//             if let Some(res) = res {
-//                 // 如果next确实成功了，则退出循环
-//                 break Ok(res);
-//             }
-//
-//             db.add_may_update_event(key.clone(), key_tx.clone()).await?;
-//
-//             // 忽略空键的错误
-//             if !matches!(update_res, Err(RutinError::Null)) {
-//                 update_res?;
-//             }
-//         }
-//     }
-// }
-//
 #[cfg(test)]
 mod cmd_list_tests {
     use super::*;
@@ -973,6 +857,8 @@ mod cmd_list_tests {
         /* 非阻塞测试 */
         /***************/
         let mut handler = gen_test_handler();
+        let inbox = handler.context.inbox.clone();
+
         let lpush = LPush::parse(
             gen_cmdunparsed_test(["l1", "key1a", "key1", "key1c"].as_ref()),
             &AccessControl::new_loose(),
@@ -1000,12 +886,13 @@ mod cmd_list_tests {
             &AccessControl::new_loose(),
         )
         .unwrap();
+        blpop.execute(&mut handler).await.unwrap();
         assert_eq!(
-            Resp3::new_array(vec![
+            &Resp3::new_array(vec![
                 Resp3::new_blob_string("l1".into()),
                 Resp3::new_blob_string("key1c".into())
             ]),
-            blpop.execute(&mut handler).await.unwrap().unwrap()
+            inbox.recv().as_resp3_unchecked()
         );
         // l1: key1b key1a
 
@@ -1014,15 +901,17 @@ mod cmd_list_tests {
             &AccessControl::new_loose(),
         )
         .unwrap();
+        blpop.execute(&mut handler).await.unwrap();
         assert_eq!(
-            Resp3::new_array(vec![
+            &Resp3::new_array(vec![
                 Resp3::new_blob_string("l2".into()),
                 Resp3::new_blob_string("key2c".into())
             ]),
-            blpop.execute(&mut handler).await.unwrap().unwrap()
+            inbox.recv().as_resp3_unchecked()
         );
         // l2: key2b key2a
 
+        // TODO:
         /************************/
         /* 无超时时间，阻塞测试 */
         /************************/

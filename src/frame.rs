@@ -163,8 +163,6 @@ where
     },
 }
 
-// TODO: Resp3Trait
-
 impl<B, S> Resp3<B, S>
 where
     B: AsRef<[u8]> + PartialEq + std::fmt::Debug,

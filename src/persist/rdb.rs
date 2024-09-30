@@ -964,29 +964,41 @@ mod rdb_test {
         let mut rdb = Rdb::new(shared, "tests/rdb/rdb_test.rdb".into(), true);
         rdb.load().await.unwrap();
 
-        assert_eq!(db.get("str1".as_bytes()).await.unwrap().value(), &str1);
-        assert_eq!(db.get("str2".as_bytes()).await.unwrap().value(), &str2);
-        assert_eq!(db.get("str3".as_bytes()).await.unwrap().value(), &str3);
-        assert_eq!(db.get("str4".as_bytes()).await.unwrap().value(), &str4);
+        assert_eq!(
+            db.get_object("str1".as_bytes()).await.unwrap().value(),
+            &str1
+        );
+        assert_eq!(
+            db.get_object("str2".as_bytes()).await.unwrap().value(),
+            &str2
+        );
+        assert_eq!(
+            db.get_object("str3".as_bytes()).await.unwrap().value(),
+            &str3
+        );
+        assert_eq!(
+            db.get_object("str4".as_bytes()).await.unwrap().value(),
+            &str4
+        );
 
-        assert_eq!(db.get("l1".as_bytes()).await.unwrap().value(), &l1);
-        assert_eq!(db.get("l2".as_bytes()).await.unwrap().value(), &l2);
-        assert_eq!(db.get("l3".as_bytes()).await.unwrap().value(), &l3);
-        assert_eq!(db.get("l4".as_bytes()).await.unwrap().value(), &l4);
+        assert_eq!(db.get_object("l1".as_bytes()).await.unwrap().value(), &l1);
+        assert_eq!(db.get_object("l2".as_bytes()).await.unwrap().value(), &l2);
+        assert_eq!(db.get_object("l3".as_bytes()).await.unwrap().value(), &l3);
+        assert_eq!(db.get_object("l4".as_bytes()).await.unwrap().value(), &l4);
 
-        assert_eq!(db.get("s1".as_bytes()).await.unwrap().value(), &s1);
-        assert_eq!(db.get("s2".as_bytes()).await.unwrap().value(), &s2);
-        assert_eq!(db.get("s3".as_bytes()).await.unwrap().value(), &s3);
-        assert_eq!(db.get("s4".as_bytes()).await.unwrap().value(), &s4);
+        assert_eq!(db.get_object("s1".as_bytes()).await.unwrap().value(), &s1);
+        assert_eq!(db.get_object("s2".as_bytes()).await.unwrap().value(), &s2);
+        assert_eq!(db.get_object("s3".as_bytes()).await.unwrap().value(), &s3);
+        assert_eq!(db.get_object("s4".as_bytes()).await.unwrap().value(), &s4);
 
-        assert_eq!(db.get("h1".as_bytes()).await.unwrap().value(), &h1);
-        assert_eq!(db.get("h2".as_bytes()).await.unwrap().value(), &h2);
-        assert_eq!(db.get("h3".as_bytes()).await.unwrap().value(), &h3);
-        assert_eq!(db.get("h4".as_bytes()).await.unwrap().value(), &h4);
+        assert_eq!(db.get_object("h1".as_bytes()).await.unwrap().value(), &h1);
+        assert_eq!(db.get_object("h2".as_bytes()).await.unwrap().value(), &h2);
+        assert_eq!(db.get_object("h3".as_bytes()).await.unwrap().value(), &h3);
+        assert_eq!(db.get_object("h4".as_bytes()).await.unwrap().value(), &h4);
 
-        assert_eq!(db.get("zs1".as_bytes()).await.unwrap().value(), &zs1);
-        assert_eq!(db.get("zs2".as_bytes()).await.unwrap().value(), &zs2);
-        assert_eq!(db.get("zs3".as_bytes()).await.unwrap().value(), &zs3);
-        assert_eq!(db.get("zs4".as_bytes()).await.unwrap().value(), &zs4);
+        assert_eq!(db.get_object("zs1".as_bytes()).await.unwrap().value(), &zs1);
+        assert_eq!(db.get_object("zs2".as_bytes()).await.unwrap().value(), &zs2);
+        assert_eq!(db.get_object("zs3".as_bytes()).await.unwrap().value(), &zs3);
+        assert_eq!(db.get_object("zs4".as_bytes()).await.unwrap().value(), &zs4);
     }
 }

@@ -118,9 +118,13 @@ gen_flag!(
     ScriptRegister(scripting)
 );
 
-// 调用前应将name转为大写
-pub fn cmd_name_to_flag(name: &[u8]) -> RutinResult<CmdFlag> {
-    _cmd_name_to_flag(name).ok_or(RutinError::UnknownCmd)
+/// 调用前应将name转为大写
+pub fn cmd_name_to_flag<U>(name: U) -> RutinResult<CmdFlag>
+where
+    for<'a> Uppercase<32, &'a mut [u8]>: From<U>,
+{
+    let name = Uppercase::<32, &mut [u8]>::from(name);
+    _cmd_name_to_flag(name.as_ref()).ok_or(RutinError::UnknownCmd)
 }
 
 pub fn cmd_flag_to_name(flag: CmdFlag) -> Option<&'static str> {
@@ -143,8 +147,13 @@ pub fn cat_names() -> [&'static str; 11] {
     ]
 }
 
-// 调用前应将cat_name转为大写
-pub fn cat_name_to_cmds_flag(cat_name: &[u8]) -> RutinResult<CmdFlag> {
+/// 调用前应将cat_name转为大写
+pub fn cat_name_to_cmds_flag<U>(cat_name: U) -> RutinResult<CmdFlag>
+where
+    for<'a> Uppercase<16, &'a mut [u8]>: From<U>,
+{
+    let cat_name = Uppercase::<16, &mut [u8]>::from(cat_name);
+    let cat_name = cat_name.as_ref();
     Ok(match cat_name {
         b"ADMIN" => ADMIN_CMDS_FLAG,
         b"READ" => READ_CMDS_FLAG,

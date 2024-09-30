@@ -444,17 +444,24 @@ pub struct Inbox {
 
 impl Inbox {
     pub async fn recv_async(&self) -> Letter {
+        // post_office中存有对应的outbox，并且只有当最后一个inbox准备drop时才会移除，
+        // 因此不会返回Err
         self.inner.recv_async().await.unwrap()
+    }
+
+    pub fn recv(&self) -> Letter {
+        // post_office中存有对应的outbox，因此不会返回Err
+        self.inner.recv().unwrap()
     }
 }
 
 impl Drop for Inbox {
     fn drop(&mut self) {
-        // 如果当前receiver drop之后，只有一个receiver了，那么删除对应的sender
+        // 如果当前receiver drop之后，如果仅有一个receiver(存在post_office中的)
+        // 则移除mailbox
         if self.inner.receiver_count() <= 2 {
             self.post_office.inner.remove(&self.id);
         }
-        // TODO: 也许如果是SET_MASTER_ID则BlockAll后设置set_master_outbox为None
     }
 }
 

@@ -7,7 +7,7 @@ pub use object::*;
 pub use object_entry::ObjectEntry;
 
 use crate::{
-    conf::MemoryConf,
+    conf::OomConf,
     error::{RutinError, RutinResult},
     shared::Outbox,
     Key,
@@ -43,11 +43,11 @@ pub struct Db {
     // // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
     // // 消息
     // client_records: DashMap<Id, BgTaskSender, nohash::BuildNoHashHasher<u64>>,
-    mem_conf: Option<MemoryConf>,
+    oom_conf: Option<OomConf>,
 }
 
 impl Db {
-    pub fn new(mem_conf: Option<MemoryConf>) -> Self {
+    pub fn new(mem_conf: Option<OomConf>) -> Self {
         let num_cpus = num_cpus::get();
 
         Self {
@@ -58,7 +58,7 @@ impl Db {
             ),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
             pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
-            mem_conf,
+            oom_conf: mem_conf,
         }
     }
 
@@ -82,7 +82,7 @@ impl Db {
 
     #[inline]
     pub async fn try_evict(&self) -> RutinResult<()> {
-        if let Some(mem_conf) = &self.mem_conf {
+        if let Some(mem_conf) = &self.oom_conf {
             mem_conf.try_evict(self).await
         } else {
             Ok(())
@@ -95,7 +95,7 @@ impl Db {
     // 对象不存在
     // 对象已过期
     #[instrument(level = "debug", skip(self))]
-    pub async fn get(&self, key: &[u8]) -> RutinResult<Ref<'_, Key, Object>> {
+    pub async fn get_object(&self, key: &[u8]) -> RutinResult<Ref<'_, Key, Object>> {
         // 键存在
         if let Some(e) = self.entries._get(key) {
             let e = Events::try_trigger_lock_event1(e, &self.entries).await?;
@@ -110,7 +110,9 @@ impl Db {
 
             // 对象已过期，移除该键值对(不触发事件)
             drop(e);
-            self.entries.remove(key);
+            if let Some((_, mut object)) = self.entries.remove(key) {
+                Events::try_trigger_read_and_write_event(&mut object);
+            }
         }
 
         Err(RutinError::Null)
@@ -123,7 +125,7 @@ impl Db {
     // 对象不存在
     // 对象已过期
     #[instrument(level = "debug", skip(self))]
-    pub async fn get_mut(&self, key: &[u8]) -> RutinResult<RefMut<'_, Key, Object>> {
+    pub async fn get_object_mut(&self, key: &[u8]) -> RutinResult<RefMut<'_, Key, Object>> {
         self.try_evict().await?;
 
         // 键存在
@@ -138,16 +140,21 @@ impl Db {
                 return Ok(e);
             }
 
-            // 对象已过期，移除该键值对(不触发事件)
+            // 对象已过期，移除该键值对
             drop(e);
-            self.entries.remove(key);
+            if let Some((_, mut object)) = self.entries.remove(key) {
+                Events::try_trigger_read_and_write_event(&mut object);
+            }
         }
 
         Err(RutinError::Null)
     }
 
     #[inline]
-    pub async fn entry<'a, 'b, Q>(&'a self, key: &'b Q) -> RutinResult<ObjectEntry<'a, 'b, Q>>
+    pub async fn object_entry<'a, 'b, Q>(
+        &'a self,
+        key: &'b Q,
+    ) -> RutinResult<ObjectEntry<'a, 'b, Q>>
     where
         Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
     {
@@ -176,8 +183,9 @@ impl Db {
                             return EntryRef::Occupied(e).into();
                         }
 
-                        // 对象已过期，移除该键值对(不触发事件)
-                        e.remove();
+                        // 对象已过期，移除该键值对，并触发事件
+                        let mut object = e.remove();
+                        Events::try_trigger_read_and_write_event(&mut object);
 
                         // 重新获取一个Vacant
                         let e = self.entries.entry_ref(key);
@@ -199,7 +207,7 @@ impl Db {
     /// 检验对象是否合法存在。如果对象不存在，对象为空或者对象已过期则返回false，否则返回true
     #[instrument(level = "debug", skip(self), ret)]
     pub async fn contains_object(&self, key: &[u8]) -> bool {
-        match self.get(key).await {
+        match self.get_object(key).await {
             Ok(e) => {
                 Events::try_trigger_read_event(e.value());
                 true
@@ -223,7 +231,7 @@ impl Db {
         key: &[u8],
         f: impl FnOnce(&Object) -> RutinResult<()>,
     ) -> RutinResult<()> {
-        let e = self.get(key).await?;
+        let e = self.get_object(key).await?;
         let obj = e.value();
 
         f(obj)?;
@@ -239,7 +247,7 @@ impl Db {
         key: &[u8],
         f: impl FnOnce(&mut Object) -> RutinResult<()>,
     ) -> RutinResult<()> {
-        let mut e = self.get_mut(key).await?;
+        let mut e = self.get_object_mut(key).await?;
         let obj = e.value_mut();
 
         f(obj)?;
@@ -259,7 +267,7 @@ impl Db {
         Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
         bytes::Bytes: From<&'b Q>,
     {
-        Ok(self.entry(key).await?.insert2(object).1)
+        Ok(self.object_entry(key).await?.insert2(object).1)
     }
 
     #[inline]
@@ -293,7 +301,7 @@ impl Db {
         Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
         bytes::Bytes: From<&'b Q>,
     {
-        if let (e, Some(f)) = self.entry(key).await?.update2(f)? {
+        if let (e, Some(f)) = self.object_entry(key).await?.update2(f)? {
             e.or_try_insert_with(|| -> RutinResult<Object> {
                 let mut obj = match typ {
                     ObjectValueType::Str => Str::default().into(),
