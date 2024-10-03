@@ -1,10 +1,12 @@
+mod enum_helper;
+
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
-    Generics, Ident, Lit, LitByteStr, Pat, PatLit, Token,
+    Generics, Ident, ItemEnum, Lit, LitByteStr, Pat, PatLit, Token,
 };
 
 /// # Example:
@@ -202,11 +204,6 @@ pub fn gen_flag(input: TokenStream) -> TokenStream {
         pub const DANGEROUS_CAT_FLAG: CatFlag = 1 << 10;
     };
 
-    // let expanded = quote! {
-    //     #cat_flag_defs
-    //     #cmds_flag_defs
-    //     #(#cmd_flag_defs)*
-    // };
     let expanded = quote! {
         pub const ALL_CMDS_FLAG: CmdFlag = #next_cmd_flag - 1;
         pub const NO_CMDS_FLAG: CmdFlag = CmdFlag::MIN | AUTH_CMD_FLAG; // 允许AUTH命令
@@ -232,3 +229,22 @@ pub fn gen_flag(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+// #[proc_macro_derive(EnumAs, attributes(ignore_enum_as))]
+// pub fn derive_enum_as(item: TokenStream) -> TokenStream {
+//     let item = parse_macro_input!(item as ItemEnum);
+//
+//     // 拿到各个variants的ident
+//     // fn as_??(&self) -> &T {
+//     //
+//     // }
+//     for v in item.variants {
+//         let fun_name = format_ident!("as_{}", v.ident);
+//         let return_type =
+//         match v.fields {
+//
+//         }
+//     }
+//
+//     todo!()
+// }

@@ -1,11 +1,14 @@
 use crate::{
     error::{RutinError, RutinResult},
     server::ID,
-    shared::db::{
-        object_entry::{StaticEntryRef, StaticOccupiedEntryRef},
-        Object,
+    shared::{
+        db::{
+            object_entry::{StaticEntryRef, StaticOccupiedEntryRef},
+            Db, Key, Object, ObjectValue,
+        },
+        Outbox,
     },
-    Id, Key,
+    Id,
 };
 use ahash::RandomState;
 use dashmap::{
@@ -16,6 +19,7 @@ use dashmap::{
     DashMap,
 };
 use std::{
+    any::{Any, TypeId},
     fmt::{self, Debug, Formatter},
     hash::Hash,
     sync::{
@@ -38,6 +42,29 @@ pub struct Events {
 }
 
 impl Events {
+    pub fn remove_event(&mut self, type_id: TypeId) -> bool {
+        let Self {
+            inner: events,
+            flags,
+        } = self;
+        let flags = flags.get_mut();
+        let mut index = 0;
+
+        while index < events.len() {
+            if let Some(event) = events.get_mut(index) {
+                if event.type_id() == type_id {
+                    events.swap_remove(index);
+                    *flags &= !event.event_flag();
+                    return true;
+                }
+            }
+
+            index += 1;
+        }
+
+        false
+    }
+
     pub fn add_read_event(&mut self, event: ReadEvent) {
         self.inner.push(Event::Read(event));
         let flags = self.flags.get_mut();
@@ -90,8 +117,15 @@ impl Events {
             // 如果还有读事件没有完成则不应移除flag中的标记
             let mut should_remove_read_flag = true;
 
+            let Object {
+                value,
+                expire,
+                events: Events { inner: events, .. },
+                ..
+            } = object;
+
             // 遍历找到所有的读事件并执行
-            for event in object.events.inner.iter() {
+            for event in events.iter() {
                 match event {
                     // 取出FnOnce，如果未超时则执行，如果超时则仅移除事件而不执行
                     Event::Read(ReadEvent::FnOnce { deadline, callback }) => {
@@ -99,7 +133,7 @@ impl Events {
                             && let Some(c) = guard.take()
                             && Instant::now() < *deadline
                         {
-                            c(object).ok();
+                            c(value, *expire).ok();
                         }
                     }
                     // 取出FnMut，如果未超时则执行，如果超时则仅移除事件而不执行
@@ -107,7 +141,7 @@ impl Events {
                         if let Ok(mut guard) = callback.lock()
                             && let Some(mut c) = guard.take()
                             && Instant::now() < *deadline
-                            && c(object).is_err()
+                            && c(value, *expire).is_err()
                         {
                             should_remove_read_flag = false;
                             guard.replace(c);
@@ -142,55 +176,144 @@ impl Events {
             let mut should_remove_write_flag = true;
             let mut should_remove_read_flag = true;
 
-            while let Some(event) = object
-                .events
-                .inner
-                .pop_if(|e| !matches!(e, Event::IntentionLock { .. }))
-            {
-                match event {
-                    Event::Write(WriteEvent::FnOnce { deadline, callback }) => {
-                        if Instant::now() < deadline {
-                            callback(object).ok();
+            let mut index = 0;
+
+            loop {
+                let Object {
+                    value,
+                    expire,
+                    events: Events { inner: events, .. },
+                    ..
+                } = object;
+
+                if index >= events.len() {
+                    break;
+                }
+
+                match &mut events[index] {
+                    Event::Write(WriteEvent::FnOnce { .. }) => {
+                        if let Event::Write(WriteEvent::FnOnce { deadline, callback }) =
+                            events.swap_remove(index)
+                        {
+                            if Instant::now() < deadline {
+                                callback(value, *expire).ok();
+                            }
+                        } else {
+                            unreachable!()
                         }
                     }
                     Event::Write(WriteEvent::FnMut {
                         deadline,
-                        mut callback,
+                        ref mut callback,
                     }) => {
-                        if Instant::now() < deadline && callback(object).is_err() {
-                            object
-                                .events
-                                .inner
-                                .push(Event::Write(WriteEvent::FnMut { deadline, callback }));
+                        if Instant::now() < *deadline && callback(value, *expire).is_err() {
                             should_remove_write_flag = false;
+                            index += 1;
+                            continue;
                         }
+                        // 事件超时或者事件已完成
+
+                        events.swap_remove(index);
                     }
-                    Event::Read(ReadEvent::FnOnce { deadline, callback }) => {
-                        if let Ok(Some(c)) = callback.into_inner()
-                            && Instant::now() < deadline
+                    Event::Read(ReadEvent::FnOnce { .. }) => {
+                        if let Event::Read(ReadEvent::FnOnce { deadline, callback }) =
+                            events.swap_remove(index)
                         {
-                            c(object).ok();
+                            if let Ok(Some(c)) = callback.into_inner()
+                                && Instant::now() < deadline
+                            {
+                                c(value, *expire).ok();
+                            }
+                        } else {
+                            unreachable!()
                         }
+                        // if let Ok(Some(c)) = callback.into_inner()
+                        //     && Instant::now() < *deadline
+                        // {
+                        //     c(object).ok();
+                        // }
                     }
                     Event::Read(ReadEvent::FnMut {
                         deadline,
-                        mut callback,
+                        ref mut callback,
                     }) => {
-                        if let Ok(Some(c)) = callback.get_mut()
-                            && Instant::now() < deadline
-                            && c(object).is_err()
+                        if Instant::now() < *deadline
+                            && let Ok(Some(c)) = callback.get_mut()
+                            && c(value, *expire).is_err()
                         {
-                            object
-                                .events
-                                .inner
-                                .push(Event::Read(ReadEvent::FnMut { deadline, callback }));
                             should_remove_read_flag = false;
+                            index += 1;
+                            continue;
                         }
+                        // 事件超时或者事件已完成
+
+                        events.swap_remove(index);
+                        //
+                        // if let Ok(Some(c)) = callback.get_mut()
+                        //     && Instant::now() < deadline
+                        //     && c(object).is_err()
+                        // {
+                        //     object
+                        //         .events
+                        //         .inner
+                        //         .push(Event::Read(ReadEvent::FnMut { deadline, callback }));
+                        //     should_remove_read_flag = false;
+                        // }
                     }
 
-                    Event::IntentionLock { .. } => unreachable!(),
+                    Event::IntentionLock { .. } => index += 1,
                 }
             }
+
+            // while let Some(event) = object
+            //     .events
+            //     .inner
+            //     .pop_if(|e| !matches!(e, Event::IntentionLock { .. }))
+            // {
+            //     match event {
+            //         Event::Write(WriteEvent::FnOnce { deadline, callback }) => {
+            //             if Instant::now() < deadline {
+            //                 callback(object).ok();
+            //             }
+            //         }
+            //         Event::Write(WriteEvent::FnMut {
+            //             deadline,
+            //             mut callback,
+            //         }) => {
+            //             if Instant::now() < deadline && callback(object).is_err() {
+            //                 object
+            //                     .events
+            //                     .inner
+            //                     .push(Event::Write(WriteEvent::FnMut { deadline, callback }));
+            //                 should_remove_write_flag = false;
+            //             }
+            //         }
+            //         Event::Read(ReadEvent::FnOnce { deadline, callback }) => {
+            //             if let Ok(Some(c)) = callback.into_inner()
+            //                 && Instant::now() < deadline
+            //             {
+            //                 c(object).ok();
+            //             }
+            //         }
+            //         Event::Read(ReadEvent::FnMut {
+            //             deadline,
+            //             mut callback,
+            //         }) => {
+            //             if let Ok(Some(c)) = callback.get_mut()
+            //                 && Instant::now() < deadline
+            //                 && c(object).is_err()
+            //             {
+            //                 object
+            //                     .events
+            //                     .inner
+            //                     .push(Event::Read(ReadEvent::FnMut { deadline, callback }));
+            //                 should_remove_read_flag = false;
+            //             }
+            //         }
+            //
+            //         Event::IntentionLock { .. } => unreachable!(),
+            //     }
+            // }
 
             if should_remove_write_flag {
                 *object.events.flags.get_mut() &= !WRITE_EVENT_FLAG;
@@ -447,6 +570,31 @@ pub enum Event {
         notify: Arc<Notify>,
         count: AtomicUsize,
     },
+
+    Nonanonymous {
+        id: Id,
+        event: Box<Event>,
+    },
+}
+
+impl Event {
+    pub fn event_flag(&self) -> u8 {
+        match self {
+            Self::Read(_) => READ_EVENT_FLAG,
+            Self::Write(_) => WRITE_EVENT_FLAG,
+            Self::IntentionLock { .. } => LOCK_EVENT_FLAG,
+        }
+    }
+
+    // TODO:
+    pub fn event_type_id(&self) -> TypeId {
+        match self {
+            Self::Read(e) => e.type_id(),
+            _ => {
+                todo!()
+            }
+        }
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -454,13 +602,13 @@ pub enum ReadEvent {
     // 返回Err则终止执行
     FnOnce {
         deadline: Instant,
-        callback: Mutex<Option<Box<dyn FnOnce(&Object) -> RutinResult<()>>>>,
+        callback: Mutex<Option<Box<dyn FnOnce(&ObjectValue, Instant) -> RutinResult<()>>>>,
     },
 
     // 返回Err则终止并等待下一次执行
     FnMut {
         deadline: Instant,
-        callback: Mutex<Option<Box<dyn FnMut(&Object) -> RutinResult<()>>>>,
+        callback: Mutex<Option<Box<dyn FnMut(&ObjectValue, Instant) -> RutinResult<()>>>>,
     },
 }
 
@@ -478,13 +626,13 @@ pub enum WriteEvent {
     // 返回Err则终止执行
     FnOnce {
         deadline: Instant,
-        callback: Box<dyn FnOnce(&mut Object) -> RutinResult<()>>,
+        callback: Box<dyn FnOnce(&mut ObjectValue, Instant) -> RutinResult<()>>,
     },
 
     // 返回Err则终止并等待下一次执行
     FnMut {
         deadline: Instant,
-        callback: Box<dyn FnMut(&mut Object) -> RutinResult<()>>,
+        callback: Box<dyn FnMut(&mut ObjectValue, Instant) -> RutinResult<()>>,
     },
 }
 

@@ -59,115 +59,115 @@ impl Object {
         self.expire == *NEVER_EXPIRE
     }
 
-    pub fn on_str(&self) -> RutinResult<&Str> {
-        if let ObjectValue::Str(ref s) = self.value {
-            Ok(s)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::Str.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_list(&self) -> RutinResult<&List> {
-        if let ObjectValue::List(ref l) = self.value {
-            Ok(l)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::List.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_set(&self) -> RutinResult<&Set> {
-        if let ObjectValue::Set(ref s) = self.value {
-            Ok(s)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::Set.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_hash(&self) -> RutinResult<&Hash> {
-        if let ObjectValue::Hash(ref h) = self.value {
-            Ok(h)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::Hash.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_zset(&self) -> RutinResult<&ZSet> {
-        if let ObjectValue::ZSet(z) = &self.value {
-            Ok(z)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::ZSet.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_str_mut(&mut self) -> RutinResult<&mut Str> {
-        if let ObjectValue::Str(ref mut s) = self.value {
-            Ok(s)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::Str.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_list_mut(&mut self) -> RutinResult<&mut List> {
-        if let ObjectValue::List(ref mut l) = self.value {
-            Ok(l)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::List.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_set_mut(&mut self) -> RutinResult<&mut Set> {
-        if let ObjectValue::Set(ref mut s) = self.value {
-            Ok(s)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::Set.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_hash_mut(&mut self) -> RutinResult<&mut Hash> {
-        if let ObjectValue::Hash(ref mut h) = self.value {
-            Ok(h)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::Hash.into(),
-                found: self.type_str(),
-            })
-        }
-    }
-
-    pub fn on_zset_mut(&mut self) -> RutinResult<&mut ZSet> {
-        if let ObjectValue::ZSet(ref mut z) = self.value {
-            Ok(z)
-        } else {
-            Err(RutinError::TypeErr {
-                expected: ObjectValueType::ZSet.into(),
-                found: self.type_str(),
-            })
-        }
-    }
+    // pub fn on_str(&self) -> RutinResult<&Str> {
+    //     if let ObjectValue::Str(ref s) = self.value {
+    //         Ok(s)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::Str.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_list(&self) -> RutinResult<&List> {
+    //     if let ObjectValue::List(ref l) = self.value {
+    //         Ok(l)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::List.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_set(&self) -> RutinResult<&Set> {
+    //     if let ObjectValue::Set(ref s) = self.value {
+    //         Ok(s)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::Set.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_hash(&self) -> RutinResult<&Hash> {
+    //     if let ObjectValue::Hash(ref h) = self.value {
+    //         Ok(h)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::Hash.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_zset(&self) -> RutinResult<&ZSet> {
+    //     if let ObjectValue::ZSet(z) = &self.value {
+    //         Ok(z)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::ZSet.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_str_mut(&mut self) -> RutinResult<&mut Str> {
+    //     if let ObjectValue::Str(ref mut s) = self.value {
+    //         Ok(s)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::Str.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_list_mut(&mut self) -> RutinResult<&mut List> {
+    //     if let ObjectValue::List(ref mut l) = self.value {
+    //         Ok(l)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::List.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_set_mut(&mut self) -> RutinResult<&mut Set> {
+    //     if let ObjectValue::Set(ref mut s) = self.value {
+    //         Ok(s)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::Set.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_hash_mut(&mut self) -> RutinResult<&mut Hash> {
+    //     if let ObjectValue::Hash(ref mut h) = self.value {
+    //         Ok(h)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::Hash.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
+    //
+    // pub fn on_zset_mut(&mut self) -> RutinResult<&mut ZSet> {
+    //     if let ObjectValue::ZSet(ref mut z) = self.value {
+    //         Ok(z)
+    //     } else {
+    //         Err(RutinError::TypeErr {
+    //             expected: ObjectValueType::ZSet.into(),
+    //             found: self.type_str(),
+    //         })
+    //     }
+    // }
 
     ///  access time更新为lru_clock，access count加1
     #[inline]
@@ -366,9 +366,7 @@ impl From<u32> for Atc {
 }
 
 #[derive(EnumDiscriminants, IntoStaticStr)]
-#[strum_discriminants(vis(pub))]
-#[strum_discriminants(name(ObjectValueType))]
-#[strum_discriminants(derive(IntoStaticStr))]
+#[strum_discriminants(vis(pub), name(ObjectValueType), derive(IntoStaticStr))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectValue {
     #[strum_discriminants(strum(serialize = "string"))]
@@ -381,6 +379,138 @@ pub enum ObjectValue {
     Hash(Hash),
     #[strum_discriminants(strum(serialize = "zset"))]
     ZSet(ZSet),
+}
+
+impl ObjectValue {
+    pub fn type_str(&self) -> &'static str {
+        match self {
+            ObjectValue::Str(_) => ObjectValueType::Str.into(),
+            ObjectValue::List(_) => ObjectValueType::List.into(),
+            ObjectValue::Set(_) => ObjectValueType::Set.into(),
+            ObjectValue::Hash(_) => ObjectValueType::Hash.into(),
+            ObjectValue::ZSet(_) => ObjectValueType::ZSet.into(),
+        }
+    }
+
+    pub fn typ(&self) -> ObjectValueType {
+        match self {
+            ObjectValue::Str(_) => ObjectValueType::Str,
+            ObjectValue::List(_) => ObjectValueType::List,
+            ObjectValue::Set(_) => ObjectValueType::Set,
+            ObjectValue::Hash(_) => ObjectValueType::Hash,
+            ObjectValue::ZSet(_) => ObjectValueType::ZSet,
+        }
+    }
+
+    pub fn on_str(&self) -> RutinResult<&Str> {
+        if let ObjectValue::Str(ref s) = self {
+            Ok(s)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::Str.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_list(&self) -> RutinResult<&List> {
+        if let ObjectValue::List(ref l) = self {
+            Ok(l)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::List.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_set(&self) -> RutinResult<&Set> {
+        if let ObjectValue::Set(ref s) = self {
+            Ok(s)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::Set.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_hash(&self) -> RutinResult<&Hash> {
+        if let ObjectValue::Hash(ref h) = self {
+            Ok(h)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::Hash.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_zset(&self) -> RutinResult<&ZSet> {
+        if let ObjectValue::ZSet(ref z) = self {
+            Ok(z)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::ZSet.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_str_mut(&mut self) -> RutinResult<&mut Str> {
+        if let ObjectValue::Str(ref mut s) = self {
+            Ok(s)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::Str.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_list_mut(&mut self) -> RutinResult<&mut List> {
+        if let ObjectValue::List(ref mut l) = self {
+            Ok(l)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::List.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_set_mut(&mut self) -> RutinResult<&mut Set> {
+        if let ObjectValue::Set(ref mut s) = self {
+            Ok(s)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::Set.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_hash_mut(&mut self) -> RutinResult<&mut Hash> {
+        if let ObjectValue::Hash(ref mut h) = self {
+            Ok(h)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::Hash.into(),
+                found: self.type_str(),
+            })
+        }
+    }
+
+    pub fn on_zset_mut(&mut self) -> RutinResult<&mut ZSet> {
+        if let ObjectValue::ZSet(ref mut z) = self {
+            Ok(z)
+        } else {
+            Err(RutinError::TypeErr {
+                expected: ObjectValueType::ZSet.into(),
+                found: self.type_str(),
+            })
+        }
+    }
 }
 
 impl std::fmt::Display for ObjectValueType {

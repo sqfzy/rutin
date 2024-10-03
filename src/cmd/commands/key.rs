@@ -105,7 +105,7 @@ impl CmdExecutor for Dump {
         handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
+            .visit_object(self.key.as_ref(), |obj| {
                 match obj.typ() {
                     ObjectValueType::Str => encode_str_value(&mut buf, obj.on_str()?),
                     ObjectValueType::List => encode_list_value(&mut buf, obj.on_list()?),
@@ -151,7 +151,7 @@ impl CmdExecutor for Exists {
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
         for key in self.keys {
-            if !handler.shared.db().contains_object(&key).await {
+            if !handler.shared.db().contains_object(key.as_ref()).await {
                 return Err(RutinError::from(0));
             }
         }
@@ -195,59 +195,48 @@ impl CmdExecutor for Expire {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut res = None;
-
         let new_ex = Instant::now() + self.seconds;
-        handler
-            .shared
-            .db()
-            .update_object(&self.key, |obj| {
-                let ex = obj.expire;
-                match self.opt {
-                    // 无过期时间，则设置
-                    Some(Opt::NX) => {
-                        if ex == *NEVER_EXPIRE {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    // 有过期时间，则设置
-                    Some(Opt::XX) => {
-                        if ex != *NEVER_EXPIRE {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    // 过期时间大于给定时间，则设置
-                    Some(Opt::GT) => {
-                        if new_ex > ex {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    // 过期时间小于给定时间，则设置
-                    Some(Opt::LT) => {
-                        if new_ex < ex {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    None => {
-                        obj.expire = new_ex;
-                        res = Some(Resp3::new_integer(1));
-                        return Ok(());
-                    }
+
+        let mut obj = handler.shared.db().object_entry(&self.key).await?;
+
+        let ex = obj.expire_mut().ok_or_else(|| RutinError::from(0))?;
+
+        match self.opt {
+            // 无过期时间，则设置
+            Some(Opt::NX) => {
+                if *ex == *NEVER_EXPIRE {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
                 }
+            }
+            // 有过期时间，则设置
+            Some(Opt::XX) => {
+                if *ex != *NEVER_EXPIRE {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
+                }
+            }
+            // 过期时间大于给定时间，则设置
+            Some(Opt::GT) => {
+                if new_ex > *ex {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
+                }
+            }
+            // 过期时间小于给定时间，则设置
+            Some(Opt::LT) => {
+                if new_ex < *ex {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
+                }
+            }
+            None => {
+                *ex = new_ex;
+                return Ok(Some(Resp3::new_integer(1)));
+            }
+        }
 
-                Err(RutinError::from(0))
-            })
-            .await?;
-
-        Ok(res)
+        Err(RutinError::from(0))
     }
 
     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
@@ -287,59 +276,48 @@ impl CmdExecutor for ExpireAt {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut res = None;
-
         let new_ex = self.timestamp;
-        handler
-            .shared
-            .db()
-            .update_object(&self.key, |obj| {
-                let ex = obj.expire;
-                match self.opt {
-                    // 无过期时间，则设置
-                    Some(Opt::NX) => {
-                        if ex == *NEVER_EXPIRE {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    // 有过期时间，则设置
-                    Some(Opt::XX) => {
-                        if ex != *NEVER_EXPIRE {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    // 过期时间大于给定时间，则设置
-                    Some(Opt::GT) => {
-                        if new_ex > ex {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    // 过期时间小于给定时间，则设置
-                    Some(Opt::LT) => {
-                        if new_ex < ex {
-                            obj.expire = new_ex;
-                            res = Some(Resp3::new_integer(1));
-                            return Ok(());
-                        }
-                    }
-                    None => {
-                        obj.expire = new_ex;
-                        res = Some(Resp3::new_integer(1));
-                        return Ok(());
-                    }
+
+        let mut obj = handler.shared.db().object_entry(&self.key).await?;
+
+        let ex = obj.expire_mut().ok_or_else(|| RutinError::from(0))?;
+
+        match self.opt {
+            // 无过期时间，则设置
+            Some(Opt::NX) => {
+                if *ex == *NEVER_EXPIRE {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
                 }
+            }
+            // 有过期时间，则设置
+            Some(Opt::XX) => {
+                if *ex != *NEVER_EXPIRE {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
+                }
+            }
+            // 过期时间大于给定时间，则设置
+            Some(Opt::GT) => {
+                if new_ex > *ex {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
+                }
+            }
+            // 过期时间小于给定时间，则设置
+            Some(Opt::LT) => {
+                if new_ex < *ex {
+                    *ex = new_ex;
+                    return Ok(Some(Resp3::new_integer(1)));
+                }
+            }
+            None => {
+                *ex = new_ex;
+                return Ok(Some(Resp3::new_integer(1)));
+            }
+        }
 
-                Err(RutinError::from(0))
-            })
-            .await?;
-
-        Ok(res)
+        Err(RutinError::from(0))
     }
 
     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
@@ -387,16 +365,12 @@ impl CmdExecutor for ExpireTime {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut ex = *NEVER_EXPIRE;
-        handler
+        let ex = handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
-                ex = obj.expire;
-                Ok(())
-            })
+            .get_object_expired(self.key.as_ref())
             .await
-            .map_err(|_| RutinError::from(-1))?; // 键不存在
+            .map_err(|_| RutinError::from(-1))?;
 
         if ex != *NEVER_EXPIRE {
             Ok(Some(Resp3::new_integer(
@@ -448,7 +422,7 @@ impl CmdExecutor for Keys {
                 .iter()
                 .filter_map(|entry| {
                     re.is_match(entry.key())
-                        .then(|| CheapResp3::new_blob_string(entry.key().clone()))
+                        .then(|| CheapResp3::new_blob_string(entry.key().clone().into()))
                 })
                 .collect::<Vec<CheapResp3>>();
 
@@ -555,19 +529,14 @@ impl CmdExecutor for Persist {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        handler
-            .shared
-            .db()
-            .update_object(&self.key, |obj| {
-                if obj.expire == *NEVER_EXPIRE {
-                    return Err(0.into());
-                }
+        let mut obj = handler.shared.db().object_entry(self.key.as_ref()).await?;
+        let ex = obj.expire_mut().ok_or_else(|| RutinError::from(0))?;
 
-                obj.expire = *NEVER_EXPIRE;
-                Ok(())
-            })
-            .await
-            .map_err(|_| RutinError::from(0))?;
+        if *ex == *NEVER_EXPIRE {
+            return Err(0.into());
+        }
+
+        *ex = *NEVER_EXPIRE;
 
         Ok(Some(Resp3::new_integer(1)))
     }
@@ -603,15 +572,10 @@ impl CmdExecutor for Pttl {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut ex = *NEVER_EXPIRE;
-
-        handler
+        let ex = handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
-                ex = obj.expire;
-                Ok(())
-            })
+            .get_object_expired(self.key.as_ref())
             .await
             .map_err(|_| RutinError::from(-2))?;
 
@@ -654,15 +618,10 @@ impl CmdExecutor for Ttl {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut ex = *NEVER_EXPIRE;
-
-        handler
+        let ex = handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
-                ex = obj.expire;
-                Ok(())
-            })
+            .get_object_expired(self.key.as_ref())
             .await
             .map_err(|_| RutinError::from(-2))?;
 
@@ -703,16 +662,12 @@ impl CmdExecutor for Type {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut typ = "";
-
-        handler
+        let typ = handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
-                typ = obj.type_str();
-                Ok(())
-            })
-            .await?;
+            .get_object(self.key.as_ref())
+            .await?
+            .type_str();
 
         Ok(Some(Resp3::new_simple_string(typ.into())))
     }
@@ -737,7 +692,7 @@ mod cmd_key_tests {
     use crate::{
         server::{NEVER_EXPIRE, UNIX_EPOCH},
         shared::db::{Hash, List, Object, Set, Str, ZSet},
-        util::{gen_test_handler, KeyWrapper},
+        util::gen_test_handler,
     };
 
     // 允许的时间误差
@@ -749,7 +704,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
@@ -782,7 +737,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
@@ -814,7 +769,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
@@ -852,7 +807,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 Instant::now() + Duration::from_secs(10),
@@ -861,7 +816,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -886,7 +841,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 Instant::now() + Duration::from_secs(10),
@@ -895,7 +850,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -921,7 +876,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 Instant::now() + Duration::from_secs(10),
@@ -930,7 +885,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -956,7 +911,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 Instant::now() + Duration::from_secs(10),
@@ -965,7 +920,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -995,7 +950,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
@@ -1040,7 +995,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 *UNIX_EPOCH + Duration::from_secs(1893427200),
@@ -1049,7 +1004,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -1075,7 +1030,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 *UNIX_EPOCH + Duration::from_secs(1893427200),
@@ -1084,7 +1039,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -1110,7 +1065,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 *UNIX_EPOCH + Duration::from_secs(1893427200),
@@ -1119,7 +1074,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -1145,7 +1100,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 *UNIX_EPOCH + Duration::from_secs(1893427200),
@@ -1154,7 +1109,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -1184,7 +1139,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
@@ -1196,7 +1151,7 @@ mod cmd_key_tests {
             .is_never_expired());
         let expire = Instant::now() + Duration::from_secs(10);
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(Str::from("value_with_ex"), expire),
         )
         .await
@@ -1239,25 +1194,25 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key2"),
+            "key2".as_bytes(),
             Object::with_expire(Str::from("value2"), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key3"),
+            "key3".as_bytes(),
             Object::with_expire(Str::from("value3"), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key4"),
+            "key4".as_bytes(),
             Object::with_expire(Str::from("value4"), *NEVER_EXPIRE),
         )
         .await
@@ -1273,10 +1228,8 @@ mod cmd_key_tests {
             .context
             .inbox
             .recv()
-            .as_resp3_unchecked()
-            .try_array()
-            .unwrap()
-            .clone();
+            .into_resp3_unchecked()
+            .into_array_unchecked();
         assert!(
             result.contains(&Resp3::new_blob_string("key1".into()))
                 && result.contains(&Resp3::new_blob_string("key2".into()))
@@ -1294,10 +1247,8 @@ mod cmd_key_tests {
             .context
             .inbox
             .recv()
-            .as_resp3_unchecked()
-            .try_array()
-            .unwrap()
-            .clone();
+            .into_resp3_unchecked()
+            .into_array_unchecked();
         assert!(
             result.contains(&Resp3::new_blob_string("key1".into()))
                 && result.contains(&Resp3::new_blob_string("key2".into()))
@@ -1315,10 +1266,8 @@ mod cmd_key_tests {
             .context
             .inbox
             .recv()
-            .as_resp3_unchecked()
-            .try_array()
-            .unwrap()
-            .clone();
+            .into_resp3_unchecked()
+            .into_array_unchecked();
         assert!(result.contains(&Resp3::new_blob_string("key1".into())));
     }
 
@@ -1328,7 +1277,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(
                 Str::from("value_with_ex"),
                 Instant::now() + Duration::from_secs(10),
@@ -1337,7 +1286,7 @@ mod cmd_key_tests {
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key_without_ex"),
+            "key_without_ex".as_bytes(),
             Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
         )
         .await
@@ -1384,7 +1333,7 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
@@ -1396,7 +1345,7 @@ mod cmd_key_tests {
         let dur = Duration::from_secs(10);
         let expire = Instant::now() + dur;
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(Str::from("value_with_ex"), expire),
         )
         .await
@@ -1431,8 +1380,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_integer()
-            .unwrap() as u64;
+            .into_integer_unchecked() as u64;
         assert!(dur.as_millis() as u64 - result < ALLOWED_DELTA);
     }
 
@@ -1442,19 +1390,19 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::from("value1"), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         assert_eq!(
-            db.get_object("key1".as_bytes()).await.unwrap().expire,
+            db.entries.get("key1".as_bytes()).unwrap().expire,
             *NEVER_EXPIRE
         );
         let dur = Duration::from_secs(10);
         let expire = Instant::now() + dur;
         db.insert_object(
-            &KeyWrapper::from("key_with_ex"),
+            "key_with_ex".as_bytes(),
             Object::with_expire(Str::from("value_with_ex"), expire),
         )
         .await
@@ -1489,8 +1437,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_integer()
-            .unwrap() as u64;
+            .into_integer_unchecked() as u64;
         assert!(dur.as_secs() - result < ALLOWED_DELTA);
     }
 
@@ -1500,31 +1447,31 @@ mod cmd_key_tests {
         let db = handler.shared.db();
 
         db.insert_object(
-            &KeyWrapper::from("key1"),
+            "key1".as_bytes(),
             Object::with_expire(Str::default(), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key2"),
+            "key2".as_bytes(),
             Object::with_expire(List::default(), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key3"),
+            "key3".as_bytes(),
             Object::with_expire(Set::default(), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key4"),
+            "key4".as_bytes(),
             Object::with_expire(Hash::default(), *NEVER_EXPIRE),
         )
         .await
         .unwrap();
         db.insert_object(
-            &KeyWrapper::from("key5"),
+            "key5".as_bytes(),
             Object::with_expire(ZSet::default(), *NEVER_EXPIRE),
         )
         .await
@@ -1541,8 +1488,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_simple_string()
-            .unwrap()
+            .into_simple_string_unchecked()
             .to_string();
         assert_eq!(result, "string");
 
@@ -1556,8 +1502,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_simple_string()
-            .unwrap()
+            .into_simple_string_unchecked()
             .to_string();
         assert_eq!(result, "list");
 
@@ -1571,8 +1516,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_simple_string()
-            .unwrap()
+            .into_simple_string_unchecked()
             .to_string();
         assert_eq!(result, "set");
 
@@ -1586,8 +1530,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_simple_string()
-            .unwrap()
+            .into_simple_string_unchecked()
             .to_string();
         assert_eq!(result, "hash");
 
@@ -1601,8 +1544,7 @@ mod cmd_key_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_simple_string()
-            .unwrap()
+            .into_simple_string_unchecked()
             .to_string();
         assert_eq!(result, "zset");
     }

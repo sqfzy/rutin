@@ -5,7 +5,7 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::{AsyncStream, Handler, NEVER_EXPIRE, UNIX_EPOCH},
-    shared::db::{Object, ObjectValueType, Str},
+    shared::db::{Object, Str},
     util::{atoi, StaticBytes},
     Int,
 };
@@ -36,13 +36,17 @@ impl CmdExecutor for Append {
         handler
             .shared
             .db()
-            .update_object_force(&self.key, ObjectValueType::Str, |obj| {
-                let str = obj.on_str_mut()?;
-                str.append(&self.value);
+            .update_object_force(
+                self.key.as_ref(),
+                || Str::default().into(),
+                |obj| {
+                    let str = obj.on_str_mut()?;
+                    str.append(&self.value);
 
-                length = Some(Resp3::new_integer(str.len() as Int));
-                Ok(())
-            })
+                    length = Some(Resp3::new_integer(str.len() as Int));
+                    Ok(())
+                },
+            )
             .await?;
 
         Ok(length)
@@ -177,7 +181,7 @@ impl CmdExecutor for Get {
         handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
+            .visit_object(self.key.as_ref(), |obj| {
                 res = Some(Resp3::new_blob_string(obj.on_str()?.to_bytes()));
                 Ok(())
             })
@@ -198,6 +202,16 @@ impl CmdExecutor for Get {
         }
 
         Ok(Get { key })
+    }
+
+    #[inline]
+    async fn may_track(&self, handler: &mut Handler<impl AsyncStream>) -> bool {
+        handler
+            .context
+            .client_track
+            .keys
+            .push(self.key.as_ref().into());
+        true
     }
 }
 
@@ -223,7 +237,7 @@ impl CmdExecutor for GetRange {
         handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
+            .visit_object(self.key.as_ref(), |obj| {
                 let str = obj.on_str()?;
 
                 let mut buf = itoa::Buffer::new();
@@ -253,6 +267,16 @@ impl CmdExecutor for GetRange {
         })?;
 
         Ok(GetRange { key, start, end })
+    }
+
+    #[inline]
+    async fn may_track(&self, handler: &mut Handler<impl AsyncStream>) -> bool {
+        handler
+            .context
+            .client_track
+            .keys
+            .push(self.key.as_ref().into());
+        true
     }
 }
 
@@ -419,7 +443,7 @@ impl CmdExecutor for MGet {
             handler
                 .shared
                 .db()
-                .visit_object(key, |obj| {
+                .visit_object(key.as_ref(), |obj| {
                     str = obj.on_str()?.to_bytes();
                     Ok(())
                 })
@@ -446,6 +470,16 @@ impl CmdExecutor for MGet {
             .try_collect()?;
 
         Ok(MGet { keys })
+    }
+
+    #[inline]
+    async fn may_track(&self, handler: &mut Handler<impl AsyncStream>) -> bool {
+        handler
+            .context
+            .client_track
+            .keys
+            .extend(self.keys.iter().map(|b| b.as_ref().into()));
+        true
     }
 }
 
@@ -511,7 +545,7 @@ impl CmdExecutor for MSetNx {
         let db = handler.shared.db();
 
         for (key, _) in &self.pairs {
-            if db.contains_object(key).await {
+            if db.contains_object(key.as_ref()).await {
                 return Err(0.into());
             }
         }
@@ -622,6 +656,7 @@ impl CmdExecutor for Set {
         if self.get {
             Ok(Some(Resp3::new_blob_string(
                 old.expect("old object must exist when 'get' option is set")
+                    .value
                     .on_str()?
                     .to_bytes(),
             )))
@@ -855,7 +890,7 @@ impl CmdExecutor for StrLen {
         handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
+            .visit_object(self.key.as_ref(), |obj| {
                 len = obj.on_str()?.len();
                 Ok(())
             })
@@ -904,7 +939,7 @@ mod cmd_str_tests {
             handler
                 .shared
                 .db()
-                .contains_object(&StaticBytes::from("key".as_bytes()))
+                .contains_object(StaticBytes::from("key".as_bytes()).as_ref())
                 .await
         );
 
@@ -921,7 +956,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
+                .into_simple_string()
                 .unwrap(),
             &"OK"
         );
@@ -937,8 +972,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             b"value_never_expire".as_ref()
         );
 
@@ -955,8 +989,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
@@ -970,8 +1003,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             b"value_nx".as_ref()
         );
 
@@ -1005,8 +1037,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
@@ -1020,8 +1051,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             "value_xx".as_bytes()
         );
 
@@ -1038,8 +1068,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             "value_never_expire".as_bytes()
         );
 
@@ -1066,8 +1095,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
@@ -1081,8 +1109,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             "value_expire".as_bytes()
         );
 
@@ -1110,8 +1137,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
@@ -1125,8 +1151,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             "value_expire".as_bytes()
         );
 
@@ -1164,8 +1189,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
@@ -1179,8 +1203,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             "value_expire".as_bytes()
         );
 
@@ -1219,8 +1242,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
@@ -1234,8 +1256,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_blob_string()
-                .unwrap(),
+                .into_blob_string_unchecked(),
             "value_expire".as_bytes()
         );
 
@@ -1264,8 +1285,7 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
@@ -1279,19 +1299,18 @@ mod cmd_str_tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .try_simple_string()
-                .unwrap(),
+                .into_simple_string_unchecked(),
             &"OK"
         );
 
         let obj = handler
             .shared
             .db()
-            .get_object("key_expire".as_bytes())
-            .await
+            .entries
+            .get("key_expire".as_bytes())
             .unwrap();
         assert_eq!(
-            obj.on_str().unwrap().to_bytes().as_ref(),
+            obj.value.on_str().unwrap().to_bytes().as_ref(),
             b"value_expire_modified"
         );
         assert!(

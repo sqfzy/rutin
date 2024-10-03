@@ -3,13 +3,17 @@ pub mod commands;
 use crate::{
     conf::AccessControl,
     error::{RutinError, RutinResult},
-    frame::{CheapResp3, Resp3, StaticResp3, ARRAY_PREFIX, CRLF},
-    server::{using_local_buf, AsyncStream, Handler},
+    frame::{CheapResp3, Resp3, StaticResp3},
+    server::{AsyncStream, Handler},
     util::{StaticBytes, Uppercase},
 };
-use bytes::BufMut;
 use commands::*;
-use std::{collections::VecDeque, intrinsics::unlikely, iter::Iterator, num::NonZero};
+use std::{
+    collections::VecDeque,
+    intrinsics::{likely, unlikely},
+    iter::Iterator,
+    num::NonZero,
+};
 use tracing::instrument;
 
 pub trait CommandFlag {
@@ -30,46 +34,39 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
             return Err(RutinError::NoPermission);
         }
 
-        let post_office = handler.shared.post_office();
+        let mut should_track_key = false;
 
-        let should_send_wcmd =
-            cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG) && post_office.need_send_wcmd();
+        let should_handle_wcmd = {
+            let should_handle_wcmd = cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG)
+                && handler.shared.post_office().need_send_wcmd();
 
-        if should_send_wcmd {
-            let buf = &mut handler.context.wcmd_buf;
-
-            buf.put_u8(ARRAY_PREFIX);
-            buf.put_slice(itoa::Buffer::new().format(args.len() + 1).as_bytes());
-            buf.put_slice(CRLF);
-
-            let cmd_name_frame: Resp3<&[u8], String> =
-                Resp3::new_blob_string(Self::NAME.as_bytes());
-            cmd_name_frame.encode_buf(buf);
-
-            for frame in args.inner.iter() {
-                frame.encode_buf(buf);
+            if should_handle_wcmd {
+                handler.context.wcmd_buf.buffer_wcmd(Self::NAME, &args);
             }
 
-            Some(wcmd)
-        }
+            should_handle_wcmd
+        };
 
-        let cmd = Self::parse(args, &handler.context.ac)?;
+        let res: RutinResult<Option<CheapResp3>> = try {
+            let cmd = Self::parse(args, &handler.context.ac)?;
 
-        let res = cmd.execute(handler).await?;
+            // 如果开启了client-cache则可能需要追踪涉及的键
+            should_track_key = cmd.may_track(handler).await;
 
-        // 如果使用了pipline则该批命令视为一个整体命令。当最后一个命令执行完毕后，才发送写命令，
-        // 避免性能瓶颈。如果执行过程中程序崩溃，则客户端会报错，用户会视为该批命令没有执行成
-        // 功，也不会传播该批命令，符合一致性。
-        if should_send_wcmd {
-            if handler.conn.unhandled_count() <= 1 {
-                if wcmd_buf.is_empty() {
-                    post_office.send_wcmd(wcmd).await;
-                } else {
-                    wcmd_buf.unsplit(wcmd);
-                    post_office.send_wcmd(wcmd_buf.split()).await;
-                }
+            cmd.execute(handler).await?
+        };
+
+        if likely(res.is_ok()) {
+            if should_handle_wcmd {
+                handler.may_send_wmcd_buf().await;
             } else {
-                wcmd_buf.unsplit(wcmd);
+                handler.context.wcmd_buf.rollback();
+            }
+
+            if should_track_key {
+                handler.track().await;
+            } else {
+                handler.context.client_track.rollback();
             }
         }
 
@@ -80,7 +77,7 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
         // }
         // }
 
-        Ok(res)
+        res
     }
 
     async fn execute(
@@ -90,6 +87,13 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
 
     // 需要检查是否有权限操作对应的键
     fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self>;
+
+    // 该方法用于实现client-side cache。所有获取当前string类键值对的命令(不一定是Read类
+    // 命令)都需要手动实现该方法
+    #[inline]
+    async fn may_track(&self, _handler: &mut Handler<impl AsyncStream>) -> bool {
+        false
+    }
 }
 
 #[inline]
@@ -220,7 +224,7 @@ pub async fn dispatch(
 
 #[derive(Debug)]
 pub struct CmdUnparsed<'a> {
-    inner: &'a mut VecDeque<StaticResp3>,
+    pub inner: &'a mut VecDeque<StaticResp3>,
 }
 
 impl CmdUnparsed<'_> {

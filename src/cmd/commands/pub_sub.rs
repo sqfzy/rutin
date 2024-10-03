@@ -4,8 +4,8 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
-    shared::Letter,
-    Int, Key,
+    shared::{db::Key, Letter},
+    Int,
 };
 use bytes::Bytes;
 use itertools::Itertools;
@@ -32,23 +32,23 @@ impl CmdExecutor for Publish {
 
         // 获取正在监听的订阅者
         let listeners = db
-            .get_channel_all_listener(&self.topic)
+            .get_channel_all_listener(self.topic.as_ref())
             .ok_or(RutinError::from(0))?;
 
         let mut count = 0;
         // 理论上一定会发送成功，因为Db中保存的发布者与订阅者是一一对应的
         for listener in listeners {
             let res = listener
-                .send_async(Letter::Resp3(Resp3::new_array(vec![
+                .send_async(Letter::Resp3(CheapResp3::new_array(vec![
                     Resp3::new_blob_string("message".into()),
-                    Resp3::new_blob_string(self.topic.clone()),
+                    Resp3::new_blob_string(self.topic.clone().into()),
                     Resp3::new_blob_string(self.msg.clone()),
                 ])))
                 .await;
 
             // 如果发送失败，证明订阅者已经关闭连接，此时应该从Db中移除该订阅者
             if res.is_err() {
-                db.remove_channel_listener(&self.topic, &listener);
+                db.remove_channel_listener(self.topic.as_ref(), &listener);
             } else {
                 count += 1;
             }
@@ -103,9 +103,9 @@ impl CmdExecutor for Subscribe {
                     .add_channel_listener(topic.clone(), context.outbox.clone());
             }
 
-            conn.write_frames::<Bytes, String>(&Resp3::new_array(vec![
+            conn.write_frames(&CheapResp3::new_array(vec![
                 Resp3::new_blob_string("subscribe".into()),
-                Resp3::new_blob_string(topic),
+                Resp3::new_blob_string(topic.into()),
                 Resp3::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await?;
@@ -161,12 +161,14 @@ impl CmdExecutor for Unsubscribe {
             // 订阅了该频道，需要从订阅列表移除，并且移除Db中的监听器
             if let Some(i) = subscribed_channels.iter().position(|t| *t == topic) {
                 subscribed_channels.swap_remove(i);
-                shared.db().remove_channel_listener(&topic, &context.outbox);
+                shared
+                    .db()
+                    .remove_channel_listener(topic.as_ref(), &context.outbox);
             }
 
-            conn.write_frames::<Bytes, String>(&Resp3::new_array(vec![
+            conn.write_frames(&CheapResp3::new_array(vec![
                 Resp3::new_blob_string("unsubscribe".into()),
-                Resp3::new_blob_string(topic),
+                Resp3::new_blob_string(topic.into()),
                 Resp3::new_integer(subscribed_channels.len() as Int),
             ]))
             .await?;
@@ -252,13 +254,12 @@ mod cmd_pub_sub_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_integer()
-            .unwrap();
+            .into_integer_unchecked();
         assert_eq!(res, 1);
 
         let msg = handler.context.inbox.recv_async().await;
         assert_eq!(
-            msg.as_resp3_unchecked().try_array().unwrap(),
+            msg.into_resp3_unchecked().into_array_unchecked(),
             &[
                 Resp3::new_blob_string("message".into()),
                 Resp3::new_blob_string("channel1".into()),
@@ -277,13 +278,12 @@ mod cmd_pub_sub_tests {
             .await
             .unwrap()
             .unwrap()
-            .try_integer()
-            .unwrap();
+            .into_integer_unchecked();
         assert_eq!(res, 1);
 
         let msg = handler.context.inbox.recv_async().await;
         assert_eq!(
-            msg.as_resp3_unchecked().try_array().unwrap(),
+            msg.into_resp3_unchecked().into_array_unchecked(),
             &[
                 Resp3::new_blob_string("message".into()),
                 Resp3::new_blob_string("channel2".into()),

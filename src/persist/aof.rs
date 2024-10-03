@@ -269,6 +269,7 @@ async fn aof_test() {
         db.get_object("key:000000000015".as_bytes())
             .await
             .unwrap()
+            .value
             .on_str()
             .unwrap()
             .to_vec(),
@@ -278,6 +279,7 @@ async fn aof_test() {
         db.get_object("key:000000000003".as_bytes())
             .await
             .unwrap()
+            .value
             .on_str()
             .unwrap()
             .to_vec(),
@@ -287,6 +289,7 @@ async fn aof_test() {
         db.get_object("key:000000000025".as_bytes())
             .await
             .unwrap()
+            .value
             .on_str()
             .unwrap()
             .to_vec(),

@@ -1,8 +1,8 @@
+mod key;
 mod object;
 mod object_entry;
 
-use std::fmt::Debug;
-
+pub use key::*;
 pub use object::*;
 pub use object_entry::ObjectEntry;
 
@@ -10,7 +10,6 @@ use crate::{
     conf::OomConf,
     error::{RutinError, RutinResult},
     shared::Outbox,
-    Key,
 };
 use ahash::RandomState;
 use dashmap::{
@@ -20,6 +19,8 @@ use dashmap::{
     },
     DashMap, DashSet, Map,
 };
+use equivalent::Equivalent;
+use std::fmt::Debug;
 use tokio::time::Instant;
 use tracing::instrument;
 
@@ -89,13 +90,17 @@ impl Db {
         }
     }
 
-    // 该函数仅供Db模块内部使用，也可以用于测试
+    // 不会触发ReadEvent
     //
     // # Error:
     // 对象不存在
     // 对象已过期
     #[instrument(level = "debug", skip(self))]
-    pub async fn get_object(&self, key: &[u8]) -> RutinResult<Ref<'_, Key, Object>> {
+    pub async fn get_object<Q>(&self, key: &Q) -> RutinResult<Ref<'_, Key, Object>>
+    where
+        Q: std::hash::Hash + Eq + ?Sized + Debug,
+        Key: std::borrow::Borrow<Q>,
+    {
         // 键存在
         if let Some(e) = self.entries._get(key) {
             let e = Events::try_trigger_lock_event1(e, &self.entries).await?;
@@ -118,14 +123,18 @@ impl Db {
         Err(RutinError::Null)
     }
 
-    // 该函数仅供Db模块内部使用，也可以用于测试
+    // 不会触发WriteEvent
     //
     // # Error:
     // OOM
     // 对象不存在
     // 对象已过期
     #[instrument(level = "debug", skip(self))]
-    pub async fn get_object_mut(&self, key: &[u8]) -> RutinResult<RefMut<'_, Key, Object>> {
+    pub async fn get_object_mut<Q>(&self, key: &Q) -> RutinResult<RefMut<'_, Key, Object>>
+    where
+        Q: std::hash::Hash + Eq + Debug,
+        Key: std::borrow::Borrow<Q>,
+    {
         self.try_evict().await?;
 
         // 键存在
@@ -149,23 +158,17 @@ impl Db {
 
         Err(RutinError::Null)
     }
-
-    #[inline]
-    pub async fn object_entry<'a, 'b, Q>(
-        &'a self,
-        key: &'b Q,
-    ) -> RutinResult<ObjectEntry<'a, 'b, Q>>
-    where
-        Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
-    {
-        self.try_evict().await?;
-        Ok(self.entry_unchecked_oom(key).await)
-    }
+    // #[inline]
+    // #[instrument(level = "debug", skip(self))]
+    // async fn update_object_expired(&self, key: &[u8], ex: Instant) -> RutinResult<()> {
+    //     *self.object_entry(key).await?.expire_mut() = ex;
+    //     Ok(())
+    // }
 
     #[instrument(level = "debug", skip(self))]
-    async fn entry_unchecked_oom<'a, 'b, Q>(&'a self, key: &'b Q) -> ObjectEntry<'a, 'b, Q>
+    async fn object_entry_unchecked_oom<'a, 'b, Q>(&'a self, key: &'b Q) -> ObjectEntry<'a, 'b, Q>
     where
-        Q: std::hash::Hash + equivalent::Equivalent<Key> + ?Sized + Debug,
+        Q: std::hash::Hash + Equivalent<Key> + ?Sized + Debug,
     {
         let entry = self.entries._entry_ref(key);
 
@@ -200,13 +203,26 @@ impl Db {
             EntryRef::Vacant(_) => entry.into(),
         }
     }
-}
 
-// 以下函数依赖于get(), get_mut(), entry(), entry_unchecked_oom()
-impl Db {
+    #[inline]
+    pub async fn object_entry<'a, 'b, Q>(
+        &'a self,
+        key: &'b Q,
+    ) -> RutinResult<ObjectEntry<'a, 'b, Q>>
+    where
+        Q: std::hash::Hash + ?Sized + Equivalent<Key> + Debug,
+    {
+        self.try_evict().await?;
+        Ok(self.object_entry_unchecked_oom(key).await)
+    }
+
     /// 检验对象是否合法存在。如果对象不存在，对象为空或者对象已过期则返回false，否则返回true
     #[instrument(level = "debug", skip(self), ret)]
-    pub async fn contains_object(&self, key: &[u8]) -> bool {
+    pub async fn contains_object<Q>(&self, key: &Q) -> bool
+    where
+        Q: std::hash::Hash + Eq + ?Sized + Debug,
+        Key: std::borrow::Borrow<Q>,
+    {
         match self.get_object(key).await {
             Ok(e) => {
                 Events::try_trigger_read_event(e.value());
@@ -214,6 +230,16 @@ impl Db {
             }
             Err(_) => false,
         }
+    }
+
+    #[inline]
+    #[instrument(level = "debug", skip(self))]
+    pub async fn get_object_expired<Q>(&self, key: &Q) -> RutinResult<Instant>
+    where
+        Q: std::hash::Hash + Eq + ?Sized + Debug,
+        Key: std::borrow::Borrow<Q>,
+    {
+        self.get_object(key).await.map(|obj| obj.expire)
     }
 
     /// # Desc:
@@ -226,15 +252,19 @@ impl Db {
     /// 对象已过期
     /// f返回错误
     #[instrument(level = "debug", skip(self, f))]
-    pub async fn visit_object(
+    pub async fn visit_object<Q>(
         &self,
-        key: &[u8],
-        f: impl FnOnce(&Object) -> RutinResult<()>,
-    ) -> RutinResult<()> {
+        key: &Q,
+        f: impl FnOnce(&ObjectValue) -> RutinResult<()>,
+    ) -> RutinResult<()>
+    where
+        Q: std::hash::Hash + Eq + ?Sized + Debug,
+        Key: std::borrow::Borrow<Q>,
+    {
         let e = self.get_object(key).await?;
         let obj = e.value();
 
-        f(obj)?;
+        f(&obj.value)?;
 
         Events::try_trigger_read_event(obj);
 
@@ -242,47 +272,44 @@ impl Db {
     }
 
     #[instrument(level = "debug", skip(self, f), err)]
-    pub async fn update_object(
+    pub async fn update_object<'b, Q>(
         &self,
-        key: &[u8],
-        f: impl FnOnce(&mut Object) -> RutinResult<()>,
-    ) -> RutinResult<()> {
-        let mut e = self.get_object_mut(key).await?;
-        let obj = e.value_mut();
-
-        f(obj)?;
-
-        Events::try_trigger_read_and_write_event(obj);
-
+        key: &'b Q,
+        f: impl FnOnce(&mut ObjectValue) -> RutinResult<()>,
+    ) -> RutinResult<()>
+    where
+        Q: std::hash::Hash + ?Sized + Equivalent<Key> + Debug,
+        Key: From<&'b Q>,
+    {
+        self.object_entry(key).await?.update1(f)?;
         Ok(())
     }
 
     #[inline]
-    pub async fn insert_object<'a, 'b, Q>(
-        &'a self,
+    pub async fn insert_object<'b, Q>(
+        &self,
         key: &'b Q,
         object: Object,
     ) -> RutinResult<Option<Object>>
     where
-        Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
-        bytes::Bytes: From<&'b Q>,
+        Q: std::hash::Hash + ?Sized + Equivalent<Key> + Debug,
+        Key: From<&'b Q>,
     {
         Ok(self.object_entry(key).await?.insert2(object).1)
     }
 
     #[inline]
     #[instrument(level = "debug", skip(self), ret)]
-    pub async fn remove_object<'a, 'b, Q>(&'a self, key: &'b Q) -> Option<(Key, Object)>
+    pub async fn remove_object<'b, Q>(&self, key: &'b Q) -> Option<(Key, Object)>
     where
-        Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
-        bytes::Bytes: From<&'b Q>,
+        Q: std::hash::Hash + ?Sized + Equivalent<Key> + Debug,
     {
-        self.entry_unchecked_oom(key).await.remove()
+        self.object_entry_unchecked_oom(key).await.remove()
     }
 
     // #[inline]
     // #[instrument(level = "debug", skip(self), ret)]
-    // pub async fn remove_object2<'a, 'b, Q>(&'a self, key: &'b Q) -> Option<(Key, Object)>
+    // pub async fn remove_object<'a, 'b, Q>(&'a self, key: &'b Q) -> Option<(Key, Object)>
     // where
     //     Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
     // {
@@ -290,32 +317,21 @@ impl Db {
     //     self.entry_unchecked_oom(key).await.remove()
     // }
 
-    #[instrument(level = "debug", skip(self, f), err)]
+    #[instrument(level = "debug", skip(self, f1, f2), err)]
     pub async fn update_object_force<'a, 'b, Q>(
         &'a self,
         key: &'b Q,
-        typ: ObjectValueType,
-        f: impl FnOnce(&mut Object) -> RutinResult<()>,
+        f1: impl FnOnce() -> Object,
+        f2: impl FnOnce(&mut ObjectValue) -> RutinResult<()>,
     ) -> RutinResult<()>
     where
-        Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
-        bytes::Bytes: From<&'b Q>,
+        Q: std::hash::Hash + equivalent::Equivalent<Key> + ?Sized + Debug,
+        Key: From<&'b Q>,
     {
-        if let (e, Some(f)) = self.object_entry(key).await?.update2(f)? {
-            e.or_try_insert_with(|| -> RutinResult<Object> {
-                let mut obj = match typ {
-                    ObjectValueType::Str => Str::default().into(),
-                    ObjectValueType::List => List::default().into(),
-                    ObjectValueType::Set => Set::default().into(),
-                    ObjectValueType::Hash => Hash::default().into(),
-                    ObjectValueType::ZSet => ZSet::default().into(),
-                };
-
-                f(&mut obj)?;
-
-                Ok(obj)
-            })?;
-        }
+        self.object_entry(key)
+            .await?
+            .or_insert_with(f1)
+            .update1(f2)?;
 
         Ok(())
     }

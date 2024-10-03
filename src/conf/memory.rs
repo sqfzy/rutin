@@ -2,7 +2,6 @@ use crate::{
     error::{RutinError, RutinResult},
     server::USED_MEMORY,
     shared::db::{Atc, Db},
-    util::KeyWrapper,
 };
 use serde::Deserialize;
 use std::sync::atomic::Ordering;
@@ -92,7 +91,7 @@ impl OomConf {
 
                     // 如果是AllKeysRandom策略，直接删除样本对象
                     if matches!(self.maxmemory_policy, Policy::AllKeysRandom) {
-                        db.remove_object(&KeyWrapper::from(sample_key)).await;
+                        db.remove_object(&sample_key).await;
                         return Ok(());
                     }
 
@@ -122,7 +121,7 @@ impl OomConf {
                     }
 
                     // 删除样本对象
-                    db.remove_object(&KeyWrapper::from(sample_key)).await;
+                    db.remove_object(&sample_key).await;
                 } // Policy::VolatileLRU
                 // | Policy::VolatileLFU
                 // | Policy::VolatileRandom

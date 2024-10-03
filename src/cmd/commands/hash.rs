@@ -5,7 +5,7 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::{AsyncStream, Handler},
-    shared::db::{ObjectValueType::Hash, Str},
+    shared::db::{Hash, Str},
 };
 use tracing::instrument;
 
@@ -78,7 +78,7 @@ impl CmdExecutor for HExists {
         handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
+            .visit_object(self.key.as_ref(), |obj| {
                 let hash = obj.on_hash()?;
                 exists = hash.contains_key(&self.field);
 
@@ -125,7 +125,7 @@ impl CmdExecutor for HGet {
         handler
             .shared
             .db()
-            .visit_object(&self.key, |obj| {
+            .visit_object(self.key.as_ref(), |obj| {
                 let hash = obj.on_hash()?;
                 value.clone_from(&hash.get(&self.field));
 
@@ -171,7 +171,10 @@ impl CmdExecutor for HSet {
         handler
             .shared
             .db()
-            .update_object_force(&self.key, Hash, |obj| {
+            .object_entry(&self.key)
+            .await?
+            .or_insert_with(|| Hash::default().into())
+            .update1(|obj| {
                 let hash = obj.on_hash_mut()?;
                 for (field, value) in self.fields {
                     hash.insert(field.into(), value);
@@ -179,8 +182,7 @@ impl CmdExecutor for HSet {
                 }
 
                 Ok(())
-            })
-            .await?;
+            })?;
 
         Ok(Some(Resp3::new_integer(count)))
     }

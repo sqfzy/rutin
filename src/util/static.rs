@@ -1,7 +1,11 @@
-use crate::{frame::leak_bytes, shared::db::Str, util::Uppercase, Key};
-use bytes::BytesMut;
+use crate::{
+    frame::leak_bytes,
+    shared::db::{Key, Str},
+    util::Uppercase,
+};
+use bytes::{Bytes, BytesMut};
 use equivalent::Equivalent;
-use std::{cmp::PartialEq, fmt::Debug, hash::Hash, ops::Deref};
+use std::{borrow::Borrow, cmp::PartialEq, fmt::Debug, hash::Hash, ops::Deref};
 
 pub enum StaticBytes {
     Const(&'static [u8]),
@@ -59,13 +63,25 @@ impl PartialEq<StaticBytes> for StaticBytes {
 
 impl Equivalent<Key> for StaticBytes {
     fn equivalent(&self, key: &Key) -> bool {
-        self.as_ref() == key
+        self == key
+    }
+}
+
+impl Equivalent<Bytes> for StaticBytes {
+    fn equivalent(&self, key: &Bytes) -> bool {
+        self == key
     }
 }
 
 impl PartialEq<Key> for StaticBytes {
     fn eq(&self, other: &Key) -> bool {
-        self.as_ref() == other
+        self.eq(other.as_ref())
+    }
+}
+
+impl PartialEq<Bytes> for StaticBytes {
+    fn eq(&self, other: &Bytes) -> bool {
+        self.eq(other.as_ref())
     }
 }
 
@@ -77,13 +93,25 @@ impl PartialEq<[u8]> for StaticBytes {
 
 impl From<StaticBytes> for Key {
     fn from(val: StaticBytes) -> Self {
-        Key::copy_from_slice(val.as_ref())
+        Bytes::copy_from_slice(val.as_ref()).into()
     }
 }
 
 impl From<&StaticBytes> for Key {
     fn from(value: &StaticBytes) -> Self {
-        Key::copy_from_slice(value.as_ref())
+        Bytes::copy_from_slice(value.as_ref()).into()
+    }
+}
+
+impl From<StaticBytes> for Bytes {
+    fn from(value: StaticBytes) -> Self {
+        Bytes::copy_from_slice(value.as_ref())
+    }
+}
+
+impl From<&StaticBytes> for Bytes {
+    fn from(value: &StaticBytes) -> Self {
+        Bytes::copy_from_slice(value.as_ref())
     }
 }
 
@@ -95,7 +123,7 @@ impl From<StaticBytes> for BytesMut {
 
 impl From<StaticBytes> for Str {
     fn from(value: StaticBytes) -> Self {
-        Str::from(Key::copy_from_slice(value.as_ref()))
+        Str::from(Bytes::copy_from_slice(value.as_ref()))
     }
 }
 

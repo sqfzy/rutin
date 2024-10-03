@@ -227,11 +227,11 @@ pub fn cat_flag_to_cmds_flag(cat_flag: CatFlag) -> CmdFlag {
 }
 
 #[inline]
-pub fn cmds_contains_cmd(cmds_flag: CmdFlag, cmd_flag: CmdFlag) -> bool {
+pub const fn cmds_contains_cmd(cmds_flag: CmdFlag, cmd_flag: CmdFlag) -> bool {
     cmds_flag & cmd_flag != 0
 }
 
 #[inline]
-pub fn cats_contains_cat(cats_flag: CatFlag, cat_flag: CatFlag) -> bool {
+pub const fn cats_contains_cat(cats_flag: CatFlag, cat_flag: CatFlag) -> bool {
     cats_flag & cat_flag != 0
 }

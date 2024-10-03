@@ -1,13 +1,13 @@
 use super::ID;
 use crate::{
-    cmd::dispatch,
+    cmd::{dispatch, CmdUnparsed},
     conf::{AccessControl, DEFAULT_USER},
     error::RutinResult,
     frame::{CheapResp3, Resp3, StaticResp3},
     server::{AsyncStream, Connection, FakeStream, SHARED},
-    shared::{Inbox, Letter, Outbox, Shared, NULL_ID},
+    shared::{db::Key, Inbox, Letter, Outbox, Shared, NULL_ID},
     util::BackLog,
-    Id, Key,
+    Id, 
 };
 use bytes::BytesMut;
 use event_listener::{listener, Event, EventListener};
@@ -163,7 +163,7 @@ impl<S: AsyncStream> Handler<S> {
                     // 同步进度。
                     _ = interval.tick() => {
                         // 更新offset frame
-                        resp3.try_array_mut().unwrap()[2] = Resp3::new_blob_string(buf.format(*offset).into());
+                        resp3.as_array_mut().unwrap()[2] = Resp3::new_blob_string(buf.format(*offset).into());
 
                         self.conn.write_frame(&resp3).await?;
                         // 等待master响应"+OK\r\n"
@@ -220,17 +220,18 @@ pub struct HandlerContext {
     pub subscribed_channels: Vec<Key>,
 
     // 是否开启缓存追踪
-    pub client_track: Option<Outbox>,
+    pub client_track: ClientTrack,
 
     // // 后台任务
     // pub background_tasks: Vec<tokio::task::AbortHandle>,
 
     // 用于缓存需要传播的写命令
-    pub wcmd_buf: BytesMut,
+    pub wcmd_buf: WcmdBuf,
     pub back_log: Option<BackLog>,
 
     pub shutdown: Event,
 }
+
 
 impl HandlerContext {
     pub fn new(shared: Shared, id: Id, outbox: Outbox, inbox: Inbox) -> Self {
@@ -254,8 +255,14 @@ impl HandlerContext {
             inbox,
             outbox,
             subscribed_channels: Vec::new(),
-            client_track: None,
-            wcmd_buf: BytesMut::new(),
+            client_track: ClientTrack {
+                tracker: None,
+                keys: Vec::new(),
+            },
+            wcmd_buf: WcmdBuf {
+                buf: BytesMut::with_capacity(1024),
+                len: 0,
+            },
             back_log: None,
             shutdown: Event::new(),
         }
@@ -268,10 +275,116 @@ impl HandlerContext {
     // }
 }
 
-// struct WcmdBuf {
-//     buf: BytesMut,
-//     
-// }
+#[derive(Debug)]
+pub struct WcmdBuf {
+    buf: BytesMut,
+    len: usize,
+}
+
+impl WcmdBuf {
+    #[inline]
+   pub fn buffer_wcmd(&mut self, cmd_name: &'static str, cmd: &CmdUnparsed) {
+        use crate::frame::{ARRAY_PREFIX, CRLF};
+        use bytes::BufMut;
+
+        let buf = &mut self.buf;
+        buf.put_u8(ARRAY_PREFIX);
+        buf.put_slice(itoa::Buffer::new().format(cmd.len() + 1).as_bytes());
+        buf.put_slice(CRLF);
+
+        let cmd_name_frame: Resp3<&[u8], String> =
+            Resp3::new_blob_string(cmd_name.as_bytes());
+        cmd_name_frame.encode_buf(buf);
+
+        for frame in cmd.inner.iter() {
+            frame.encode_buf(buf);
+        }
+   }
+
+    pub fn rollback(&mut self) {
+        self.buf.truncate(self.len);
+    }
+
+}
+
+impl<S: AsyncStream> Handler<S> {
+   #[inline]
+   pub async fn may_send_wmcd_buf(&mut self) {
+        let wcmd_buf = &mut self.context.wcmd_buf;
+
+        // 如果使用了pipline则该批命令视为一个整体命令。当最后一个命令执行完毕后，才发送写命令，
+        // 避免性能瓶颈。如果执行过程中程序崩溃，则客户端会报错，用户会视为该批命令没有执行成
+        // 功，也不会传播该批命令，符合一致性。
+        if self.conn.unhandled_count() <= 1 {
+            self.shared.post_office().send_wcmd(wcmd_buf.buf.split()).await;
+            wcmd_buf.len = 0;
+        } else {
+            wcmd_buf.len = wcmd_buf.buf.len();
+        }
+   }
+
+}
+
+
+#[derive(Debug, Default)]
+pub struct ClientTrack {
+    pub tracker: Option<Outbox>,
+    pub keys: Vec<Key>
+}
+
+impl ClientTrack {
+    pub fn new(tracker: Outbox) -> Self {
+        Self {
+            tracker: Some(tracker),
+            keys: Vec::new(),
+        }
+    }
+
+    pub fn rollback(&mut self) {
+        self.keys.clear();
+    }
+}
+
+impl<S: AsyncStream> Handler<S> {
+    #[inline]
+    pub async fn track(&mut self) {
+        use std::collections::VecDeque;
+        use crate::{error::RutinError, server::NEVER_EXPIRE, shared::db::{ObjectValue, WriteEvent}};
+        use tokio::time::Instant;
+
+        let Handler { shared,  context: HandlerContext {client_track: ClientTrack { tracker, keys },..},.. } = self;
+        let db = shared.db();
+
+        while let Some(key) = keys.pop() {
+            let tracker = tracker.clone().expect("tracker must exist while calling track()");
+
+            if let Ok(obj) = db.object_entry(&key).await {
+                let invalidation = CheapResp3::new_array(VecDeque::from([
+                    Resp3::new_blob_string("INVALIDATE".into()),
+                    Resp3::new_blob_string(key.clone().into()),
+                ]));
+
+                let callback = move |_obj: &mut ObjectValue, _ex: Instant| {
+                    if tracker
+                        .clone()
+                        .send(Letter::Resp3(invalidation.clone()))
+                        .is_err()
+                    {
+                        // 发送失败，证明客户端已经断开连接，事件完成
+                        Ok(())
+                    } else {
+                        Err(RutinError::Null)
+                    }
+                };
+
+                obj.add_write_event(WriteEvent::FnMut {
+                    deadline: *NEVER_EXPIRE,
+                    callback: Box::new(callback),
+                });
+            }
+        }
+    }
+}
 
 // impl Clone for HandlerContext {
 //     fn clone(&self) -> Self {

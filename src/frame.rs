@@ -428,77 +428,77 @@ where
         matches!(self, Resp3::Push { .. })
     }
 
-    pub fn try_simple_string(&self) -> Option<&S> {
+    pub fn as_simple_string(&self) -> Option<&S> {
         match self {
             Resp3::SimpleString { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_simple_error(&self) -> Option<&S> {
+    pub fn as_simple_error(&self) -> Option<&S> {
         match self {
             Resp3::SimpleError { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_integer(&self) -> Option<Int> {
+    pub fn as_integer(&self) -> Option<Int> {
         match self {
             Resp3::Integer { inner, .. } => Some(*inner),
             _ => None,
         }
     }
 
-    pub fn try_blob_string(&self) -> Option<&B> {
+    pub fn as_blob_string(&self) -> Option<&B> {
         match self {
             Resp3::BlobString { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_array(&self) -> Option<&VecDeque<Resp3<B, S>>> {
+    pub fn as_array(&self) -> Option<&VecDeque<Resp3<B, S>>> {
         match self {
             Resp3::Array { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_null(&self) -> Option<()> {
+    pub fn as_null(&self) -> Option<()> {
         match self {
             Resp3::Null => Some(()),
             _ => None,
         }
     }
 
-    pub fn try_boolean(&self) -> Option<bool> {
+    pub fn as_boolean(&self) -> Option<bool> {
         match self {
             Resp3::Boolean { inner, .. } => Some(*inner),
             _ => None,
         }
     }
 
-    pub fn try_double(&self) -> Option<f64> {
+    pub fn as_double(&self) -> Option<f64> {
         match self {
             Resp3::Double { inner, .. } => Some(*inner),
             _ => None,
         }
     }
 
-    pub fn try_big_number(&self) -> Option<&BigInt> {
+    pub fn as_big_number(&self) -> Option<&BigInt> {
         match self {
             Resp3::BigNumber { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_blob_error(&self) -> Option<&B> {
+    pub fn as_blob_error(&self) -> Option<&B> {
         match self {
             Resp3::BlobError { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_verbatim_string(&self) -> Option<(&[u8; 3], &B)> {
+    pub fn as_verbatim_string(&self) -> Option<(&[u8; 3], &B)> {
         match self {
             Resp3::VerbatimString { format, data, .. } => Some((format, data)),
             _ => None,
@@ -506,91 +506,91 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn try_map(&self) -> Option<&AHashMap<Resp3<B, S>, Resp3<B, S>>> {
+    pub fn as_map(&self) -> Option<&AHashMap<Resp3<B, S>, Resp3<B, S>>> {
         match self {
             Resp3::Map { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_set(&self) -> Option<&AHashSet<Resp3<B, S>>> {
+    pub fn as_set(&self) -> Option<&AHashSet<Resp3<B, S>>> {
         match self {
             Resp3::Set { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_push(&self) -> Option<&Vec<Resp3<B, S>>> {
+    pub fn as_push(&self) -> Option<&Vec<Resp3<B, S>>> {
         match self {
             Resp3::Push { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_simple_string_mut(&mut self) -> Option<&mut S> {
+    pub fn as_simple_string_mut(&mut self) -> Option<&mut S> {
         match self {
             Resp3::SimpleString { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_simple_error_mut(&mut self) -> Option<&mut S> {
+    pub fn as_simple_error_mut(&mut self) -> Option<&mut S> {
         match self {
             Resp3::SimpleError { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_integer_mut(&mut self) -> Option<&mut Int> {
+    pub fn as_integer_mut(&mut self) -> Option<&mut Int> {
         match self {
             Resp3::Integer { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_blob_mut(&mut self) -> Option<&mut B> {
+    pub fn as_blob_mut(&mut self) -> Option<&mut B> {
         match self {
             Resp3::BlobString { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_array_mut(&mut self) -> Option<&mut VecDeque<Resp3<B, S>>> {
+    pub fn as_array_mut(&mut self) -> Option<&mut VecDeque<Resp3<B, S>>> {
         match self {
             Resp3::Array { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_boolean_mut(&mut self) -> Option<&mut bool> {
+    pub fn as_boolean_mut(&mut self) -> Option<&mut bool> {
         match self {
             Resp3::Boolean { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_double_mut(&mut self) -> Option<&mut f64> {
+    pub fn as_double_mut(&mut self) -> Option<&mut f64> {
         match self {
             Resp3::Double { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_big_number_mut(&mut self) -> Option<&mut BigInt> {
+    pub fn as_big_number_mut(&mut self) -> Option<&mut BigInt> {
         match self {
             Resp3::BigNumber { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_blob_error_mut(&mut self) -> Option<&mut B> {
+    pub fn as_blob_error_mut(&mut self) -> Option<&mut B> {
         match self {
             Resp3::BlobError { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_verbatim_string_mut(&mut self) -> Option<(&mut [u8; 3], &mut B)> {
+    pub fn as_verbatim_string_mut(&mut self) -> Option<(&mut [u8; 3], &mut B)> {
         match self {
             Resp3::VerbatimString { format, data, .. } => Some((format, data)),
             _ => None,
@@ -598,217 +598,217 @@ where
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn try_map_mut(&mut self) -> Option<&mut AHashMap<Resp3<B, S>, Resp3<B, S>>> {
+    pub fn as_map_mut(&mut self) -> Option<&mut AHashMap<Resp3<B, S>, Resp3<B, S>>> {
         match self {
             Resp3::Map { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_set_mut(&mut self) -> Option<&mut AHashSet<Resp3<B, S>>> {
+    pub fn as_set_mut(&mut self) -> Option<&mut AHashSet<Resp3<B, S>>> {
         match self {
             Resp3::Set { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn try_push_mut(&mut self) -> Option<&mut Vec<Resp3<B, S>>> {
+    pub fn as_push_mut(&mut self) -> Option<&mut Vec<Resp3<B, S>>> {
         match self {
             Resp3::Push { inner, .. } => Some(inner),
             _ => None,
         }
     }
 
-    pub fn as_simple_string_uncheckd(&self) -> &S {
+    pub fn as_simple_string_unchecked(&self) -> &S {
         match self {
             Resp3::SimpleString { inner, .. } => inner,
             _ => panic!("not a simple string"),
         }
     }
 
-    pub fn as_simple_error_uncheckd(&self) -> &S {
+    pub fn as_simple_error_unchecked(&self) -> &S {
         match self {
             Resp3::SimpleError { inner, .. } => inner,
             _ => panic!("not a simple error"),
         }
     }
 
-    pub fn as_integer_uncheckd(&self) -> Int {
+    pub fn as_integer_unchecked(&self) -> Int {
         match self {
             Resp3::Integer { inner, .. } => *inner,
             _ => panic!("not an integer"),
         }
     }
 
-    pub fn as_blob_string_uncheckd(&self) -> &B {
+    pub fn as_blob_string_unchecked(&self) -> &B {
         match self {
             Resp3::BlobString { inner, .. } => inner,
             _ => panic!("not a blob string"),
         }
     }
 
-    pub fn as_array_uncheckd(&self) -> &VecDeque<Resp3<B, S>> {
+    pub fn as_array_unchecked(&self) -> &VecDeque<Resp3<B, S>> {
         match self {
             Resp3::Array { inner, .. } => inner,
             _ => panic!("not an array"),
         }
     }
 
-    pub fn as_null_uncheckd(&self) {
+    pub fn as_null_unchecked(&self) {
         match self {
             Resp3::Null => {}
             _ => panic!("not a null"),
         }
     }
 
-    pub fn as_boolean_uncheckd(&self) -> bool {
+    pub fn as_boolean_unchecked(&self) -> bool {
         match self {
             Resp3::Boolean { inner, .. } => *inner,
             _ => panic!("not a boolean"),
         }
     }
 
-    pub fn as_double_uncheckd(&self) -> f64 {
+    pub fn as_double_unchecked(&self) -> f64 {
         match self {
             Resp3::Double { inner, .. } => *inner,
             _ => panic!("not a double"),
         }
     }
 
-    pub fn as_big_number_uncheckd(&self) -> &BigInt {
+    pub fn as_big_number_unchecked(&self) -> &BigInt {
         match self {
             Resp3::BigNumber { inner, .. } => inner,
             _ => panic!("not a big number"),
         }
     }
 
-    pub fn as_bolb_error_uncheckd(&self) -> &B {
+    pub fn as_bolb_error_unchecked(&self) -> &B {
         match self {
             Resp3::BlobError { inner, .. } => inner,
             _ => panic!("not a blob error"),
         }
     }
 
-    pub fn as_verbatim_string_uncheckd(&self) -> (&[u8; 3], &B) {
+    pub fn as_verbatim_string_unchecked(&self) -> (&[u8; 3], &B) {
         match self {
             Resp3::VerbatimString { format, data, .. } => (format, data),
             _ => panic!("not a verbatim string"),
         }
     }
 
-    pub fn as_map_uncheckd(&self) -> &AHashMap<Resp3<B, S>, Resp3<B, S>> {
+    pub fn as_map_unchecked(&self) -> &AHashMap<Resp3<B, S>, Resp3<B, S>> {
         match self {
             Resp3::Map { inner, .. } => inner,
             _ => panic!("not a map"),
         }
     }
 
-    pub fn as_set_uncheckd(&self) -> &AHashSet<Resp3<B, S>> {
+    pub fn as_set_unchecked(&self) -> &AHashSet<Resp3<B, S>> {
         match self {
             Resp3::Set { inner, .. } => inner,
             _ => panic!("not a set"),
         }
     }
 
-    pub fn as_push_uncheckd(&self) -> &Vec<Resp3<B, S>> {
+    pub fn as_push_unchecked(&self) -> &Vec<Resp3<B, S>> {
         match self {
             Resp3::Push { inner, .. } => inner,
             _ => panic!("not a push"),
         }
     }
 
-    pub fn as_simple_string_uncheckd_mut(&mut self) -> &mut S {
+    pub fn as_simple_string_unchecked_mut(&mut self) -> &mut S {
         match self {
             Resp3::SimpleString { inner, .. } => inner,
             _ => panic!("not a simple string"),
         }
     }
 
-    pub fn as_simple_error_uncheckd_mut(&mut self) -> &mut S {
+    pub fn as_simple_error_unchecked_mut(&mut self) -> &mut S {
         match self {
             Resp3::SimpleError { inner, .. } => inner,
             _ => panic!("not a simple error"),
         }
     }
 
-    pub fn as_integer_uncheckd_mut(&mut self) -> Int {
+    pub fn as_integer_unchecked_mut(&mut self) -> Int {
         match self {
             Resp3::Integer { inner, .. } => *inner,
             _ => panic!("not an integer"),
         }
     }
 
-    pub fn as_blob_string_uncheckd_mut(&mut self) -> &mut B {
+    pub fn as_blob_string_unchecked_mut(&mut self) -> &mut B {
         match self {
             Resp3::BlobString { inner, .. } => inner,
             _ => panic!("not a blob string"),
         }
     }
 
-    pub fn as_array_uncheckd_mut(&mut self) -> &mut VecDeque<Resp3<B, S>> {
+    pub fn as_array_unchecked_mut(&mut self) -> &mut VecDeque<Resp3<B, S>> {
         match self {
             Resp3::Array { inner, .. } => inner,
             _ => panic!("not an array"),
         }
     }
 
-    pub fn as_null_uncheckd_mut(&mut self) {
+    pub fn as_null_unchecked_mut(&mut self) {
         match self {
             Resp3::Null => {}
             _ => panic!("not a null"),
         }
     }
 
-    pub fn as_boolean_uncheckd_mut(&mut self) -> bool {
+    pub fn as_boolean_unchecked_mut(&mut self) -> bool {
         match self {
             Resp3::Boolean { inner, .. } => *inner,
             _ => panic!("not a boolean"),
         }
     }
 
-    pub fn as_double_uncheckd_mut(&mut self) -> f64 {
+    pub fn as_double_unchecked_mut(&mut self) -> f64 {
         match self {
             Resp3::Double { inner, .. } => *inner,
             _ => panic!("not a double"),
         }
     }
 
-    pub fn as_big_number_uncheckd_mut(&mut self) -> &mut BigInt {
+    pub fn as_big_number_unchecked_mut(&mut self) -> &mut BigInt {
         match self {
             Resp3::BigNumber { inner, .. } => inner,
             _ => panic!("not a big number"),
         }
     }
 
-    pub fn as_bolb_error_uncheckd_mut(&mut self) -> &mut B {
+    pub fn as_bolb_error_unchecked_mut(&mut self) -> &mut B {
         match self {
             Resp3::BlobError { inner, .. } => inner,
             _ => panic!("not a blob error"),
         }
     }
 
-    pub fn as_verbatim_string_uncheckd_mut(&mut self) -> (&mut [u8; 3], &mut B) {
+    pub fn as_verbatim_string_unchecked_mut(&mut self) -> (&mut [u8; 3], &mut B) {
         match self {
             Resp3::VerbatimString { format, data, .. } => (format, data),
             _ => panic!("not a verbatim string"),
         }
     }
 
-    pub fn as_map_uncheckd_mut(&mut self) -> &mut AHashMap<Resp3<B, S>, Resp3<B, S>> {
+    pub fn as_map_unchecked_mut(&mut self) -> &mut AHashMap<Resp3<B, S>, Resp3<B, S>> {
         match self {
             Resp3::Map { inner, .. } => inner,
             _ => panic!("not a map"),
         }
     }
 
-    pub fn as_set_uncheckd_mut(&mut self) -> &mut AHashSet<Resp3<B, S>> {
+    pub fn as_set_unchecked_mut(&mut self) -> &mut AHashSet<Resp3<B, S>> {
         match self {
             Resp3::Set { inner, .. } => inner,
             _ => panic!("not a set"),
         }
     }
 
-    pub fn as_push_uncheckd_mut(&mut self) -> &mut Vec<Resp3<B, S>> {
+    pub fn as_push_unchecked_mut(&mut self) -> &mut Vec<Resp3<B, S>> {
         match self {
             Resp3::Push { inner, .. } => inner,
             _ => panic!("not a push"),
@@ -940,6 +940,125 @@ where
             Some((version, auth))
         } else {
             None
+        }
+    }
+
+    pub fn into_simple_string_unchecked(self) -> S {
+        if let Resp3::SimpleString { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a simple string")
+        }
+    }
+
+    pub fn into_simple_error_unchecked(self) -> S {
+        if let Resp3::SimpleError { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a simple error")
+        }
+    }
+
+    pub fn into_integer_unchecked(self) -> Int {
+        if let Resp3::Integer { inner, .. } = self {
+            inner
+        } else {
+            panic!("not an integer")
+        }
+    }
+
+    pub fn into_blob_string_unchecked(self) -> B {
+        if let Resp3::BlobString { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a blob string")
+        }
+    }
+
+    pub fn into_blob_error_unchecked(self) -> B {
+        if let Resp3::BlobError { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a blob error")
+        }
+    }
+
+    pub fn into_array_unchecked(self) -> VecDeque<Resp3<B, S>> {
+        if let Resp3::Array { inner, .. } = self {
+            inner
+        } else {
+            panic!("not an array")
+        }
+    }
+
+    pub fn into_null_unchecked(self) {
+        if let Resp3::Null = self {
+        } else {
+            panic!("not a null")
+        }
+    }
+
+    pub fn into_boolean_unchecked(self) -> bool {
+        if let Resp3::Boolean { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a boolean")
+        }
+    }
+
+    pub fn into_double_unchecked(self) -> f64 {
+        if let Resp3::Double { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a double")
+        }
+    }
+
+    pub fn into_big_number_unchecked(self) -> BigInt {
+        if let Resp3::BigNumber { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a big number")
+        }
+    }
+
+    pub fn into_verbatim_string_unchecked(self) -> ([u8; 3], B) {
+        if let Resp3::VerbatimString { format, data, .. } = self {
+            (format, data)
+        } else {
+            panic!("not a verbatim string")
+        }
+    }
+
+    pub fn into_map_unchecked(self) -> AHashMap<Resp3<B, S>, Resp3<B, S>> {
+        if let Resp3::Map { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a map")
+        }
+    }
+
+    pub fn into_push_unchecked(self) -> Vec<Resp3<B, S>> {
+        if let Resp3::Push { inner, .. } = self {
+            inner
+        } else {
+            panic!("not a push")
+        }
+    }
+
+    pub fn into_chunked_string_unchecked(self) -> Vec<B> {
+        if let Resp3::ChunkedString(inner) = self {
+            inner
+        } else {
+            panic!("not a chunked string")
+        }
+    }
+
+    pub fn into_hello_unchecked(self) -> (Int, Option<(S, S)>) {
+        if let Resp3::Hello { version, auth } = self {
+            (version, auth)
+        } else {
+            panic!("not a hello")
         }
     }
 

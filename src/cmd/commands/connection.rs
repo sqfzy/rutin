@@ -3,7 +3,7 @@ use crate::{
     conf::AccessControl,
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
-    server::{AsyncStream, Handler},
+    server::{AsyncStream, ClientTrack, Handler},
     util::{self, StaticBytes},
     Id,
 };
@@ -169,7 +169,7 @@ impl CmdExecutor for ClientTracking {
     ) -> RutinResult<Option<CheapResp3>> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
-            handler.context.client_track = None;
+            handler.context.client_track = ClientTrack::default();
             return Ok(Some(Resp3::new_simple_string("OK".into())));
         }
 
@@ -181,9 +181,9 @@ impl CmdExecutor for ClientTracking {
                 .ok_or("ERR the client ID you want redirect to does not exist")?
                 .clone();
 
-            handler.context.client_track = Some(redirect_outbox);
+            handler.context.client_track = ClientTrack::new(redirect_outbox);
         } else {
-            handler.context.client_track = Some(handler.context.outbox.clone());
+            handler.context.client_track = ClientTrack::new(handler.context.outbox.clone());
         }
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
@@ -223,7 +223,7 @@ impl CmdExecutor for ClientTracking {
 mod cmd_other_tests {
     use super::*;
     use crate::{
-        cmd::gen_cmdunparsed_test,
+        cmd::{gen_cmdunparsed_test, Get, Set},
         conf::AccessControl,
         util::{
             gen_test_handler, gen_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD,
@@ -275,7 +275,35 @@ mod cmd_other_tests {
         )
         .unwrap();
         tracking.execute(&mut handler).await.unwrap();
-        assert!(handler.context.client_track.is_some());
+        assert!(handler.context.client_track.tracker.is_some());
+
+        let set = Set::parse(
+            gen_cmdunparsed_test(["track_key", "foo"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        set.execute(&mut handler).await.unwrap();
+
+        // 追踪track_key
+        Get::apply(gen_cmdunparsed_test(["track_key"].as_ref()), &mut handler)
+            .await
+            .unwrap();
+
+        // 修改track_key
+        let set = Set::parse(
+            gen_cmdunparsed_test(["track_key", "bar"].as_ref()),
+            &AccessControl::new_loose(),
+        )
+        .unwrap();
+        set.execute(&mut handler).await.unwrap();
+
+        assert_eq!(
+            handler.context.inbox.recv().into_resp3_unchecked(),
+            CheapResp3::new_array(vec![
+                CheapResp3::new_blob_string("INVALIDATE".into()),
+                CheapResp3::new_blob_string("track_key".into()),
+            ])
+        );
 
         let tracking = ClientTracking::parse(
             gen_cmdunparsed_test(["OFF"].as_ref()),
@@ -283,6 +311,6 @@ mod cmd_other_tests {
         )
         .unwrap();
         tracking.execute(&mut handler).await.unwrap();
-        assert!(handler.context.client_track.is_none());
+        assert!(handler.context.client_track.tracker.is_none());
     }
 }

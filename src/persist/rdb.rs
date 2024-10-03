@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use crate::shared::{
-    db::{Db, Hash, List, ObjectValue, Set, Str, ZSet},
+    db::{Db, Hash, Key, List, ObjectValue, Set, Str, ZSet},
     Shared,
 };
 use ahash::{AHashMap, AHashSet};
@@ -284,7 +284,6 @@ mod rdb_load {
     use crate::{
         server::{NEVER_EXPIRE, UNIX_EPOCH},
         shared::db::Object,
-        util::KeyWrapper,
     };
 
     use super::*;
@@ -451,7 +450,7 @@ mod rdb_load {
             for _ in 0..hash_size {
                 let field = decode_key(bytes)?;
                 let value = decode_str_value(bytes)?.to_bytes();
-                hash.insert(field.into(), value.into());
+                hash.insert(field, value.into());
             }
 
             Ok(Hash::HashMap(Box::new(hash)))
@@ -495,7 +494,7 @@ mod rdb_load {
         Ok(str)
     }
 
-    pub fn decode_key(bytes: &mut BytesMut) -> anyhow::Result<KeyWrapper> {
+    pub fn decode_key(bytes: &mut BytesMut) -> anyhow::Result<Key> {
         if let Length::Len(len) = decode_length(bytes)? {
             Ok(bytes.split_to(len).freeze().into())
         } else {
@@ -771,7 +770,7 @@ mod rdb_test {
     use crate::{
         server::*,
         shared::db::Object,
-        util::{gen_test_shared, test_init, KeyWrapper},
+        util::{gen_test_shared, test_init},
     };
     use bytes::BytesMut;
     use tokio::time::Instant;
@@ -840,7 +839,7 @@ mod rdb_test {
         encode_key(&mut buf, "key".as_bytes());
         assert_eq!(buf.as_ref(), [3, 107, 101, 121]);
         let key = decode_key(&mut buf).unwrap();
-        assert_eq!(key.0, "key".as_bytes());
+        assert_eq!(key, "key".as_bytes());
         buf.clear();
     }
 
@@ -857,16 +856,16 @@ mod rdb_test {
         let str4 =
             Object::with_expire(Str::from("hello"), Instant::now() + Duration::from_secs(10));
 
-        db.insert_object(&KeyWrapper::from("str1"), str1.clone())
+        db.insert_object(&Key::from("str1"), str1.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("str2"), str2.clone())
+        db.insert_object(&Key::from("str2"), str2.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("str3"), str3.clone())
+        db.insert_object(&Key::from("str3"), str3.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("str4"), str4.clone())
+        db.insert_object(&Key::from("str4"), str4.clone())
             .await
             .unwrap();
 
@@ -878,16 +877,16 @@ mod rdb_test {
             Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object(&KeyWrapper::from("l1"), l1.clone())
+        db.insert_object(&Key::from("l1"), l1.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("l2"), l2.clone())
+        db.insert_object(&Key::from("l2"), l2.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("l3"), l3.clone())
+        db.insert_object(&Key::from("l3"), l3.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("l4"), l4.clone())
+        db.insert_object(&Key::from("l4"), l4.clone())
             .await
             .unwrap();
 
@@ -899,16 +898,16 @@ mod rdb_test {
             Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object(&KeyWrapper::from("s1"), s1.clone())
+        db.insert_object(&Key::from("s1"), s1.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("s2"), s2.clone())
+        db.insert_object(&Key::from("s2"), s2.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("s3"), s3.clone())
+        db.insert_object(&Key::from("s3"), s3.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("s4"), s4.clone())
+        db.insert_object(&Key::from("s4"), s4.clone())
             .await
             .unwrap();
 
@@ -923,16 +922,16 @@ mod rdb_test {
             Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object(&KeyWrapper::from("h1"), h1.clone())
+        db.insert_object(&Key::from("h1"), h1.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("h2"), h2.clone())
+        db.insert_object(&Key::from("h2"), h2.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("h3"), h3.clone())
+        db.insert_object(&Key::from("h3"), h3.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("h4"), h4.clone())
+        db.insert_object(&Key::from("h4"), h4.clone())
             .await
             .unwrap();
 
@@ -944,16 +943,16 @@ mod rdb_test {
             Instant::now() + Duration::from_secs(10),
         );
 
-        db.insert_object(&KeyWrapper::from("zs1"), zs1.clone())
+        db.insert_object(&Key::from("zs1"), zs1.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("zs2"), zs2.clone())
+        db.insert_object(&Key::from("zs2"), zs2.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("zs3"), zs3.clone())
+        db.insert_object(&Key::from("zs3"), zs3.clone())
             .await
             .unwrap();
-        db.insert_object(&KeyWrapper::from("zs4"), zs4.clone())
+        db.insert_object(&Key::from("zs4"), zs4.clone())
             .await
             .unwrap();
 

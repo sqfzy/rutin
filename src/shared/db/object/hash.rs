@@ -1,5 +1,5 @@
 use super::Str;
-use crate::Key;
+use crate::shared::db::Key;
 use ahash::AHashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

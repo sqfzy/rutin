@@ -432,6 +432,13 @@ impl Letter {
             _ => panic!("Letter is not Resp3"),
         }
     }
+
+    pub fn into_resp3_unchecked(self) -> CheapResp3 {
+        match self {
+            Letter::Resp3(resp) => resp,
+            _ => panic!("Letter is not Resp3"),
+        }
+    }
 }
 
 pub type Outbox = Sender<Letter>;

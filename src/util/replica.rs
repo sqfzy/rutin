@@ -85,7 +85,7 @@ pub fn set_server_to_replica(
             .conn
             .read_frame_force()
             .await?
-            .try_simple_error()
+            .as_simple_error()
         {
             return Err(RutinError::from(err.to_string()));
         }
@@ -125,7 +125,7 @@ pub fn set_server_to_replica(
             .conn
             .read_frame_force()
             .await?
-            .try_simple_error()
+            .as_simple_error()
         {
             return Err(RutinError::from(err.to_string()));
         }

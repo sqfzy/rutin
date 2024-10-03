@@ -375,7 +375,7 @@ async fn lua_tests() {
                     .unwrap();
                 assert_eq!(res, Resp3::new_simple_string("OK".into()),);
 
-                assert!(handler.shared.db().contains_object(b"key").await);
+                assert!(handler.shared.db().contains_object("key".as_bytes()).await);
 
                 let res = lua_script
                     .eval(

@@ -597,7 +597,7 @@ async fn cmd_acl_tests() {
     .unwrap();
 
     let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
-    assert_eq!(resp.as_simple_string_uncheckd(), "OK");
+    assert_eq!(resp.into_simple_string_unchecked(), "OK");
 
     let acl_set_user = AclSetUser::parse(
         gen_cmdunparsed_test(
@@ -628,7 +628,7 @@ async fn cmd_acl_tests() {
     .unwrap();
 
     let resp = acl_set_user.execute(&mut handler).await.unwrap().unwrap();
-    assert_eq!(resp.as_simple_string_uncheckd(), "OK");
+    assert_eq!(resp.into_simple_string_unchecked(), "OK");
 
     {
         let default_ac = handler.shared.conf().security.default_ac.load();
@@ -702,7 +702,7 @@ async fn cmd_acl_tests() {
     let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
-    let res = resp.as_array_uncheckd();
+    let res = resp.into_array_unchecked();
     assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
     assert!(res.contains(&Resp3::new_blob_string("user".into())));
     assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
@@ -711,7 +711,7 @@ async fn cmd_acl_tests() {
     AclWhoAmI::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_whoami.execute(&mut handler).await.unwrap().unwrap();
-    assert_eq!(resp.as_blob_string_uncheckd(), "default_ac");
+    assert_eq!(resp.into_blob_string_unchecked(), "default_ac");
 
     let acl_deluser = AclDelUser::parse(
         gen_cmdunparsed_test(["user"].as_ref()),
@@ -720,12 +720,12 @@ async fn cmd_acl_tests() {
     .unwrap();
 
     let resp = acl_deluser.execute(&mut handler).await.unwrap().unwrap();
-    assert_eq!(resp.as_integer_uncheckd(), 1);
+    assert_eq!(resp.into_integer_unchecked(), 1);
 
     let acl_users = AclUsers::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
 
     let resp = acl_users.execute(&mut handler).await.unwrap().unwrap();
-    let res = resp.as_array_uncheckd();
+    let res = resp.into_array_unchecked();
     assert!(res.contains(&Resp3::new_blob_string("default_ac".into())));
     assert!(res.contains(&Resp3::new_blob_string(TEST_AC_USERNAME.into())));
 }

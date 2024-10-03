@@ -1,10 +1,7 @@
-use std::convert::From;
+use std::{any::TypeId, convert::From};
 
 use super::*;
-use crate::{
-    error::{RutinError, RutinResult},
-    Key,
-};
+use crate::error::{RutinError, RutinResult};
 use dashmap::mapref::entry_ref;
 
 pub type StaticEntryRef<'a, 'b, Q> = entry_ref::EntryRef<'a, 'b, Key, Q, Object>;
@@ -20,7 +17,7 @@ pub struct ObjectEntry<'a, 'b, Q: ?Sized> {
     pub(super) inner: StaticEntryRef<'a, 'b, Q>,
 }
 
-impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
+impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     #[inline]
     pub fn is_occupied(&self) -> bool {
         matches!(self.inner, StaticEntryRef::Occupied(_))
@@ -43,7 +40,6 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
     pub fn expire(&self) -> Option<Instant> {
         if let StaticEntryRef::Occupied(e) = &self.inner {
             let obj = e.get();
-            Events::try_trigger_read_event(obj);
 
             return Some(obj.expire);
         }
@@ -51,13 +47,24 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
         None
     }
 
+    #[inline]
+    pub fn expire_mut(&mut self) -> Option<&mut Instant> {
+        if let StaticEntryRef::Occupied(e) = &mut self.inner {
+            let obj = e.get_mut();
+
+            return Some(&mut obj.expire);
+        }
+
+        None
+    }
+
     pub fn and_modify(
         mut self,
-        f: impl FnOnce(&mut Object) -> RutinResult<()>,
+        f: impl FnOnce(&mut ObjectValue) -> RutinResult<()>,
     ) -> RutinResult<Self> {
         if let StaticEntryRef::Occupied(e) = &mut self.inner {
             let obj = e.get_mut();
-            f(obj)?;
+            f(&mut obj.value)?;
 
             Events::try_trigger_read_and_write_event(obj);
 
@@ -67,10 +74,10 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
         Ok(self)
     }
 
-    pub fn visit(self, f: impl FnOnce(&Object) -> RutinResult<()>) -> RutinResult<Self> {
+    pub fn visit(self, f: impl FnOnce(&ObjectValue) -> RutinResult<()>) -> RutinResult<Self> {
         if let StaticEntryRef::Occupied(e) = &self.inner {
             let obj = e.get();
-            f(obj)?;
+            f(&obj.value)?;
 
             Events::try_trigger_read_event(obj);
 
@@ -88,10 +95,13 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
     /// 如果对象不存在，对象为空或者对象已过期则返回RutinError::Null
     #[inline]
     #[instrument(level = "debug", skip(self, f), err)]
-    pub fn update1(mut self, f: impl FnOnce(&mut Object) -> RutinResult<()>) -> RutinResult<Self> {
+    pub fn update1(
+        mut self,
+        f: impl FnOnce(&mut ObjectValue) -> RutinResult<()>,
+    ) -> RutinResult<Self> {
         if let StaticEntryRef::Occupied(e) = &mut self.inner {
             let obj = e.get_mut();
-            f(obj)?;
+            f(&mut obj.value)?;
 
             Events::try_trigger_read_and_write_event(obj);
 
@@ -103,13 +113,13 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
 
     #[inline]
     #[instrument(level = "debug", skip(self, f), err)]
-    pub fn update2<F: FnOnce(&mut Object) -> RutinResult<()>>(
+    pub fn update2<F: FnOnce(&mut ObjectValue) -> RutinResult<()>>(
         mut self,
         f: F,
     ) -> RutinResult<(Self, Option<F>)> {
         if let StaticEntryRef::Occupied(e) = &mut self.inner {
             let obj = e.get_mut();
-            f(obj)?;
+            f(&mut obj.value)?;
 
             Events::try_trigger_read_and_write_event(obj);
 
@@ -353,6 +363,13 @@ impl<'a, 'b, Q> ObjectEntry<'a, 'b, Q> {
                     StaticEntryRef::Occupied(new_entry).into()
                 }
             },
+        }
+    }
+
+    fn remove_event(&mut self, type_id: TypeId) -> bool {
+        if let EntryRef::Occupied(e) = self.inner {
+            let e = e.get_mut();
+            e.events
         }
     }
 }
