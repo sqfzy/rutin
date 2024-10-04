@@ -11,7 +11,7 @@
 #![feature(core_intrinsics)]
 #![feature(vec_pop_if)]
 // #![feature(closure_lifetime_binder)]
-#![feature(specialization)]
+// #![feature(specialization)]
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

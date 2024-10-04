@@ -204,8 +204,6 @@ impl Aof {
             dispatch(&mut cmd_frame, &mut handler).await?;
         }
 
-        debug_assert!(buf.is_empty());
-
         info!("AOF file loaded.");
 
         Ok(())

@@ -205,6 +205,7 @@ impl Db {
     }
 
     #[inline]
+    #[instrument(level = "debug", skip(self))]
     pub async fn object_entry<'a, 'b, Q>(
         &'a self,
         key: &'b Q,

@@ -169,7 +169,7 @@ impl CmdExecutor for ClientTracking {
     ) -> RutinResult<Option<CheapResp3>> {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
-            handler.context.client_track = ClientTrack::default();
+            handler.context.client_track = None;
             return Ok(Some(Resp3::new_simple_string("OK".into())));
         }
 
@@ -181,9 +181,9 @@ impl CmdExecutor for ClientTracking {
                 .ok_or("ERR the client ID you want redirect to does not exist")?
                 .clone();
 
-            handler.context.client_track = ClientTrack::new(redirect_outbox);
+            handler.context.client_track = Some(ClientTrack::new(redirect_outbox));
         } else {
-            handler.context.client_track = ClientTrack::new(handler.context.outbox.clone());
+            handler.context.client_track = Some(ClientTrack::new(handler.context.outbox.clone()));
         }
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
@@ -275,7 +275,7 @@ mod cmd_other_tests {
         )
         .unwrap();
         tracking.execute(&mut handler).await.unwrap();
-        assert!(handler.context.client_track.tracker.is_some());
+        assert!(handler.context.client_track.is_some());
 
         let set = Set::parse(
             gen_cmdunparsed_test(["track_key", "foo"].as_ref()),
@@ -311,6 +311,6 @@ mod cmd_other_tests {
         )
         .unwrap();
         tracking.execute(&mut handler).await.unwrap();
-        assert!(handler.context.client_track.tracker.is_none());
+        assert!(handler.context.client_track.is_none());
     }
 }

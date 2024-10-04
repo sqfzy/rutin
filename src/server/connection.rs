@@ -59,7 +59,7 @@ impl<S: AsyncStream> Connection<S> {
 
     // 读取frame之后可以调用该函数清除reader_buf中已经使用过的数据
     // 不调用该函数只会导致内存占用增加，不会影响后续的数据读取
-    pub fn finish_read_frames(&mut self) {
+    pub fn finish_read(&mut self) {
         let reader_buf = &mut self.reader_buf;
 
         // 清除reader_buf中已经使用过的数据，这会使RefMutResp3失效

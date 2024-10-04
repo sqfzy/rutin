@@ -103,6 +103,7 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
             let obj = e.get_mut();
             f(&mut obj.value)?;
 
+            println!("debug4:len={:?}", obj.events.len());
             Events::try_trigger_read_and_write_event(obj);
 
             return Ok(self);
@@ -324,52 +325,23 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     }
 
     #[inline]
-    #[instrument(level = "debug", skip(self, event))]
-    pub fn add_write_event_force(mut self, obj_type: ObjectValueType, event: WriteEvent) -> Self
+    #[instrument(level = "debug", skip(self, f, event))]
+    pub fn add_write_event_force(mut self, f: impl FnOnce() -> Object, event: WriteEvent) -> Self
     where
         Key: From<&'b Q>,
     {
         match self.inner {
             StaticEntryRef::Occupied(ref mut e) => {
+                println!("debug52");
                 e.get_mut().events.add_write_event(event);
 
                 self
             }
-            // 不存在对象，则创建一个空对象
-            StaticEntryRef::Vacant(e) => match obj_type {
-                ObjectValueType::Str => {
-                    let mut new_entry = e.insert_entry(Str::default().into());
-                    new_entry.get_mut().events.add_write_event(event);
-                    StaticEntryRef::Occupied(new_entry).into()
-                }
-                ObjectValueType::List => {
-                    let mut new_entry = e.insert_entry(List::default().into());
-                    new_entry.get_mut().events.add_write_event(event);
-                    StaticEntryRef::Occupied(new_entry).into()
-                }
-                ObjectValueType::Set => {
-                    let mut new_entry = e.insert_entry(Set::default().into());
-                    new_entry.get_mut().events.add_write_event(event);
-                    StaticEntryRef::Occupied(new_entry).into()
-                }
-                ObjectValueType::Hash => {
-                    let mut new_entry = e.insert_entry(Hash::default().into());
-                    new_entry.get_mut().events.add_write_event(event);
-                    StaticEntryRef::Occupied(new_entry).into()
-                }
-                ObjectValueType::ZSet => {
-                    let mut new_entry = e.insert_entry(ZSet::default().into());
-                    new_entry.get_mut().events.add_write_event(event);
-                    StaticEntryRef::Occupied(new_entry).into()
-                }
-            },
-        }
-    }
-
-    fn remove_event(&mut self, type_id: TypeId) -> bool {
-        if let EntryRef::Occupied(e) = self.inner {
-            let e = e.get_mut();
-            e.events
+            StaticEntryRef::Vacant(e) => {
+                let mut new_entry = e.insert_entry(f());
+                new_entry.get_mut().events.add_write_event(event);
+                StaticEntryRef::Occupied(new_entry).into()
+            }
         }
     }
 }

@@ -8,6 +8,7 @@ use crate::{
     shared::{Shared, SET_REPLICA_ID},
     util,
 };
+use bytes::Buf;
 use bytestring::ByteString;
 use std::{future::Future, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::Mutex};
@@ -220,6 +221,7 @@ pub fn set_server_to_replica(
             // 同步成功后释放锁，重新允许执行set_server_to_replica函数
             drop(ms_info);
 
+            println!("debug7");
             /* step4: 接收并处理传播的写命令 */
             if let Err(e) = handle_master.run_replica(offset).await {
                 error!(cause = %e, "replica run error");
@@ -239,26 +241,34 @@ fn get_handle_master_ac() -> AccessControl {
 }
 
 async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
+    let Handler { shared, conn, .. } = handler;
     // 接收RDB文件，格式为(末尾没有\r\n)：
     // $<len>\r\n<rdb data>
-    let len = handler.conn.read_line().await?;
+    let len = conn.read_line().await?;
     // 忽略'$'
     let len: usize = util::atoi::<i128>(&len[1..])? as usize;
 
-    Resp3::need_bytes_async(&mut handler.conn.stream, &mut handler.conn.reader_buf, len).await?;
-    let mut rdb = handler.conn.reader_buf.get_mut().split_to(len);
-    handler.conn.reader_buf.set_position(0);
+    Resp3::need_bytes_async(&mut conn.stream, &mut conn.reader_buf, len).await?;
 
-    rdb_load(&mut rdb, handler.shared.db(), false)
+    let pos = conn.reader_buf.position();
+    conn.reader_buf.get_mut().advance(pos as usize);
+    println!("debug2");
+    let mut rdb = conn.reader_buf.get_mut().split_to(len);
+    println!("debug1: rdb={:?}", rdb);
+    conn.finish_read();
+
+    rdb_load(&mut rdb, shared.db(), false)
         .await
         .map_err(|e| RutinError::new_server_error(e.to_string()))?;
+    println!("debug3");
 
-    if let Some(aof_conf) = &handler.shared.conf().aof {
-        let mut aof = Aof::new(handler.shared, aof_conf.file_path.clone()).await?;
+    if let Some(aof_conf) = &shared.conf().aof {
+        let mut aof = Aof::new(*shared, aof_conf.file_path.clone()).await?;
         aof.rewrite()
             .await
             .map_err(|e| RutinError::new_server_error(e.to_string()))?;
     }
+    println!("debug4");
 
     Ok(())
 }

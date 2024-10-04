@@ -183,7 +183,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                             // 再次发送Psync请求，直到可以进行增量复制。为了避免重复
                             // 执行全量复制，BackLog的大小应该足够大
                             let handle = tokio::runtime::Handle::current();
-                            std::thread::spawn(move || {
+                            tokio::task::spawn_blocking(move || {
                                 handle.block_on(async move {
                                     full_sync(&mut handle_replica).await.unwrap();
 

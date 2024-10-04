@@ -65,8 +65,6 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
 
             if should_track_key {
                 handler.track().await;
-            } else {
-                handler.context.client_track.rollback();
             }
         }
 

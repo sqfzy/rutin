@@ -206,12 +206,12 @@ impl CmdExecutor for Get {
 
     #[inline]
     async fn may_track(&self, handler: &mut Handler<impl AsyncStream>) -> bool {
-        handler
-            .context
-            .client_track
-            .keys
-            .push(self.key.as_ref().into());
-        true
+        if let Some(client_track) = &mut handler.context.client_track {
+            client_track.keys.push(self.key.as_ref().into());
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -271,12 +271,12 @@ impl CmdExecutor for GetRange {
 
     #[inline]
     async fn may_track(&self, handler: &mut Handler<impl AsyncStream>) -> bool {
-        handler
-            .context
-            .client_track
-            .keys
-            .push(self.key.as_ref().into());
-        true
+        if let Some(client_track) = &mut handler.context.client_track {
+            client_track.keys.push(self.key.as_ref().into());
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -474,12 +474,14 @@ impl CmdExecutor for MGet {
 
     #[inline]
     async fn may_track(&self, handler: &mut Handler<impl AsyncStream>) -> bool {
-        handler
-            .context
-            .client_track
-            .keys
-            .extend(self.keys.iter().map(|b| b.as_ref().into()));
-        true
+        if let Some(client_track) = &mut handler.context.client_track {
+            client_track
+                .keys
+                .extend(self.keys.iter().map(|b| b.as_ref().into()));
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -42,27 +42,8 @@ pub struct Events {
 }
 
 impl Events {
-    pub fn remove_event(&mut self, type_id: TypeId) -> bool {
-        let Self {
-            inner: events,
-            flags,
-        } = self;
-        let flags = flags.get_mut();
-        let mut index = 0;
-
-        while index < events.len() {
-            if let Some(event) = events.get_mut(index) {
-                if event.type_id() == type_id {
-                    events.swap_remove(index);
-                    *flags &= !event.event_flag();
-                    return true;
-                }
-            }
-
-            index += 1;
-        }
-
-        false
+    pub fn len(&self) -> usize {
+        self.inner.len()
     }
 
     pub fn add_read_event(&mut self, event: ReadEvent) {
@@ -72,6 +53,7 @@ impl Events {
     }
 
     pub fn add_write_event(&mut self, event: WriteEvent) {
+        println!("debug60");
         self.inner.push(Event::Write(event));
         let flags = self.flags.get_mut();
         *flags |= WRITE_EVENT_FLAG;
@@ -129,10 +111,12 @@ impl Events {
                 match event {
                     // 取出FnOnce，如果未超时则执行，如果超时则仅移除事件而不执行
                     Event::Read(ReadEvent::FnOnce { deadline, callback }) => {
+                        println!("debug2");
                         if let Ok(mut guard) = callback.lock()
                             && let Some(c) = guard.take()
                             && Instant::now() < *deadline
                         {
+                            println!("debug3");
                             c(value, *expire).ok();
                         }
                     }
@@ -165,6 +149,7 @@ impl Events {
 
     #[inline(always)]
     pub fn try_trigger_read_and_write_event(object: &mut Object) {
+        println!("debug8");
         let flags = object.events.flags.get_mut();
         if *flags & (WRITE_EVENT_FLAG | READ_EVENT_FLAG) == 0 {
             return;
@@ -206,6 +191,7 @@ impl Events {
                         deadline,
                         ref mut callback,
                     }) => {
+                        println!("debug72: deadline={deadline:?}",);
                         if Instant::now() < *deadline && callback(value, *expire).is_err() {
                             should_remove_write_flag = false;
                             index += 1;
@@ -213,6 +199,7 @@ impl Events {
                         }
                         // 事件超时或者事件已完成
 
+                        println!("debug73");
                         events.swap_remove(index);
                     }
                     Event::Read(ReadEvent::FnOnce { .. }) => {
@@ -570,11 +557,6 @@ pub enum Event {
         notify: Arc<Notify>,
         count: AtomicUsize,
     },
-
-    Nonanonymous {
-        id: Id,
-        event: Box<Event>,
-    },
 }
 
 impl Event {
@@ -642,5 +624,97 @@ impl Debug for WriteEvent {
             WriteEvent::FnOnce { .. } => write!(f, "WriteFnOnceTimeOut"),
             WriteEvent::FnMut { .. } => write!(f, "WriteFnMutTimeOut"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{server::NEVER_EXPIRE, shared::db::Str};
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn add_event() {
+        let mut obj = Object::new(Str::from("foo"));
+
+        let yes = Arc::new(AtomicBool::new(false));
+        obj.events.add_read_event(ReadEvent::FnOnce {
+            deadline: *NEVER_EXPIRE,
+            callback: Mutex::new(Some(Box::new({
+                let yes = yes.clone();
+                move |_, _| {
+                    yes.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            }))),
+        });
+
+        assert_eq!(obj.events.len(), 1);
+
+        let count = Arc::new(AtomicUsize::new(0));
+        obj.events.add_read_event(ReadEvent::FnMut {
+            deadline: *NEVER_EXPIRE,
+            callback: Mutex::new(Some(Box::new({
+                let count = count.clone();
+                move |_, _| {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    if count.load(Ordering::SeqCst) == 2 {
+                        Ok(())
+                    } else {
+                        Err(RutinError::Null)
+                    }
+                }
+            }))),
+        });
+
+        assert_eq!(obj.events.len(), 2);
+
+        Events::try_trigger_read_event(&obj);
+        assert!(yes.load(Ordering::SeqCst));
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+
+        Events::try_trigger_read_event(&obj);
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+
+        let yes = Arc::new(AtomicBool::new(false));
+        obj.events.add_write_event(WriteEvent::FnOnce {
+            deadline: *NEVER_EXPIRE,
+            callback: Box::new({
+                let yes = yes.clone();
+                move |_, _| {
+                    yes.store(true, Ordering::SeqCst);
+                    Ok(())
+                }
+            }),
+        });
+
+        assert_eq!(obj.events.len(), 3);
+
+        let count = Arc::new(AtomicUsize::new(0));
+        obj.events.add_write_event(WriteEvent::FnMut {
+            deadline: *NEVER_EXPIRE,
+            callback: Box::new({
+                let count = count.clone();
+                move |_, _| {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    if count.load(Ordering::SeqCst) == 2 {
+                        Ok(())
+                    } else {
+                        Err(RutinError::Null)
+                    }
+                }
+            }),
+        });
+
+        assert_eq!(obj.events.len(), 4);
+
+        Events::try_trigger_read_and_write_event(&mut obj);
+        assert_eq!(obj.events.len(), 1);
+        assert!(yes.load(Ordering::SeqCst));
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+
+        Events::try_trigger_read_and_write_event(&mut obj);
+        assert_eq!(obj.events.len(), 0);
+        assert_eq!(count.load(Ordering::SeqCst), 2);
     }
 }

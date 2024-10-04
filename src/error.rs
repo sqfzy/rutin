@@ -98,6 +98,8 @@ pub enum RutinError {
     Other {
         msg: Cow<'static, str>,
     },
+
+    Whatever,
 }
 
 impl RutinError {

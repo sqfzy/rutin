@@ -1,5 +1,5 @@
 mod master;
-mod nsm;
+// mod nsm;
 mod replica;
 mod r#static;
 mod test;
@@ -7,7 +7,7 @@ mod unsafe_lazy;
 mod uppercase;
 
 pub use master::*;
-pub use nsm::*;
+// pub use nsm::*;
 pub use r#static::*;
 pub use replica::*;
 pub use test::*;
