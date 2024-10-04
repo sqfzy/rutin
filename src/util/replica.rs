@@ -221,7 +221,6 @@ pub fn set_server_to_replica(
             // 同步成功后释放锁，重新允许执行set_server_to_replica函数
             drop(ms_info);
 
-            println!("debug7");
             /* step4: 接收并处理传播的写命令 */
             if let Err(e) = handle_master.run_replica(offset).await {
                 error!(cause = %e, "replica run error");
@@ -252,15 +251,12 @@ async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
 
     let pos = conn.reader_buf.position();
     conn.reader_buf.get_mut().advance(pos as usize);
-    println!("debug2");
     let mut rdb = conn.reader_buf.get_mut().split_to(len);
-    println!("debug1: rdb={:?}", rdb);
     conn.finish_read();
 
     rdb_load(&mut rdb, shared.db(), false)
         .await
         .map_err(|e| RutinError::new_server_error(e.to_string()))?;
-    println!("debug3");
 
     if let Some(aof_conf) = &shared.conf().aof {
         let mut aof = Aof::new(*shared, aof_conf.file_path.clone()).await?;
@@ -268,7 +264,6 @@ async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
             .await
             .map_err(|e| RutinError::new_server_error(e.to_string()))?;
     }
-    println!("debug4");
 
     Ok(())
 }

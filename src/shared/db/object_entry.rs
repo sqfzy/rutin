@@ -1,8 +1,7 @@
-use std::{any::TypeId, convert::From};
-
 use super::*;
 use crate::error::{RutinError, RutinResult};
 use dashmap::mapref::entry_ref;
+use std::convert::From;
 
 pub type StaticEntryRef<'a, 'b, Q> = entry_ref::EntryRef<'a, 'b, Key, Q, Object>;
 pub type StaticOccupiedEntryRef<'a> = entry_ref::OccupiedEntryRef<'a, Key, Object>;
@@ -103,7 +102,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
             let obj = e.get_mut();
             f(&mut obj.value)?;
 
-            println!("debug4:len={:?}", obj.events.len());
             Events::try_trigger_read_and_write_event(obj);
 
             return Ok(self);
@@ -332,7 +330,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     {
         match self.inner {
             StaticEntryRef::Occupied(ref mut e) => {
-                println!("debug52");
                 e.get_mut().events.add_write_event(event);
 
                 self

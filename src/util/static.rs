@@ -5,7 +5,7 @@ use crate::{
 };
 use bytes::{Bytes, BytesMut};
 use equivalent::Equivalent;
-use std::{borrow::Borrow, cmp::PartialEq, fmt::Debug, hash::Hash, ops::Deref};
+use std::{cmp::PartialEq, fmt::Debug, hash::Hash, ops::Deref};
 
 pub enum StaticBytes {
     Const(&'static [u8]),

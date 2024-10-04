@@ -1,12 +1,9 @@
 use crate::{
     error::{RutinError, RutinResult},
     server::ID,
-    shared::{
-        db::{
-            object_entry::{StaticEntryRef, StaticOccupiedEntryRef},
-            Db, Key, Object, ObjectValue,
-        },
-        Outbox,
+    shared::db::{
+        object_entry::{StaticEntryRef, StaticOccupiedEntryRef},
+        Key, Object, ObjectValue,
     },
     Id,
 };
@@ -46,6 +43,10 @@ impl Events {
         self.inner.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn add_read_event(&mut self, event: ReadEvent) {
         self.inner.push(Event::Read(event));
         let flags = self.flags.get_mut();
@@ -53,7 +54,6 @@ impl Events {
     }
 
     pub fn add_write_event(&mut self, event: WriteEvent) {
-        println!("debug60");
         self.inner.push(Event::Write(event));
         let flags = self.flags.get_mut();
         *flags |= WRITE_EVENT_FLAG;
@@ -111,12 +111,10 @@ impl Events {
                 match event {
                     // 取出FnOnce，如果未超时则执行，如果超时则仅移除事件而不执行
                     Event::Read(ReadEvent::FnOnce { deadline, callback }) => {
-                        println!("debug2");
                         if let Ok(mut guard) = callback.lock()
                             && let Some(c) = guard.take()
                             && Instant::now() < *deadline
                         {
-                            println!("debug3");
                             c(value, *expire).ok();
                         }
                     }
@@ -149,7 +147,6 @@ impl Events {
 
     #[inline(always)]
     pub fn try_trigger_read_and_write_event(object: &mut Object) {
-        println!("debug8");
         let flags = object.events.flags.get_mut();
         if *flags & (WRITE_EVENT_FLAG | READ_EVENT_FLAG) == 0 {
             return;
@@ -191,7 +188,6 @@ impl Events {
                         deadline,
                         ref mut callback,
                     }) => {
-                        println!("debug72: deadline={deadline:?}",);
                         if Instant::now() < *deadline && callback(value, *expire).is_err() {
                             should_remove_write_flag = false;
                             index += 1;
@@ -199,7 +195,6 @@ impl Events {
                         }
                         // 事件超时或者事件已完成
 
-                        println!("debug73");
                         events.swap_remove(index);
                     }
                     Event::Read(ReadEvent::FnOnce { .. }) => {

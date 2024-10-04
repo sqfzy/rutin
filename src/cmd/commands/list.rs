@@ -7,7 +7,7 @@ use crate::{
     server::{AsyncStream, Handler, NEVER_EXPIRE},
     shared::{
         db::{
-            Key, List, ObjectValue, ObjectValueType,
+            Key, List, ObjectValue,
             WriteEvent::{self},
         },
         Letter,
@@ -130,7 +130,7 @@ impl CmdExecutor for BLMove {
 
         // 4. 处理对客户端的响应
 
-        let mut shutdown = context.shutdown.listen();
+        let shutdown = context.shutdown.listen();
         let outbox = context.outbox.clone();
         let dst = Key::from(self.destination.as_ref());
         let shared = *shared;
@@ -219,7 +219,6 @@ impl CmdExecutor for BLPop {
         } = handler;
         let db = shared.db();
 
-        println!("debug20:keys{:?}", &self.keys);
         for key in &self.keys {
             let source_entry = db.object_entry(key).await?;
             let mut elem = None;

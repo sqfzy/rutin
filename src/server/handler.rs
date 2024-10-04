@@ -4,7 +4,7 @@ use crate::{
     conf::{AccessControl, DEFAULT_USER},
     error::RutinResult,
     frame::{CheapResp3, Resp3, StaticResp3},
-    server::{AsyncStream, Connection, FakeStream, NEVER_EXPIRE, SHARED},
+    server::{AsyncStream, Connection, FakeStream, SHARED},
     shared::{db::Key, Inbox, Letter, Outbox, Shared, NULL_ID},
     util::BackLog,
     Id,
@@ -13,7 +13,6 @@ use bytes::BytesMut;
 use event_listener::{listener, Event, EventListener};
 use futures::pin_mut;
 use std::{sync::Arc, time::Duration};
-use tokio::time::{sleep_until, Instant};
 use tracing::{error, instrument};
 
 pub struct Handler<S: AsyncStream> {
@@ -341,7 +340,7 @@ pub struct ClientTrack {
 impl ClientTrack {
     pub fn new(tracker: Outbox) -> Self {
         Self {
-            tracker: tracker,
+            tracker,
             keys: Vec::new(),
         }
     }
