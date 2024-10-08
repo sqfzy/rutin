@@ -2,7 +2,7 @@ use bytes::Bytes;
 use bytestring::ByteString;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ServerConf {
     pub host: ByteString,
     pub port: u16,

@@ -1,35 +1,22 @@
-use crate::conf::gen_run_id;
 use bytes::Bytes;
 use bytestring::ByteString;
-use serde::{Deserialize, Deserializer};
-use tokio::sync::Mutex;
+use serde::Deserialize;
+use std::sync::Mutex;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ReplicaConf {
     pub master_info: Mutex<Option<MasterInfo>>,
     pub master_auth: Option<String>,
     pub read_only: bool,
 }
 
-impl<'de> Deserialize<'de> for ReplicaConf {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct TempReplicaConf {
-            master_info: Option<MasterInfo>,
-            read_only: bool,
-            master_auth: Option<String>,
+impl Clone for ReplicaConf {
+    fn clone(&self) -> Self {
+        Self {
+            master_info: Mutex::new(self.master_info.lock().unwrap().clone()),
+            master_auth: self.master_auth.clone(),
+            read_only: self.read_only,
         }
-
-        let temp = TempReplicaConf::deserialize(deserializer)?;
-
-        Ok(ReplicaConf {
-            master_info: Mutex::new(temp.master_info),
-            read_only: temp.read_only,
-            master_auth: temp.master_auth,
-        })
     }
 }
 
@@ -45,7 +32,7 @@ impl MasterInfo {
         Self {
             host,
             port,
-            run_id: gen_run_id(),
+            run_id: "?".into(),
         }
     }
 }

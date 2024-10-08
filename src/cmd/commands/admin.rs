@@ -1,13 +1,13 @@
 use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
-    conf::{AccessControl, AccessControlIntermedium, DEFAULT_USER},
+    conf::{AccessControl, AccessControlIntermedium, MasterInfo, DEFAULT_USER},
     error::{RutinError, RutinResult},
     frame::Resp3,
-    persist::rdb::Rdb,
+    persist::rdb::save_rdb,
     server::{AsyncStream, Handler, HandlerContext},
-    shared::{Letter, NULL_ID, SET_MASTER_ID},
-    util::{self, set_server_to_replica, set_server_to_standalone},
+    shared::{Letter, SharedInner, NULL_ID, SET_MASTER_ID},
+    util,
 };
 use bytes::{Bytes, BytesMut};
 use bytestring::ByteString;
@@ -311,6 +311,43 @@ impl CmdExecutor for AclWhoAmI {
     }
 }
 
+/// # Reply:
+/// **Simple string reply**: OK.
+#[derive(Debug)]
+pub struct AppendOnly;
+
+impl CmdExecutor for AppendOnly {
+    #[instrument(level = "debug", skip(handler), ret, err)]
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let shared = handler.shared;
+        let conf = shared.conf();
+
+        if conf.aof.is_some() {
+            return Ok(Some(Resp3::new_simple_string("OK".into())));
+        }
+
+        // TODO: 是否要保存当前数据？
+        let f = |shared: &mut SharedInner| {
+            shared.conf.aof = Some(Default::default());
+        };
+
+        shared.post_office().send_reset_server(Box::new(f)).await;
+
+        Ok(Some(Resp3::new_simple_string("OK".into())))
+    }
+
+    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+        if !args.is_empty() {
+            return Err(RutinError::WrongArgNum);
+        }
+
+        Ok(AppendOnly)
+    }
+}
+
 // 该命令用于在后台异步保存当前数据库的数据到磁盘
 /// # Reply:
 ///
@@ -325,20 +362,12 @@ impl CmdExecutor for BgSave {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let rdb_conf = &handler.shared.conf().rdb;
+        let shared = handler.shared;
 
-        let mut rdb = if let Some(rdb) = rdb_conf {
-            Rdb::new(handler.shared, rdb.file_path.clone(), rdb.enable_checksum)
-        } else {
-            Rdb::new(handler.shared, "./dump.rdb".into(), false)
-        };
-        // let mut rdb = RDB::new(shared, rdb_conf.unwrap_or("").file_path.clone(), rdb_conf.enable_checksum);
         handler.shared.pool().spawn_pinned(move || async move {
-            if let Err(e) = rdb.save().await {
-                tracing::error!("save rdb error: {:?}", e);
-            } else {
-                tracing::info!("save rdb success");
-            }
+            save_rdb(shared, &shared.conf().rdb.clone().unwrap_or_default())
+                .await
+                .ok();
         });
 
         Ok(Some(Resp3::new_simple_string(
@@ -381,11 +410,11 @@ impl CmdExecutor for PSync {
                     .await
                     .map_err(|e| RutinError::from(e.to_string()))?;
 
-                let (outbox, inbox) = post_office.new_mailbox_with_special_id(NULL_ID);
+                let mailbox = post_office.register_special_mailbox(NULL_ID);
                 // 用于通知关闭whatever_handler
-                outbox.send(Letter::ShutdownServer).ok();
+                outbox.send(Letter::Shutdown).ok();
 
-                let context = HandlerContext::new(handler.shared, NULL_ID, outbox, inbox);
+                let context = HandlerContext::new(handler.shared, NULL_ID, mailbox);
 
                 Handler::new(handler.shared, stream, context)
             };
@@ -523,13 +552,29 @@ impl CmdExecutor for ReplicaOf {
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
+        let shared = handler.shared;
+        let conf = shared.conf();
+
         if self.should_set_to_master {
-            set_server_to_standalone(handler.shared).await;
+            let f = |shared: &mut SharedInner| {
+                let mut conf = conf.clone();
+                *conf.replica.master_info.get_mut().unwrap() = None;
+                conf.master = None;
+                *shared = SharedInner::with_conf(conf);
+            };
 
-            return Ok(Some(Resp3::new_simple_string("OK".into())));
+            shared.post_office().send_reset_server(Box::new(f)).await;
+        } else {
+            let f = move |shared: &mut SharedInner| {
+                let mut conf = conf.clone();
+                *conf.replica.master_info.get_mut().unwrap() =
+                    Some(MasterInfo::new(self.master_host, self.master_port));
+                conf.master = None;
+                *shared = SharedInner::with_conf(conf);
+            };
+
+            shared.post_office().send_reset_server(Box::new(f)).await;
         }
-
-        set_server_to_replica(handler.shared, self.master_host, self.master_port).await?;
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
     }
@@ -558,6 +603,37 @@ impl CmdExecutor for ReplicaOf {
                 .map_err(|_| RutinError::from("ERR value is not a valid hostname or ip address"))?,
             master_port: util::atoi(&arg2)?,
         })
+    }
+}
+
+/// # Reply:
+/// **Simple string reply**: OK.
+#[derive(Debug)]
+pub struct Save;
+
+impl CmdExecutor for Save {
+    #[instrument(level = "debug", skip(handler), ret, err)]
+    async fn execute(
+        self,
+        handler: &mut Handler<impl AsyncStream>,
+    ) -> RutinResult<Option<CheapResp3>> {
+        let shared = handler.shared;
+        if save_rdb(shared, &shared.conf().rdb.clone().unwrap_or_default())
+            .await
+            .is_ok()
+        {
+            Ok(Some(Resp3::new_simple_string("OK".into())))
+        } else {
+            Err(RutinError::from("ERR save rdb failed"))
+        }
+    }
+
+    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+        if !args.is_empty() {
+            return Err(RutinError::WrongArgNum);
+        }
+
+        Ok(Save)
     }
 }
 

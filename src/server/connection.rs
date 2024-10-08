@@ -4,6 +4,7 @@ use crate::{
     util::StaticBytes,
 };
 use bytes::{Buf, BytesMut};
+use core::panic;
 use flume::{
     r#async::{RecvFut, SendFut},
     Receiver, Sender,
@@ -64,16 +65,17 @@ impl<S: AsyncStream> Connection<S> {
 
         // 清除reader_buf中已经使用过的数据，这会使RefMutResp3失效
         if reader_buf.has_remaining() {
-            // TEST:
-
-            // 如果reader_buf中还有数据，则将其复制到buf的开头
-            let len = reader_buf.remaining();
-            let pos = reader_buf.position() as usize;
-
-            let inner = reader_buf.get_mut();
-            inner.copy_within(pos..pos + len, 0);
-
-            inner.truncate(len);
+            // // TEST:
+            //
+            // // 如果reader_buf中还有数据，则将其复制到buf的开头
+            // let len = reader_buf.remaining();
+            // let pos = reader_buf.position() as usize;
+            //
+            // let inner = reader_buf.get_mut();
+            // inner.copy_within(pos..pos + len, 0);
+            //
+            // inner.truncate(len);
+            panic!("foo");
         } else {
             reader_buf.get_mut().clear();
         }
@@ -190,37 +192,37 @@ impl<S: AsyncStream> Connection<S> {
                 // );
             }
 
-            // PERF: 该值影响pipeline的性能，以及内存占用
-            if self.batch > self.max_batch {
-                // 超出最大批处理数则不再继续从网卡读取数据，但是必须消耗掉reader_buf中
-                // 的数据，否则会导致后续的数据读取错误。
-                while self.reader_buf.has_remaining() {
-                    {
-                        // RefMutResp3数量不够则新建一个默认的RefMutResp3，执行read_frame_buf之后
-                        // 会转为实际的RefMutResp3。
-                        if next >= frames_buf.len() {
-                            frames_buf.push(StaticResp3::default());
-                        }
-
-                        let frame_buf = &mut frames_buf[next];
-                        next += 1;
-                        self.batch += 1;
-
-                        if self.read_frame_buf(frame_buf).await?.is_none() {
-                            return Ok(None);
-                        }
-
-                        debug!("read frame {frame_buf:?}");
-                        // println!(
-                        //     "reader_buf remaining {:?}",
-                        //     crate::util::bytes_to_string(
-                        //         &self.reader_buf.get_ref()[self.reader_buf.position() as usize..]
-                        //     )
-                        // );
-                    }
-                }
-                return Ok(Some(()));
-            }
+            // // PERF: 该值影响pipeline的性能，以及内存占用
+            // if self.batch > self.max_batch {
+            //     // 超出最大批处理数则不再继续从网卡读取数据，但是必须消耗掉reader_buf中
+            //     // 的数据，否则会导致后续的数据读取错误。
+            //     while self.reader_buf.has_remaining() {
+            //         {
+            //             // RefMutResp3数量不够则新建一个默认的RefMutResp3，执行read_frame_buf之后
+            //             // 会转为实际的RefMutResp3。
+            //             if next >= frames_buf.len() {
+            //                 frames_buf.push(StaticResp3::default());
+            //             }
+            //
+            //             let frame_buf = &mut frames_buf[next];
+            //             next += 1;
+            //             self.batch += 1;
+            //
+            //             if self.read_frame_buf(frame_buf).await?.is_none() {
+            //                 return Ok(None);
+            //             }
+            //
+            //             debug!("read frame {frame_buf:?}");
+            //             // println!(
+            //             //     "reader_buf remaining {:?}",
+            //             //     crate::util::bytes_to_string(
+            //             //         &self.reader_buf.get_ref()[self.reader_buf.position() as usize..]
+            //             //     )
+            //             // );
+            //         }
+            //     }
+            //     return Ok(Some(()));
+            // }
 
             // 如果buffer为空则尝试继续从stream读取数据到buffer。如果阻塞或连接
             // 断开(内核中暂无数据)则返回目前解析到frame；如果读取到数据则继续

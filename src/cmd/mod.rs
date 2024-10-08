@@ -14,7 +14,7 @@ use std::{
     iter::Iterator,
     num::NonZero,
 };
-use tracing::instrument;
+use tracing::{error, instrument};
 
 pub trait CommandFlag {
     const NAME: &'static str;
@@ -95,6 +95,7 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
 }
 
 #[inline]
+#[instrument(level = "debug", skip(handler), ret)]
 pub async fn dispatch(
     cmd_frame: &mut StaticResp3,
     handler: &mut Handler<impl AsyncStream>,
@@ -214,6 +215,7 @@ pub async fn dispatch(
     match res {
         Ok(res) => Ok(res),
         Err(e) => {
+            error!("fail to dispatch cmd `{:?}`", cmd_frame);
             let frame = e.try_into()?; // 尝试将错误转换为RESP3
             Ok(Some(frame))
         }

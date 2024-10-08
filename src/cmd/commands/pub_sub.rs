@@ -100,7 +100,7 @@ impl CmdExecutor for Subscribe {
                 subscribed_channels.push(topic.clone());
                 shared
                     .db()
-                    .add_channel_listener(topic.clone(), context.outbox.clone());
+                    .add_channel_listener(topic.clone(), context.mailbox.outbox.clone());
             }
 
             conn.write_frames(&CheapResp3::new_array(vec![
@@ -163,7 +163,7 @@ impl CmdExecutor for Unsubscribe {
                 subscribed_channels.swap_remove(i);
                 shared
                     .db()
-                    .remove_channel_listener(topic.as_ref(), &context.outbox);
+                    .remove_channel_listener(topic.as_ref(), &context.mailbox.outbox);
             }
 
             conn.write_frames(&CheapResp3::new_array(vec![
@@ -257,7 +257,7 @@ mod cmd_pub_sub_tests {
             .into_integer_unchecked();
         assert_eq!(res, 1);
 
-        let msg = handler.context.inbox.recv_async().await;
+        let msg = handler.context.mailbox.recv_async().await;
         assert_eq!(
             msg.into_resp3_unchecked().into_array_unchecked(),
             &[
@@ -281,7 +281,7 @@ mod cmd_pub_sub_tests {
             .into_integer_unchecked();
         assert_eq!(res, 1);
 
-        let msg = handler.context.inbox.recv_async().await;
+        let msg = handler.context.mailbox.recv_async().await;
         assert_eq!(
             msg.into_resp3_unchecked().into_array_unchecked(),
             &[

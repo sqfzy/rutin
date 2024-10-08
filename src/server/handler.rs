@@ -5,7 +5,7 @@ use crate::{
     error::RutinResult,
     frame::{CheapResp3, Resp3, StaticResp3},
     server::{AsyncStream, Connection, FakeStream, SHARED},
-    shared::{db::Key, Inbox, Letter, Outbox, Shared, NULL_ID},
+    shared::{db::Key, Letter, MailboxGuard, Outbox, Shared, NULL_ID},
     util::BackLog,
     Id,
 };
@@ -38,8 +38,8 @@ impl<S: AsyncStream> Handler<S> {
     #[inline]
     #[instrument(level = "debug", skip(self), fields(client_id), err)]
     pub async fn run(mut self) -> RutinResult<()> {
-        ID.scope(self.context.id, async {
-            let inbox = self.context.inbox.clone();
+        let res = ID.scope(self.context.id, async {
+            let inbox = self.context.mailbox.inbox.clone();
             let inbox_fut = inbox.recv_async();
             pin_mut!(inbox_fut);
 
@@ -64,19 +64,20 @@ impl<S: AsyncStream> Handler<S> {
                         self.conn.finish_read();
                     }
                     letter = &mut inbox_fut => {
-                        match letter {
-                            Letter::ShutdownServer | Letter::Reset => {
+                        // mailbox没有drop，所以不可能出现Err
+                        match letter.unwrap() {
+                            Letter::Shutdown => {
                                 return Ok(());
                             }
                             Letter::Resp3(resp) => {
                                 self.conn.write_frame(&resp).await?;
 
                             }
-                            Letter::BlockAll { unblock_event } => {
+                            Letter::Block { unblock_event } => {
                                 listener!(unblock_event  => listener);
                                 listener.await;
                             }
-                            Letter::Wcmd(_) | Letter::Psync {..} => inbox_fut.set(inbox.recv_async()),
+                            Letter::Wcmd(_) | Letter::Psync {..} | Letter::ModifyShared(..) => inbox_fut.set(inbox.recv_async()),
                         }
 
                         inbox_fut .set(inbox.recv_async());
@@ -93,7 +94,13 @@ impl<S: AsyncStream> Handler<S> {
                 // }
             }
         })
-        .await
+        .await;
+
+        if res.is_err() {
+            eprintln!("reader_buf={:?}", self.conn.reader_buf.get_ref());
+        }
+
+        res
     }
 
     // 1. 从节点向主节点不会返回响应，除非是REPLCONF GETACK命令
@@ -113,7 +120,7 @@ impl<S: AsyncStream> Handler<S> {
                 Resp3::new_blob_string(buf.format(*offset).into()),
             ]);
 
-            let inbox = self.context.inbox.clone();
+            let inbox = self.context.mailbox.inbox.clone();
             let inbox_fut = inbox.recv_async();
             pin_mut!(inbox_fut);
 
@@ -123,11 +130,11 @@ impl<S: AsyncStream> Handler<S> {
                     biased;
 
                     letter = &mut inbox_fut => {
-                        match letter {
-                            Letter::ShutdownServer | Letter::Reset => {
+                        match letter.unwrap() {
+                            Letter::Shutdown => {
                                 break;
                             }
-                            Letter::BlockAll { unblock_event } => {
+                            Letter::Block { unblock_event } => {
                                 listener!(unblock_event  => listener);
                                 listener.await;
                             }
@@ -135,7 +142,7 @@ impl<S: AsyncStream> Handler<S> {
                                 // TODO: REPLCONF GETACK命令返回响应
                                 self.conn.write_frame(&resp).await?;
                             }
-                            Letter::Wcmd(_) | Letter::Psync {..} => {}
+                            Letter::Wcmd(_) | Letter::Psync {..} | Letter::ModifyShared(..) => {}
                         }
 
                         inbox_fut .set(inbox.recv_async());
@@ -196,26 +203,24 @@ impl<S: AsyncStream> Handler<S> {
     }
 }
 
-impl<S: AsyncStream> Drop for Handler<S> {
-    fn drop(&mut self) {
-        let Handler {
-            shared,
-            context:
-                HandlerContext {
-                    id, /* background_tasks: background_task , */
-                    ..
-                },
-            ..
-        } = self;
-        // 移除注册的信箱
-        shared.post_office().remove(id);
-
-        // // 中断后台任务
-        // for task in background_task {
-        //     task.abort();
-        // }
-    }
-}
+// impl<S: AsyncStream> Drop for Handler<S> {
+//     fn drop(&mut self) {
+//         let Handler {
+//             shared,
+//             context:
+//                 HandlerContext {
+//                     id, /* background_tasks: background_task , */
+//                     ..
+//                 },
+//             ..
+//         } = self;
+//
+//         // // 中断后台任务
+//         // for task in background_task {
+//         //     task.abort();
+//         // }
+//     }
+// }
 
 #[derive(Debug)]
 pub struct HandlerContext {
@@ -223,8 +228,7 @@ pub struct HandlerContext {
     pub ac: Arc<AccessControl>,
     pub user: bytes::Bytes,
 
-    pub inbox: Inbox,
-    pub outbox: Outbox,
+    pub mailbox: MailboxGuard,
 
     // 客户端订阅的频道
     pub subscribed_channels: Vec<Key>,
@@ -243,17 +247,16 @@ pub struct HandlerContext {
 }
 
 impl HandlerContext {
-    pub fn new(shared: Shared, id: Id, outbox: Outbox, inbox: Inbox) -> Self {
+    pub fn new(shared: Shared, id: Id, mailbox: MailboxGuard) -> Self {
         // 使用默认ac
         let ac = shared.conf().security.default_ac.load_full();
 
-        Self::with_ac(id, outbox, inbox, ac, DEFAULT_USER)
+        Self::with_ac(id, mailbox, ac, DEFAULT_USER)
     }
 
     pub fn with_ac(
         id: Id,
-        outbox: Outbox,
-        inbox: Inbox,
+        mailbox: MailboxGuard,
         ac: Arc<AccessControl>,
         user: bytes::Bytes,
     ) -> Self {
@@ -261,8 +264,7 @@ impl HandlerContext {
             id,
             ac,
             user,
-            inbox,
-            outbox,
+            mailbox,
             subscribed_channels: Vec::new(),
             client_track: None,
             wcmd_buf: WcmdBuf {
@@ -447,8 +449,8 @@ impl Handler<FakeStream> {
         let context = if let Some(ctx) = context {
             ctx
         } else {
-            let (outbox, inbox) = shared.post_office().new_mailbox_with_special_id(NULL_ID);
-            HandlerContext::new(shared, NULL_ID, outbox, inbox)
+            let mailbox = shared.post_office().register_special_mailbox(NULL_ID);
+            HandlerContext::new(shared, NULL_ID, mailbox)
         };
 
         let max_batch = shared.conf().server.max_batch;

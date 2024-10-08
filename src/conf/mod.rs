@@ -25,7 +25,7 @@ use serde::Deserialize;
 use std::{fs::File, io::BufReader};
 use tokio_rustls::rustls;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub struct Conf {
     pub server: ServerConf,

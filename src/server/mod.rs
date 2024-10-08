@@ -12,11 +12,12 @@ use bytes::BytesMut;
 use sysinfo::{ProcessRefreshKind, System};
 
 use crate::{
-    persist::{aof::Aof, rdb::Rdb},
+    persist::{aof::load_aof, rdb::load_rdb},
     shared::{
         db::{Atc, Events},
         post_office::Letter,
-        Shared, MAIN_ID,
+        Shared, CTRL_C_ID, EXPIRATION_EVICT_ID, MAIN_ID, UPDATE_LRU_CLOCK_ID,
+        UPDATE_USED_MEMORY_ID,
     },
     util::{set_server_to_master, set_server_to_replica, UnsafeLazy},
     Id,
@@ -34,7 +35,7 @@ use tokio::{
     task_local,
     time::{interval, Instant},
 };
-use tracing::{error, info};
+use tracing::error;
 
 #[cfg(not(feature = "test_util"))]
 pub static SHARED: LazyLock<Shared> = LazyLock::new(Shared::new);
@@ -97,63 +98,70 @@ pub async fn run() {
     let shared = *SHARED;
     let post_office = shared.post_office();
 
-    init_server(shared).await.unwrap();
-
-    let inbox = post_office.new_mailbox_with_special_id(MAIN_ID).1;
-
+    let mut mailbox = post_office.register_special_mailbox(MAIN_ID);
     let mut server = Listener::new(shared).await;
 
-    {
-        let inbox_fut = inbox.recv_async();
-        pin_mut!(inbox_fut);
-        loop {
-            tokio::select! {
-                letter = &mut inbox_fut => {
-                    match letter {
-                        Letter::ShutdownServer => {
-                            break;
-                        }
-                        Letter::Reset => {
-                            shared.reset();
+    init_server(&mut server).await.unwrap();
 
-                            drop(server);
-                            server = Listener::new(shared).await;
-                        }
-                        Letter::BlockAll { unblock_event } => {
-                            listener!(unblock_event => listener);
-                            listener.await;
-                        }
-                        Letter::Resp3(_) | Letter::Wcmd(_) | Letter::Psync {..} => {}
+    loop {
+        tokio::select! {
+            letter = mailbox.recv_async() => {
+                match letter {
+                    Letter::Shutdown => {
+                        break;
                     }
+                    Letter::ModifyShared(f) => {
+                        drop(mailbox);
+                        drop(server);
+                        shared.wait_shutdown_complete().await;
 
-                    inbox_fut.set(inbox.recv_async());
+                        f(unsafe { shared.inner_mut() });
+
+                        mailbox = post_office.register_special_mailbox(MAIN_ID);
+                        server = Listener::new(shared).await;
+
+                        init_server(&mut server).await.unwrap();
+                    }
+                    Letter::Block { unblock_event } => {
+                        listener!(unblock_event => listener);
+                        listener.await;
+                    }
+                    Letter::Resp3(_) | Letter::Wcmd(_) | Letter::Psync {..} => {}
                 }
-                res = server.run() => {
-                    if let Err(err) = res {
-                        error!(cause = %err, "server run error");
-                        post_office.send_shutdown_server().await;
-                    }
+            }
+            res = server.run() => {
+                if let Err(err) = res {
+                    error!(cause = %err, "server run error");
+                    post_office.send_shutdown_server().await;
                 }
             }
         }
     }
 
-    drop(inbox);
+    drop(mailbox);
 
-    post_office.wait_shutdown_complete().await;
+    shared.wait_shutdown_complete().await;
 }
 
-pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
+pub async fn init_server(server: &mut Listener) -> anyhow::Result<()> {
+    let shared = server.shared;
     let post_office = shared.post_office();
     let conf = shared.conf();
 
     shared.pool().spawn_pinned(|| async {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            eprintln!("Failed to wait for CTRL+C: {}", e);
-            std::process::exit(1);
-        } else {
-            eprintln!("\nShutting down server...");
-            post_office.send_shutdown_server().await;
+        let mailbox = post_office.register_special_mailbox(CTRL_C_ID);
+
+        tokio::select! {
+            _ = mailbox.recv_async() => {}
+            res = tokio::signal::ctrl_c() => {
+                if let Err(e) = res {
+                    eprintln!("Failed to wait for CTRL+C: {}", e);
+                    std::process::exit(1);
+                } else {
+                    eprintln!("\nShutting down server...");
+                    post_office.send_shutdown_server().await;
+                }
+            }
         }
     });
 
@@ -164,34 +172,18 @@ pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
             .init();
     }
 
-    /*********************/
-    /* 是否开启RDB持久化 */
-    /*********************/
-    if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
-        let mut rdb = Rdb::new(shared, rdb.file_path.clone(), rdb.enable_checksum);
-
-        let start = std::time::Instant::now();
-        info!("Loading RDB file...");
-        if let Err(e) = rdb.load().await {
-            error!("Failed to load RDB file: {:?}", e);
-        } else {
-            info!("RDB file loaded. Time elapsed: {:?}", start.elapsed());
-        }
+    /*******************/
+    /* 是否加载rdb文件 */
+    /*******************/
+    if let (true, Some(rdb_conf)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
+        load_rdb(shared, rdb_conf).await.ok();
     }
 
-    /*********************/
-    /* 是否开启AOF持久化 */
-    /*********************/
-    if let Some(aof) = conf.aof.as_ref() {
-        let mut aof = Aof::new(shared, aof.file_path.clone()).await.unwrap();
-
-        let start = std::time::Instant::now();
-        info!("Loading AOF file...");
-        if let Err(e) = aof.load().await {
-            error!("Failed to load AOF file: {:?}", e);
-        } else {
-            info!("AOF file loaded. Time elapsed: {:?}", start.elapsed());
-        }
+    /*******************/
+    /* 是否加载aof文件 */
+    /*******************/
+    if let Some(aof_conf) = conf.aof.as_ref() {
+        load_aof(shared, aof_conf).await.ok();
     }
 
     /**********************/
@@ -217,8 +209,18 @@ pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
             millis / 54 + 430 / 9
         }
 
+        let mailbox = post_office.register_special_mailbox(EXPIRATION_EVICT_ID);
+        let fut = mailbox.recv_async();
+        pin_mut!(fut);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                letter = &mut fut => {
+                    if let Letter::Shutdown = letter {
+                        break;
+                    }
+                }
+                _ = interval.tick() => {}
+            };
 
             let now = Instant::now();
 
@@ -258,8 +260,19 @@ pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
         let pid = sysinfo::get_current_pid().unwrap();
         let kind = ProcessRefreshKind::new().with_memory();
 
+        let mailbox = post_office.register_special_mailbox(UPDATE_USED_MEMORY_ID);
+        let fut = mailbox.recv_async();
+        pin_mut!(fut);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                letter = &mut fut => {
+                    if let Letter::Shutdown = letter {
+                        break;
+                    }
+                }
+                _ = interval.tick() => {}
+            };
+
             system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), kind);
             let new_used_mem = system.process(pid).unwrap().memory();
             USED_MEMORY.store(new_used_mem, Ordering::Relaxed);
@@ -269,41 +282,39 @@ pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
     // 定时(每分钟)更新LRU_CLOCK
     shared.pool().spawn_pinned(move || async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
+
+        let mailbox = post_office.register_special_mailbox(UPDATE_LRU_CLOCK_ID);
+        let fut = mailbox.recv_async();
+        pin_mut!(fut);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                letter = &mut fut => {
+                    if let Letter::Shutdown = letter {
+                        break;
+                    }
+                }
+                _ = interval.tick() => {}
+            };
             incr_lru_clock();
         }
     });
 
-    /*********************/
-    /* 是否开启AOF持久化 */
-    /*********************/
-    if let Some(aof) = conf.aof.as_ref() {
-        let mut aof = Aof::new(shared, aof.file_path.clone()).await?;
-
-        shared.pool().spawn_pinned(move || async move {
-            if let Err(e) = aof.save().await {
-                error!("Failed to save AOF file: {}", e);
-            }
-        });
-    }
-
-    let ms_info = { conf.replica.master_info.lock().await.clone() };
-    if let Some(ms_info) = ms_info {
+    let ms_info = { conf.replica.master_info.lock().unwrap().clone() };
+    if let Some(master_info) = ms_info {
         /**********************/
         /* 是否开启了主从复制 */
         /**********************/
 
-        set_server_to_replica(shared, ms_info.host, ms_info.port).await?;
+        shared.pool().spawn_pinned(move || async move {
+            set_server_to_replica(shared, master_info).await.ok();
+        });
     } else if let Some(master_conf) = conf.master.clone() {
         /**********************/
         /* 是否作为主节点启动 */
         /**********************/
 
         shared.pool().spawn_pinned(move || async move {
-            if let Err(e) = set_server_to_master(shared, master_conf).await {
-                error!("{}", e);
-            }
+            set_server_to_master(shared, master_conf).await.ok();
         });
     }
 

@@ -131,7 +131,7 @@ impl CmdExecutor for BLMove {
         // 4. 处理对客户端的响应
 
         let shutdown = context.shutdown.listen();
-        let outbox = context.outbox.clone();
+        let outbox = context.mailbox.outbox.clone();
         let dst = Key::from(self.destination.as_ref());
         let shared = *shared;
 
@@ -294,7 +294,7 @@ impl CmdExecutor for BLPop {
         }
 
         let shutdown = context.shutdown.listen();
-        let outbox = context.outbox.clone();
+        let outbox = context.mailbox.outbox.clone();
 
         shared.pool().spawn_pinned(move || async move {
             tokio::select! {
@@ -956,10 +956,10 @@ mod cmd_list_tests {
         .unwrap();
         blpop.execute(&mut handler2).await.unwrap();
 
-        let inbox = handler2.context.inbox.clone().clone();
+        let inbox = handler2.context.mailbox.inbox.clone();
         let handle = handler2.shared.pool().spawn_pinned(move || async move {
             assert_eq!(
-                inbox.recv().into_resp3_unchecked(),
+                inbox.recv().unwrap().into_resp3_unchecked(),
                 Resp3::new_array(vec![
                     Resp3::new_blob_string("l3".into()),
                     Resp3::new_blob_string("key".into())
@@ -991,10 +991,10 @@ mod cmd_list_tests {
         .unwrap();
         blpop.execute(&mut handler3).await.unwrap();
 
-        let inbox = handler3.context.inbox.clone().clone();
+        let inbox = handler3.context.mailbox.inbox.clone();
         let handle = handler3.shared.pool().spawn_pinned(move || async move {
             assert_eq!(
-                inbox.recv().into_resp3_unchecked(),
+                inbox.recv().unwrap().into_resp3_unchecked(),
                 Resp3::new_array(vec![
                     Resp3::new_blob_string("l4".into()),
                     Resp3::new_blob_string("key".into())

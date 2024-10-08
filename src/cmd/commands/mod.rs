@@ -41,10 +41,12 @@ gen_flag!(
     AclSetUser(admin, dangerous),
     AclUsers(admin, dangerous),
     AclWhoAmI(admin, dangerous),
+    AppendOnly(admin, dangerous),
     BgSave(admin, dangerous),
     PSync(admin, dangerous),
     ReplConf(admin, dangerous),
     ReplicaOf(admin, dangerous),
+    Save(admin, dangerous),
     /**************/
     /* connection */
     /**************/

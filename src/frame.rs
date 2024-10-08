@@ -3068,7 +3068,145 @@ mod frame_tests {
     // }
 
     #[test]
-    fn encode_decode_test() {
+    fn encode() {
+        let simple_string = ExpensiveResp3::SimpleString {
+            inner: "OK".to_string(),
+            attributes: None,
+        };
+        assert_eq!(simple_string.encode(), "+OK\r\n");
+
+        let simple_error = ExpensiveResp3::SimpleError {
+            inner: "ERR".to_string(),
+            attributes: None,
+        };
+        assert_eq!(simple_error.encode(), "-ERR\r\n");
+
+        let integer = ExpensiveResp3::Integer {
+            inner: 42,
+            attributes: None,
+        };
+        assert_eq!(integer.encode(), ":42\r\n");
+
+        let blob_string = ExpensiveResp3::BlobString {
+            inner: "blob data".as_bytes().into(),
+            attributes: None,
+        };
+        assert_eq!(blob_string.encode(), "$9\r\nblob data\r\n");
+
+        let array = ExpensiveResp3::Array {
+            inner: vec![
+                ExpensiveResp3::Integer {
+                    inner: 1,
+                    attributes: None,
+                },
+                ExpensiveResp3::Integer {
+                    inner: 2,
+                    attributes: None,
+                },
+                ExpensiveResp3::Integer {
+                    inner: 3,
+                    attributes: None,
+                },
+            ]
+            .into(),
+            attributes: None,
+        };
+        assert_eq!(array.encode(), "*3\r\n:1\r\n:2\r\n:3\r\n");
+
+        let null = ExpensiveResp3::Null;
+        assert_eq!(null.encode(), "_\r\n");
+
+        let boolean = ExpensiveResp3::Boolean {
+            inner: true,
+            attributes: None,
+        };
+        assert_eq!(boolean.encode(), "#t\r\n");
+
+        let double = ExpensiveResp3::Double {
+            inner: 3.15,
+            attributes: None,
+        };
+        assert_eq!(double.encode(), ",3.15\r\n");
+
+        let big_number = ExpensiveResp3::BigNumber {
+            inner: BigInt::from(1234567890),
+            attributes: None,
+        };
+        assert_eq!(big_number.encode(), "(1234567890\r\n");
+
+        let blob_error = ExpensiveResp3::BlobError {
+            inner: "blob error".as_bytes().into(),
+            attributes: None,
+        };
+        assert_eq!(blob_error.encode(), "!10\r\nblob error\r\n");
+
+        let verbatim_string = ExpensiveResp3::VerbatimString {
+            format: *b"txt",
+            data: "Some string".as_bytes().into(),
+            attributes: None,
+        };
+        assert_eq!(verbatim_string.encode(), "=15\r\ntxt:Some string\r\n");
+
+        let map = ExpensiveResp3::Map {
+            inner: {
+                let mut map = AHashMap::new();
+                map.insert(
+                    ExpensiveResp3::SimpleString {
+                        inner: "key".to_string(),
+                        attributes: None,
+                    },
+                    ExpensiveResp3::SimpleString {
+                        inner: "value".to_string(),
+                        attributes: None,
+                    },
+                );
+                map
+            },
+            attributes: None,
+        };
+        assert_eq!(map.encode(), "%1\r\n+key\r\n+value\r\n");
+
+        let set = ExpensiveResp3::Set {
+            inner: {
+                let mut set = AHashSet::new();
+                set.insert(ExpensiveResp3::SimpleString {
+                    inner: "element".to_string(),
+                    attributes: None,
+                });
+                set
+            },
+            attributes: None,
+        };
+        assert_eq!(set.encode(), "~1\r\n+element\r\n");
+
+        let push = ExpensiveResp3::Push {
+            inner: vec![ExpensiveResp3::SimpleString {
+                inner: "push".to_string(),
+                attributes: None,
+            }],
+            attributes: None,
+        };
+        assert_eq!(push.encode(), ">1\r\n+push\r\n");
+
+        let chunked_string = ExpensiveResp3::ChunkedString(vec![
+            "chunk1".as_bytes().into(),
+            "chunk2".as_bytes().into(),
+            "chunk3".as_bytes().into(),
+        ]);
+        assert_eq!(
+            chunked_string.encode(),
+            "$?\r\n;6\r\nchunk1\r\n;6\r\nchunk2\r\n;6\r\nchunk3\r\n;0\r\n"
+        );
+
+        let hello = ExpensiveResp3::Hello {
+            version: 1,
+            auth: Some(("user".to_string(), "password".to_string())),
+        };
+        assert_eq!(hello.encode(), "HELLO 1 AUTH user password\r\n");
+    }
+
+    #[test]
+    fn decode_test() {
         test_init();
 
         let cases = vec![

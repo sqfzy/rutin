@@ -11,8 +11,8 @@ use crate::{
     shared::Shared,
 };
 use arc_swap::ArcSwap;
+use std::sync::Mutex;
 use std::sync::Once;
-use tokio::sync::Mutex;
 use tracing::Level;
 
 pub fn bytes_to_string(bytes: &[u8]) -> String {
@@ -80,7 +80,6 @@ pub fn gen_test_config() -> Conf {
         rdb: Some(RdbConf {
             file_path: "dump.rdb".to_string(),
             save: None,
-            version: 9,
             enable_checksum: true,
         }),
         aof: Some(AofConf {

@@ -53,7 +53,7 @@ regex = { version = "1.10.4", features = ["perf"] }
 # async-recursion = "1.1.1"
 snafu = "0.8.2"
 # tokio-uring = { version = "0.4.0", features = ["bytes"] }
-backon = "1.0"
+backon = { version = "1.0", features = ["tokio-sleep"] }
 rayon = "1.10.0"
 # tokio-async-drop = "0.1.0"
 console-subscriber = "0.4.0"

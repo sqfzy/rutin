@@ -411,7 +411,7 @@ impl CmdExecutor for Keys {
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
         let shared = handler.shared;
-        let outbox = handler.context.outbox.clone();
+        let outbox = handler.context.mailbox.outbox.clone();
         let re = regex::bytes::Regex::new(std::str::from_utf8(&self.pattern)?)?;
 
         // 避免阻塞woker thread
@@ -1226,7 +1226,7 @@ mod cmd_key_tests {
         keys.execute(&mut handler).await.unwrap();
         let result = handler
             .context
-            .inbox
+            .mailbox
             .recv()
             .into_resp3_unchecked()
             .into_array_unchecked();
@@ -1245,7 +1245,7 @@ mod cmd_key_tests {
         keys.execute(&mut handler).await.unwrap();
         let result = handler
             .context
-            .inbox
+            .mailbox
             .recv()
             .into_resp3_unchecked()
             .into_array_unchecked();
@@ -1264,7 +1264,7 @@ mod cmd_key_tests {
         keys.execute(&mut handler).await.unwrap();
         let result = handler
             .context
-            .inbox
+            .mailbox
             .recv()
             .into_resp3_unchecked()
             .into_array_unchecked();

@@ -22,8 +22,18 @@ pub struct SecurityConf {
     pub acl: Option<Acl>, // None代表禁用ACL
 }
 
+impl Clone for SecurityConf {
+    fn clone(&self) -> Self {
+        Self {
+            requirepass: self.requirepass.clone(),
+            default_ac: ArcSwap::new(self.default_ac.load_full()),
+            acl: self.acl.clone(),
+        }
+    }
+}
+
 #[repr(transparent)]
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Acl(DashMap<Bytes, AccessControl>);
 
 impl Acl {

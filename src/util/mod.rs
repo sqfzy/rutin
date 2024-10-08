@@ -16,7 +16,6 @@ pub use uppercase::*;
 
 use crate::{
     error::{A2IParseSnafu, RutinError, RutinResult},
-    shared::{Letter, Shared, SET_MASTER_ID},
     Int,
 };
 use atoi::FromRadix10SignedChecked;
@@ -188,21 +187,21 @@ pub fn to_valid_range(start: Int, end: Int, len: usize) -> Option<(usize, usize)
     Some((start_index as usize, end_index as usize - 1))
 }
 
-pub async fn set_server_to_standalone(shared: Shared) {
-    let conf = shared.conf();
-
-    let mut ms_info = conf.replica.master_info.lock().await;
-    if ms_info.is_none() {
-        return;
-    } else {
-        *ms_info = None;
-    }
-
-    // 断开Psync中的连接
-    if let Some(outbox) = shared.post_office().get_outbox(SET_MASTER_ID) {
-        outbox.send(Letter::ShutdownServer).ok();
-    }
-}
+// pub async fn set_server_to_standalone(shared: Shared) {
+//     let conf = shared.conf();
+//
+//     let mut ms_info = conf.replica.master_info.lock().unwrap();
+//     if ms_info.is_none() {
+//         return;
+//     } else {
+//         *ms_info = None;
+//     }
+//
+//     // 断开Psync中的连接
+//     if let Some(outbox) = shared.post_office().get_outbox(SET_MASTER_ID) {
+//         outbox.send(Letter::Shutdown).ok();
+//     }
+// }
 
 #[test]
 fn to_valid_range_test() {

@@ -3,7 +3,7 @@ use crate::{
     conf::{AccessControl, MasterConf},
     error::{RutinError, RutinResult},
     frame::{Resp3, StaticResp3},
-    persist::rdb::rdb_save,
+    persist::rdb::encode_rdb,
     server::Handler,
     shared::{Letter, Shared, SET_MASTER_ID},
 };
@@ -13,6 +13,7 @@ use futures::{future::select_all, FutureExt};
 use std::{future::pending, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, time::error::Elapsed};
 use tokio_util::time::FutureExt as _;
+use tracing::instrument;
 
 #[derive(Debug)]
 pub struct BackLog {
@@ -65,16 +66,17 @@ impl BackLog {
 // 1. 不存在SET_REPLICA任务
 // 2. post_office中存在SET_MASTER_ID mailbox以及set_master_outbox
 // 3. 服务会定期向从节点发送PING命令，以便从节点知道主节点是否存活
+#[instrument(level = "debug", skip(shared), err)]
 pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> RutinResult<()> {
     let conf = shared.conf();
-    let post_office = shared.post_office();
+    if conf.replica.master_info.lock().as_ref().unwrap().is_some() {
+        return Err(RutinError::new_server_error(
+            "can not set server to master and replica at the same time",
+        ));
+    }
 
-    let set_master_inbox = if let Some(inbox) = post_office.get_inbox(SET_MASTER_ID) {
-        inbox
-    } else {
-        // 创建SET_MASTER_ID mailbox但先不设置set_master_outbox，直到有从节点连接
-        post_office.new_mailbox_with_special_id(SET_MASTER_ID).1
-    };
+    let post_office = shared.post_office();
+    let mailbox = post_office.register_special_mailbox(SET_MASTER_ID);
 
     // 记录最近的写命令
     let mut back_log = BackLog::new(master_conf.backlog_size);
@@ -96,17 +98,12 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
     loop {
         tokio::select! {
-            letter = set_master_inbox.recv_async() => {
+            letter = mailbox.recv_async() => {
                 match letter {
-                    Letter::ShutdownServer | Letter::Reset => {
-                        // 如果set_master_outbox存在，则关闭SetMaster任务时，清除set_master_outbox
-                        if post_office.set_master_outbox().is_some() {
-                            post_office.set_set_master_outbox(None).await;
-                        }
-
+                    Letter::Shutdown => {
                         return Ok(());
                     }
-                    Letter::BlockAll { unblock_event } => {
+                    Letter::Block { unblock_event } => {
                         listener!(unblock_event  => listener);
                         listener.await;
                     }
@@ -156,11 +153,6 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
                             replica_handlers.push(handle_replica);
 
-                            // 有从节点连接但set_master_outbox不存在，则设置set_master_outbox
-                            if post_office.set_master_outbox().is_none() {
-                                post_office.set_set_master_outbox(post_office.get_outbox(SET_MASTER_ID)).await;
-                            }
-
                             // 丢弃之前的futs，重新构建futs，futs一定不为空
                             futs = select_all(
                                 unsafe { &mut *replica_handlers_ptr }
@@ -202,10 +194,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
 
                     }
-                    // TODO:
-                    // RemoveReplica。如果remove后，replica_handlers为空，则
-                    // futs = select_all([async { Ok(ping_frame) }.boxed_local()]);
-                    Letter::Resp3(_) => {}
+                    Letter::Resp3(_) | Letter::ModifyShared(..) => {}
                 }
             },
             // 接收从节点的命令
@@ -216,12 +205,6 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                         replica_handlers.remove(i);
 
                         if replica_handlers.is_empty() {
-                            // 如果没有从节点但set_master_outbox存在，则清除set_master_outbox
-                            if post_office.set_master_outbox().is_some() {
-                                post_office.set_set_master_outbox(None).await;
-                            }
-
-                            // 重置BackLog
                             back_log.reset();
                         }
                     }
@@ -264,9 +247,7 @@ fn get_handle_replica_ac() -> AccessControl {
 
 async fn full_sync(handle_replica: &mut Handler<TcpStream>) -> RutinResult<()> {
     let shared = handle_replica.shared;
-    let rdb_data = rdb_save(shared.db(), false)
-        .await
-        .map_err(|e| RutinError::new_server_error(e.to_string()))?;
+    let rdb_data = encode_rdb(shared.db(), false).await;
 
     let len = rdb_data.len();
 

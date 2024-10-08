@@ -183,7 +183,8 @@ impl CmdExecutor for ClientTracking {
 
             handler.context.client_track = Some(ClientTrack::new(redirect_outbox));
         } else {
-            handler.context.client_track = Some(ClientTrack::new(handler.context.outbox.clone()));
+            handler.context.client_track =
+                Some(ClientTrack::new(handler.context.mailbox.outbox.clone()));
         }
 
         Ok(Some(Resp3::new_simple_string("OK".into())))
@@ -298,7 +299,7 @@ mod cmd_other_tests {
         set.execute(&mut handler).await.unwrap();
 
         assert_eq!(
-            handler.context.inbox.recv().into_resp3_unchecked(),
+            handler.context.mailbox.recv().into_resp3_unchecked(),
             CheapResp3::new_array(vec![
                 CheapResp3::new_blob_string("INVALIDATE".into()),
                 CheapResp3::new_blob_string("track_key".into()),

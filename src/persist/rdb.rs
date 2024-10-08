@@ -1,7 +1,11 @@
 #![allow(dead_code)]
-use crate::shared::{
-    db::{Db, Hash, Key, List, ObjectValue, Set, Str, ZSet},
-    Shared,
+use crate::{
+    conf::RdbConf,
+    server::{NEVER_EXPIRE, UNIX_EPOCH},
+    shared::{
+        db::{Db, Hash, Key, List, Object, ObjectValue, Set, Str, ZSet},
+        Shared,
+    },
 };
 use ahash::{AHashMap, AHashSet};
 use anyhow::bail;
@@ -10,15 +14,10 @@ use skiplist::OrderedSkipList;
 use std::collections::VecDeque;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    sync::Mutex,
     time::Duration,
 };
-use tracing::trace;
-
-pub use rdb_load::rdb_load;
-pub use rdb_save::rdb_save;
-pub use rdb_save::{
-    encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
-};
+use tracing::{instrument, trace};
 
 const RDB_VERSION: u32 = 7;
 
@@ -59,490 +58,482 @@ const RDB_ENC_INT16: u8 = 1;
 const RDB_ENC_INT32: u8 = 2;
 const RDB_ENC_LZF: u8 = 3;
 
-#[derive(Clone)]
-pub struct Rdb {
-    shared: Shared,
-    path: String,
-    enable_checksum: bool,
+// 保证函数的原子性
+static CRITICAL: Mutex<()> = Mutex::const_new(());
+
+#[instrument(level = "debug", skip(shared), err)]
+pub async fn save_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> {
+    let _guard = CRITICAL.lock().await;
+
+    let _delay_token = shared.post_office().delay_shutdown_token();
+
+    let RdbConf {
+        file_path: path,
+        enable_checksum,
+        ..
+    } = rdb_conf;
+
+    let temp_path = format!("{}.tmp", path);
+    let bak_path = format!("{}.bak", path);
+
+    let mut temp_file = tokio::fs::File::create(&temp_path).await?;
+    let rdb_data = encode_rdb(shared.db(), *enable_checksum).await;
+    temp_file.write_all(&rdb_data).await?;
+
+    tokio::fs::rename(&path, &bak_path).await?;
+    tokio::fs::rename(&temp_path, &path).await?;
+
+    Ok(())
 }
 
-impl Rdb {
-    pub fn new(shared: Shared, path: String, enable_checksum: bool) -> Self {
-        Self {
-            shared,
-            path,
-            enable_checksum,
+pub async fn load_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> {
+    let _guard = CRITICAL.lock().await;
+
+    let _delay_token = shared.post_office().delay_shutdown_token();
+
+    let RdbConf {
+        file_path: path,
+        enable_checksum,
+        ..
+    } = rdb_conf;
+
+    let mut file = tokio::fs::File::open(&path).await?;
+
+    let mut rdb = BytesMut::with_capacity(1024 * 32);
+    while file.read_buf(&mut rdb).await? != 0 {}
+
+    decode_rdb(&mut rdb, shared.db(), *enable_checksum).await?;
+
+    Ok(())
+}
+
+pub async fn encode_rdb(db: &Db, enable_checksum: bool) -> BytesMut {
+    let mut buf = BytesMut::with_capacity(1024 * 8);
+    buf.extend_from_slice(b"REDIS");
+    buf.put_u32(RDB_VERSION);
+    buf.put_u8(RDB_OPCODE_SELECTDB);
+    buf.put_u32(0);
+
+    for entry in db.entries.iter() {
+        let (key, obj) = (entry.key(), entry.value());
+
+        if obj.is_expired() {
+            continue;
+        }
+
+        if !obj.is_never_expired() {
+            encode_timestamp(&mut buf, obj.expire.duration_since(*UNIX_EPOCH));
+        }
+
+        match &obj.value {
+            ObjectValue::Str(value) => {
+                buf.put_u8(RDB_TYPE_STRING);
+                encode_key(&mut buf, key);
+                encode_str_value(&mut buf, value);
+            }
+            ObjectValue::List(value) => {
+                buf.put_u8(RDB_TYPE_LIST);
+                encode_key(&mut buf, key);
+                encode_list_value(&mut buf, value);
+            }
+            ObjectValue::Set(value) => {
+                buf.put_u8(RDB_TYPE_SET);
+                encode_key(&mut buf, key);
+                encode_set_value(&mut buf, value);
+            }
+            ObjectValue::Hash(value) => {
+                buf.put_u8(RDB_TYPE_HASH);
+                encode_key(&mut buf, key);
+                encode_hash_value(&mut buf, value);
+            }
+            ObjectValue::ZSet(value) => {
+                buf.put_u8(RDB_TYPE_ZSET);
+                encode_key(&mut buf, key);
+                encode_zset_value(&mut buf, value)
+            }
         }
     }
+
+    buf.put_u8(RDB_OPCODE_EOF);
+    let checksum = if enable_checksum {
+        crc::Crc::<u64>::new(&crc::CRC_64_REDIS).checksum(&buf)
+    } else {
+        0
+    };
+    buf.put_u64(checksum);
+
+    buf
 }
 
-impl Rdb {
-    pub async fn save(&mut self) -> anyhow::Result<()> {
-        let mut file = tokio::fs::File::create(&self.path).await?;
+pub fn encode_timestamp(buf: &mut BytesMut, expire: Duration) {
+    buf.put_u8(RDB_OPCODE_EXPIRETIME_MS);
+    buf.put_u64_le(expire.as_millis() as u64);
+}
 
-        let _delay_token = self.shared.post_office().delay_token();
+pub fn encode_zset_value(buf: &mut BytesMut, value: &ZSet) {
+    match value {
+        ZSet::SkipList(zset) => {
+            encode_length(buf, zset.len() as u32, None);
 
-        let rdb_data = rdb_save::rdb_save(self.shared.db(), self.enable_checksum).await?;
-
-        file.write_all(&rdb_data).await?;
-
-        Ok(())
-    }
-
-    pub async fn load(&mut self) -> anyhow::Result<()> {
-        let mut file = tokio::fs::File::open(&self.path).await?;
-
-        let mut rdb = BytesMut::with_capacity(1024 * 32);
-        while file.read_buf(&mut rdb).await? != 0 {}
-
-        rdb_load::rdb_load(&mut rdb, self.shared.db(), self.enable_checksum).await?;
-
-        Ok(())
+            let mut buf2 = itoa::Buffer::new();
+            for elem in &**zset {
+                encode_raw(buf, elem.member().as_bytes(&mut buf2));
+                encode_raw(buf, ryu::Buffer::new().format(elem.score()).as_bytes());
+            }
+        }
+        ZSet::ZipSet => unimplemented!(),
     }
 }
 
-mod rdb_save {
-    use crate::server::UNIX_EPOCH;
+pub fn encode_hash_value(buf: &mut BytesMut, value: &Hash) {
+    match value {
+        Hash::HashMap(hash) => {
+            encode_length(buf, hash.len() as u32, None);
 
-    use super::*;
+            let mut buf2 = itoa::Buffer::new();
+            for (k, v) in &**hash {
+                encode_raw(buf, k);
+                encode_raw(buf, v.as_bytes(&mut buf2));
+            }
+        }
+        Hash::ZipList => unimplemented!(),
+    }
+}
 
-    pub async fn rdb_save(db: &Db, enable_checksum: bool) -> anyhow::Result<BytesMut> {
-        let mut buf = BytesMut::with_capacity(1024 * 8);
-        buf.extend_from_slice(b"REDIS");
-        buf.put_u32(RDB_VERSION);
-        buf.put_u8(RDB_OPCODE_SELECTDB);
-        buf.put_u32(0);
+pub fn encode_set_value(buf: &mut BytesMut, value: &Set) {
+    match value {
+        Set::HashSet(set) => {
+            encode_length(buf, set.len() as u32, None);
 
-        for entry in db.entries.iter() {
-            let (key, obj) = (entry.key(), entry.value());
+            let mut buf2 = itoa::Buffer::new();
+            for elem in &**set {
+                encode_raw(buf, elem.as_bytes(&mut buf2));
+            }
+        }
+        Set::IntSet => unimplemented!(),
+    }
+}
 
-            if obj.is_expired() {
+pub fn encode_list_value(buf: &mut BytesMut, value: &List) {
+    match value {
+        List::LinkedList(list) => {
+            encode_length(buf, list.len() as u32, None);
+            let mut buf2 = itoa::Buffer::new();
+            for elem in list {
+                encode_raw(buf, elem.as_bytes(&mut buf2));
+            }
+        }
+        List::ZipList => unimplemented!(),
+    }
+}
+
+pub fn encode_str_value(buf: &mut BytesMut, value: &Str) {
+    match value {
+        Str::Int(i) => match (*i).try_into() {
+            Ok(i) => encode_int(buf, i),
+            Err(_) => encode_raw(buf, itoa::Buffer::new().format(*i).as_bytes()),
+        },
+        Str::Raw(ref s) => encode_raw(buf, s),
+    }
+}
+
+pub fn encode_raw(buf: &mut BytesMut, value: &[u8]) {
+    encode_length(buf, value.len() as u32, None);
+    buf.put_slice(value);
+}
+
+pub fn encode_int(buf: &mut BytesMut, value: i32) {
+    if value >= i8::MIN as i32 && value <= i8::MAX as i32 {
+        encode_length(buf, 0, Some(RDB_ENC_INT8));
+        buf.put_i8(value as i8);
+    } else if value >= i16::MIN as i32 && value <= i16::MAX as i32 {
+        encode_length(buf, 0, Some(RDB_ENC_INT16));
+        buf.put_i16(value as i16);
+    } else {
+        encode_length(buf, 0, Some(RDB_ENC_INT32));
+        buf.put_i32(value);
+    }
+}
+
+pub fn encode_key(buf: &mut BytesMut, key: &[u8]) {
+    encode_length(buf, key.len() as u32, None);
+    buf.put_slice(key);
+}
+
+pub fn encode_length(buf: &mut BytesMut, len: u32, special_format: Option<u8>) {
+    if let Some(special_format) = special_format {
+        // 11000000
+        buf.put_u8(0xc0 | special_format);
+        return;
+    }
+    if len < 1 << 6 {
+        // 00xxxxxx
+        buf.put_u8(len as u8);
+    } else if len < 1 << 14 {
+        // 01xxxxxx(高6位) xxxxxxxx(低8位)
+        buf.put_u8((len >> 8 | 0x40) as u8);
+        buf.put_u8(len as u8);
+    } else {
+        // 10xxxxxx(丢弃) xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+        buf.put_u8(0x80);
+        buf.put_u32(len);
+    }
+}
+
+pub async fn decode_rdb(
+    rdb_data: &mut BytesMut,
+    db: &Db,
+    enable_checksum: bool,
+) -> anyhow::Result<()> {
+    if enable_checksum {
+        let mut buf = [0; 8];
+        buf.copy_from_slice(&rdb_data[rdb_data.len() - 8..]);
+        let expected_checksum = u64::from_be_bytes(buf);
+
+        let crc = crc::Crc::<u64>::new(&crc::CRC_64_REDIS);
+        let checksum = crc.checksum(&rdb_data[..rdb_data.len() - 8]);
+
+        if expected_checksum != checksum {
+            anyhow::bail!(
+                "checksum failed, expected: {:?}, got: {:?}",
+                expected_checksum,
+                checksum
+            );
+        }
+    }
+
+    let magic = rdb_data.split_to(5);
+    if magic != b"REDIS"[..] {
+        anyhow::bail!("magic string should be REDIS, but got {magic:?}");
+    }
+    let _rdb_version = rdb_data.get_u32();
+
+    let mut expire = *NEVER_EXPIRE;
+    loop {
+        match rdb_data.get_u8() {
+            RDB_OPCODE_EOF => {
+                trace!("EOF");
+                // 丢弃EOF后面的checksum
+                rdb_data.advance(8);
+                break;
+            }
+            RDB_OPCODE_SELECTDB => {
+                let _db_num = decode_length(rdb_data)?;
                 continue;
             }
+            RDB_OPCODE_RESIZEDB => {
+                let _db_size = decode_length(rdb_data)?;
+                let _expires_size = decode_length(rdb_data)?;
 
-            if !obj.is_never_expired() {
-                encode_timestamp(&mut buf, obj.expire.duration_since(*UNIX_EPOCH));
+                trace!(
+                    "Resizedb: db_size: {:?}, expires_size: {:?}",
+                    _db_size,
+                    _expires_size
+                );
+                continue;
             }
+            RDB_OPCODE_AUX => {
+                let _key = decode_key(rdb_data)?;
+                let _value = decode_str_value(rdb_data)?;
 
-            match &obj.value {
-                ObjectValue::Str(value) => {
-                    buf.put_u8(RDB_TYPE_STRING);
-                    encode_key(&mut buf, key);
-                    encode_str_value(&mut buf, value);
-                }
-                ObjectValue::List(value) => {
-                    buf.put_u8(RDB_TYPE_LIST);
-                    encode_key(&mut buf, key);
-                    encode_list_value(&mut buf, value);
-                }
-                ObjectValue::Set(value) => {
-                    buf.put_u8(RDB_TYPE_SET);
-                    encode_key(&mut buf, key);
-                    encode_set_value(&mut buf, value);
-                }
-                ObjectValue::Hash(value) => {
-                    buf.put_u8(RDB_TYPE_HASH);
-                    encode_key(&mut buf, key);
-                    encode_hash_value(&mut buf, value);
-                }
-                ObjectValue::ZSet(value) => {
-                    buf.put_u8(RDB_TYPE_ZSET);
-                    encode_key(&mut buf, key);
-                    encode_zset_value(&mut buf, value)
-                }
+                trace!("Auxiliary fields: key: {:?}, value: {:?}", _key, _value);
+                continue;
             }
-        }
+            RDB_OPCODE_EXPIRETIME_MS => {
+                let ms = rdb_data.get_u64_le();
+                expire = *UNIX_EPOCH + Duration::from_millis(ms);
 
-        buf.put_u8(RDB_OPCODE_EOF);
-        let checksum = if enable_checksum {
-            crc::Crc::<u64>::new(&crc::CRC_64_REDIS).checksum(&buf)
-        } else {
-            0
-        };
-        buf.put_u64(checksum);
-
-        Ok(buf)
-    }
-
-    pub fn encode_timestamp(buf: &mut BytesMut, expire: Duration) {
-        buf.put_u8(RDB_OPCODE_EXPIRETIME_MS);
-        buf.put_u64_le(expire.as_millis() as u64);
-    }
-
-    pub fn encode_zset_value(buf: &mut BytesMut, value: &ZSet) {
-        match value {
-            ZSet::SkipList(zset) => {
-                encode_length(buf, zset.len() as u32, None);
-
-                let mut buf2 = itoa::Buffer::new();
-                for elem in &**zset {
-                    encode_raw(buf, elem.member().as_bytes(&mut buf2));
-                    encode_raw(buf, ryu::Buffer::new().format(elem.score()).as_bytes());
-                }
+                trace!("Expiretime_ms: {:?}", expire);
             }
-            ZSet::ZipSet => unimplemented!(),
-        }
-    }
-
-    pub fn encode_hash_value(buf: &mut BytesMut, value: &Hash) {
-        match value {
-            Hash::HashMap(hash) => {
-                encode_length(buf, hash.len() as u32, None);
-
-                let mut buf2 = itoa::Buffer::new();
-                for (k, v) in &**hash {
-                    encode_raw(buf, k);
-                    encode_raw(buf, v.as_bytes(&mut buf2));
-                }
+            RDB_OPCODE_EXPIRETIME => {
+                let sec = rdb_data.get_u32_le();
+                expire = *UNIX_EPOCH + Duration::from_secs(sec as u64);
+                trace!("Expiretime: {:?}", expire);
             }
-            Hash::ZipList => unimplemented!(),
-        }
-    }
+            RDB_TYPE_STRING => {
+                let key = decode_key(rdb_data)?;
+                let value = decode_str_value(rdb_data)?;
 
-    pub fn encode_set_value(buf: &mut BytesMut, value: &Set) {
-        match value {
-            Set::HashSet(set) => {
-                encode_length(buf, set.len() as u32, None);
+                trace!("String: key: {:?}, value: {:?}", key, value);
 
-                let mut buf2 = itoa::Buffer::new();
-                for elem in &**set {
-                    encode_raw(buf, elem.as_bytes(&mut buf2));
-                }
+                db.insert_object(&key, Object::with_expire(value, expire))
+                    .await?;
+                expire = *NEVER_EXPIRE;
             }
-            Set::IntSet => unimplemented!(),
-        }
-    }
+            RDB_TYPE_LIST => {
+                let key = decode_key(rdb_data)?;
+                let value = decode_list_kv(rdb_data)?;
 
-    pub fn encode_list_value(buf: &mut BytesMut, value: &List) {
-        match value {
-            List::LinkedList(list) => {
-                encode_length(buf, list.len() as u32, None);
-                let mut buf2 = itoa::Buffer::new();
-                for elem in list {
-                    encode_raw(buf, elem.as_bytes(&mut buf2));
-                }
+                trace!("List: key: {:?}, value: {:?}", key, value);
+
+                db.insert_object(&key, Object::with_expire(value, expire))
+                    .await?;
+                expire = *NEVER_EXPIRE;
             }
-            List::ZipList => unimplemented!(),
+            RDB_TYPE_HASH => {
+                let key = decode_key(rdb_data)?;
+                let value = decode_hash_value(rdb_data)?;
+
+                trace!("Hash: key: {:?}, value: {:?}", key, value);
+
+                db.insert_object(&key, Object::with_expire(value, expire))
+                    .await?;
+                expire = *NEVER_EXPIRE;
+            }
+            RDB_TYPE_SET => {
+                let key = decode_key(rdb_data)?;
+                let value = decode_set_value(rdb_data)?;
+
+                trace!("Set: key: {:?}, value: {:?}", key, value);
+
+                db.insert_object(&key, Object::with_expire(value, expire))
+                    .await?;
+                expire = *NEVER_EXPIRE;
+            }
+            RDB_TYPE_ZSET => {
+                let key = decode_key(rdb_data)?;
+                let value = decode_zset_value(rdb_data)?;
+
+                trace!("ZSet: key: {:?}, value: {:?}", key, value);
+
+                db.insert_object(&key, Object::with_expire(value, expire))
+                    .await?;
+                expire = *NEVER_EXPIRE;
+            }
+            invalid_ctrl => bail!("invalid RDB control byte: {:?}", invalid_ctrl),
         }
     }
 
-    pub fn encode_str_value(buf: &mut BytesMut, value: &Str) {
-        match value {
-            Str::Int(i) => match (*i).try_into() {
-                Ok(i) => encode_int(buf, i),
-                Err(_) => encode_raw(buf, itoa::Buffer::new().format(*i).as_bytes()),
-            },
-            Str::Raw(ref s) => encode_raw(buf, s),
-        }
-    }
+    Ok(())
+}
 
-    pub fn encode_raw(buf: &mut BytesMut, value: &[u8]) {
-        encode_length(buf, value.len() as u32, None);
-        buf.put_slice(value);
-    }
+pub fn decode_zset_value(bytes: &mut BytesMut) -> anyhow::Result<ZSet> {
+    if let Length::Len(zset_size) = decode_length(bytes)? {
+        let mut zset = OrderedSkipList::new();
+        for _ in 0..zset_size {
+            let member = decode_str_value(bytes)?.to_bytes();
+            let score = std::str::from_utf8(&decode_str_value(bytes)?.to_bytes())?.parse()?;
 
-    pub fn encode_int(buf: &mut BytesMut, value: i32) {
-        if value >= i8::MIN as i32 && value <= i8::MAX as i32 {
-            encode_length(buf, 0, Some(RDB_ENC_INT8));
-            buf.put_i8(value as i8);
-        } else if value >= i16::MIN as i32 && value <= i16::MAX as i32 {
-            encode_length(buf, 0, Some(RDB_ENC_INT16));
-            buf.put_i16(value as i16);
-        } else {
-            encode_length(buf, 0, Some(RDB_ENC_INT32));
-            buf.put_i32(value);
+            zset.insert((score, member).into());
         }
-    }
-
-    pub fn encode_key(buf: &mut BytesMut, key: &[u8]) {
-        encode_length(buf, key.len() as u32, None);
-        buf.put_slice(key);
-    }
-
-    pub fn encode_length(buf: &mut BytesMut, len: u32, special_format: Option<u8>) {
-        if let Some(special_format) = special_format {
-            // 11000000
-            buf.put_u8(0xc0 | special_format);
-            return;
-        }
-        if len < 1 << 6 {
-            // 00xxxxxx
-            buf.put_u8(len as u8);
-        } else if len < 1 << 14 {
-            // 01xxxxxx(高6位) xxxxxxxx(低8位)
-            buf.put_u8((len >> 8 | 0x40) as u8);
-            buf.put_u8(len as u8);
-        } else {
-            // 10xxxxxx(丢弃) xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-            buf.put_u8(0x80);
-            buf.put_u32(len);
-        }
+        Ok(ZSet::SkipList(Box::new(zset)))
+    } else {
+        bail!("invalid zset length")
     }
 }
 
-mod rdb_load {
-    use crate::{
-        server::{NEVER_EXPIRE, UNIX_EPOCH},
-        shared::db::Object,
+pub fn decode_set_value(bytes: &mut BytesMut) -> anyhow::Result<Set> {
+    if let Length::Len(set_size) = decode_length(bytes)? {
+        let mut set = AHashSet::with_capacity(set_size);
+        for _ in 0..set_size {
+            let elem = decode_str_value(bytes)?.to_bytes();
+            set.insert(elem.into());
+        }
+
+        Ok(Set::HashSet(Box::new(set)))
+    } else {
+        bail!("invalid set length")
+    }
+}
+
+pub fn decode_hash_value(bytes: &mut BytesMut) -> anyhow::Result<Hash> {
+    if let Length::Len(hash_size) = decode_length(bytes)? {
+        let mut hash = AHashMap::with_capacity(hash_size);
+        for _ in 0..hash_size {
+            let field = decode_key(bytes)?;
+            let value = decode_str_value(bytes)?.to_bytes();
+            hash.insert(field, value.into());
+        }
+
+        Ok(Hash::HashMap(Box::new(hash)))
+    } else {
+        bail!("invalid hash length")
+    }
+}
+
+pub fn decode_list_kv(bytes: &mut BytesMut) -> anyhow::Result<List> {
+    if let Length::Len(list_size) = decode_length(bytes)? {
+        let mut list = VecDeque::with_capacity(list_size);
+        for _ in 0..list_size {
+            let elem = decode_str_value(bytes)?.to_bytes();
+            list.push_back(elem.into());
+        }
+
+        Ok(List::LinkedList(list))
+    } else {
+        bail!("invalid list length")
+    }
+}
+
+pub fn decode_str_value(bytes: &mut BytesMut) -> anyhow::Result<Str> {
+    let str = match decode_length(bytes)? {
+        Length::Len(len) => Str::Raw(bytes.split_to(len).freeze()),
+        Length::Int8 => Str::from(bytes.get_i8() as i128),
+        Length::Int16 => Str::from(bytes.get_i16() as i128),
+        Length::Int32 => Str::from(bytes.get_i32() as i128),
+        Length::Lzf => {
+            if let (Length::Len(compressed_len), Length::Len(_uncompressed_len)) =
+                (decode_length(bytes)?, decode_length(bytes)?)
+            {
+                let raw = lzf::lzf_decompress(&bytes.split_to(compressed_len));
+                Str::Raw(raw)
+            } else {
+                bail!("invalid LZF length")
+            }
+        }
     };
 
-    use super::*;
+    Ok(str)
+}
 
-    pub async fn rdb_load(
-        rdb_data: &mut BytesMut,
-        db: &Db,
-        enable_checksum: bool,
-    ) -> anyhow::Result<()> {
-        if enable_checksum {
-            let mut buf = [0; 8];
-            buf.copy_from_slice(&rdb_data[rdb_data.len() - 8..]);
-            let expected_checksum = u64::from_be_bytes(buf);
-
-            let crc = crc::Crc::<u64>::new(&crc::CRC_64_REDIS);
-            let checksum = crc.checksum(&rdb_data[..rdb_data.len() - 8]);
-
-            if expected_checksum != checksum {
-                anyhow::bail!(
-                    "checksum failed, expected: {:?}, got: {:?}",
-                    expected_checksum,
-                    checksum
-                );
-            }
-        }
-
-        let magic = rdb_data.split_to(5);
-        if magic != b"REDIS"[..] {
-            anyhow::bail!("magic string should be REDIS, but got {magic:?}");
-        }
-        let _rdb_version = rdb_data.get_u32();
-
-        let mut expire = *NEVER_EXPIRE;
-        loop {
-            match rdb_data.get_u8() {
-                RDB_OPCODE_EOF => {
-                    trace!("EOF");
-                    // 丢弃EOF后面的checksum
-                    rdb_data.advance(8);
-                    break;
-                }
-                RDB_OPCODE_SELECTDB => {
-                    let _db_num = decode_length(rdb_data)?;
-                    continue;
-                }
-                RDB_OPCODE_RESIZEDB => {
-                    let _db_size = decode_length(rdb_data)?;
-                    let _expires_size = decode_length(rdb_data)?;
-
-                    trace!(
-                        "Resizedb: db_size: {:?}, expires_size: {:?}",
-                        _db_size,
-                        _expires_size
-                    );
-                    continue;
-                }
-                RDB_OPCODE_AUX => {
-                    let _key = decode_key(rdb_data)?;
-                    let _value = decode_str_value(rdb_data)?;
-
-                    trace!("Auxiliary fields: key: {:?}, value: {:?}", _key, _value);
-                    continue;
-                }
-                RDB_OPCODE_EXPIRETIME_MS => {
-                    let ms = rdb_data.get_u64_le();
-                    expire = *UNIX_EPOCH + Duration::from_millis(ms);
-
-                    trace!("Expiretime_ms: {:?}", expire);
-                }
-                RDB_OPCODE_EXPIRETIME => {
-                    let sec = rdb_data.get_u32_le();
-                    expire = *UNIX_EPOCH + Duration::from_secs(sec as u64);
-                    trace!("Expiretime: {:?}", expire);
-                }
-                RDB_TYPE_STRING => {
-                    let key = decode_key(rdb_data)?;
-                    let value = decode_str_value(rdb_data)?;
-
-                    trace!("String: key: {:?}, value: {:?}", key, value);
-
-                    db.insert_object(&key, Object::with_expire(value, expire))
-                        .await?;
-                    expire = *NEVER_EXPIRE;
-                }
-                RDB_TYPE_LIST => {
-                    let key = decode_key(rdb_data)?;
-                    let value = decode_list_kv(rdb_data)?;
-
-                    trace!("List: key: {:?}, value: {:?}", key, value);
-
-                    db.insert_object(&key, Object::with_expire(value, expire))
-                        .await?;
-                    expire = *NEVER_EXPIRE;
-                }
-                RDB_TYPE_HASH => {
-                    let key = decode_key(rdb_data)?;
-                    let value = decode_hash_value(rdb_data)?;
-
-                    trace!("Hash: key: {:?}, value: {:?}", key, value);
-
-                    db.insert_object(&key, Object::with_expire(value, expire))
-                        .await?;
-                    expire = *NEVER_EXPIRE;
-                }
-                RDB_TYPE_SET => {
-                    let key = decode_key(rdb_data)?;
-                    let value = decode_set_value(rdb_data)?;
-
-                    trace!("Set: key: {:?}, value: {:?}", key, value);
-
-                    db.insert_object(&key, Object::with_expire(value, expire))
-                        .await?;
-                    expire = *NEVER_EXPIRE;
-                }
-                RDB_TYPE_ZSET => {
-                    let key = decode_key(rdb_data)?;
-                    let value = decode_zset_value(rdb_data)?;
-
-                    trace!("ZSet: key: {:?}, value: {:?}", key, value);
-
-                    db.insert_object(&key, Object::with_expire(value, expire))
-                        .await?;
-                    expire = *NEVER_EXPIRE;
-                }
-                invalid_ctrl => bail!("invalid RDB control byte: {:?}", invalid_ctrl),
-            }
-        }
-
-        Ok(())
+pub fn decode_key(bytes: &mut BytesMut) -> anyhow::Result<Key> {
+    if let Length::Len(len) = decode_length(bytes)? {
+        Ok(bytes.split_to(len).freeze().into())
+    } else {
+        bail!("invalid key length")
     }
+}
 
-    pub fn decode_zset_value(bytes: &mut BytesMut) -> anyhow::Result<ZSet> {
-        if let Length::Len(zset_size) = decode_length(bytes)? {
-            let mut zset = OrderedSkipList::new();
-            for _ in 0..zset_size {
-                let member = decode_str_value(bytes)?.to_bytes();
-                let score = std::str::from_utf8(&decode_str_value(bytes)?.to_bytes())?.parse()?;
+#[derive(Debug)]
+pub enum Length {
+    Len(usize),
+    Int8,
+    Int16,
+    Int32,
+    Lzf,
+}
 
-                zset.insert((score, member).into());
-            }
-            Ok(ZSet::SkipList(Box::new(zset)))
-        } else {
-            bail!("invalid zset length")
+pub fn decode_length(bytes: &mut BytesMut) -> anyhow::Result<Length> {
+    let ctrl = bytes.get_u8();
+    let len = match ctrl >> 6 {
+        // 00
+        0 => Length::Len(ctrl as usize),
+        // 01
+        1 => {
+            let mut res = 0_usize;
+            res |= ((ctrl & 0x3f) as usize) << 8; // ctrl & 0011 1111
+            res |= (bytes.get_u8()) as usize;
+            Length::Len(res)
         }
-    }
-
-    pub fn decode_set_value(bytes: &mut BytesMut) -> anyhow::Result<Set> {
-        if let Length::Len(set_size) = decode_length(bytes)? {
-            let mut set = AHashSet::with_capacity(set_size);
-            for _ in 0..set_size {
-                let elem = decode_str_value(bytes)?.to_bytes();
-                set.insert(elem.into());
-            }
-
-            Ok(Set::HashSet(Box::new(set)))
-        } else {
-            bail!("invalid set length")
-        }
-    }
-
-    pub fn decode_hash_value(bytes: &mut BytesMut) -> anyhow::Result<Hash> {
-        if let Length::Len(hash_size) = decode_length(bytes)? {
-            let mut hash = AHashMap::with_capacity(hash_size);
-            for _ in 0..hash_size {
-                let field = decode_key(bytes)?;
-                let value = decode_str_value(bytes)?.to_bytes();
-                hash.insert(field, value.into());
-            }
-
-            Ok(Hash::HashMap(Box::new(hash)))
-        } else {
-            bail!("invalid hash length")
-        }
-    }
-
-    pub fn decode_list_kv(bytes: &mut BytesMut) -> anyhow::Result<List> {
-        if let Length::Len(list_size) = decode_length(bytes)? {
-            let mut list = VecDeque::with_capacity(list_size);
-            for _ in 0..list_size {
-                let elem = decode_str_value(bytes)?.to_bytes();
-                list.push_back(elem.into());
-            }
-
-            Ok(List::LinkedList(list))
-        } else {
-            bail!("invalid list length")
-        }
-    }
-
-    pub fn decode_str_value(bytes: &mut BytesMut) -> anyhow::Result<Str> {
-        let str = match decode_length(bytes)? {
-            Length::Len(len) => Str::Raw(bytes.split_to(len).freeze()),
-            Length::Int8 => Str::from(bytes.get_i8() as i128),
-            Length::Int16 => Str::from(bytes.get_i16() as i128),
-            Length::Int32 => Str::from(bytes.get_i32() as i128),
-            Length::Lzf => {
-                if let (Length::Len(compressed_len), Length::Len(_uncompressed_len)) =
-                    (decode_length(bytes)?, decode_length(bytes)?)
-                {
-                    let raw = lzf::lzf_decompress(&bytes.split_to(compressed_len));
-                    Str::Raw(raw)
-                } else {
-                    bail!("invalid LZF length")
-                }
-            }
-        };
-
-        Ok(str)
-    }
-
-    pub fn decode_key(bytes: &mut BytesMut) -> anyhow::Result<Key> {
-        if let Length::Len(len) = decode_length(bytes)? {
-            Ok(bytes.split_to(len).freeze().into())
-        } else {
-            bail!("invalid key length")
-        }
-    }
-
-    #[derive(Debug)]
-    pub enum Length {
-        Len(usize),
-        Int8,
-        Int16,
-        Int32,
-        Lzf,
-    }
-
-    pub fn decode_length(bytes: &mut BytesMut) -> anyhow::Result<Length> {
-        let ctrl = bytes.get_u8();
-        let len = match ctrl >> 6 {
-            // 00
-            0 => Length::Len(ctrl as usize),
-            // 01
-            1 => {
-                let mut res = 0_usize;
-                res |= ((ctrl & 0x3f) as usize) << 8; // ctrl & 0011 1111
-                res |= (bytes.get_u8()) as usize;
-                Length::Len(res)
-            }
-            // 10
-            2 => Length::Len(<u32>::from_be_bytes([
-                bytes.get_u8(),
-                bytes.get_u8(),
-                bytes.get_u8(),
-                bytes.get_u8(),
-            ]) as usize),
-            // 11
-            3 => match ctrl & 0x3f {
-                0 => Length::Int8,
-                1 => Length::Int16,
-                2 => Length::Int32,
-                3 => Length::Lzf,
-                _ => bail!("invalid length encoding"),
-            },
+        // 10
+        2 => Length::Len(<u32>::from_be_bytes([
+            bytes.get_u8(),
+            bytes.get_u8(),
+            bytes.get_u8(),
+            bytes.get_u8(),
+        ]) as usize),
+        // 11
+        3 => match ctrl & 0x3f {
+            0 => Length::Int8,
+            1 => Length::Int16,
+            2 => Length::Int32,
+            3 => Length::Lzf,
             _ => bail!("invalid length encoding"),
-        };
+        },
+        _ => bail!("invalid length encoding"),
+    };
 
-        Ok(len)
-    }
+    Ok(len)
 }
 
 mod lzf {
@@ -764,11 +755,8 @@ mod lzf {
 
 #[cfg(test)]
 mod rdb_test {
-    use super::rdb_load::*;
-    use super::rdb_save::*;
     use super::*;
     use crate::{
-        server::*,
         shared::db::Object,
         util::{gen_test_shared, test_init},
     };
@@ -956,12 +944,28 @@ mod rdb_test {
             .await
             .unwrap();
 
-        let mut rdb = Rdb::new(shared, "tests/rdb/rdb_test.rdb".into(), true);
-        rdb.save().await.unwrap();
+        save_rdb(
+            shared,
+            &RdbConf {
+                file_path: "tests/rdb/rdb_test.rdb".to_string(),
+                save: None,
+                enable_checksum: true,
+            },
+        )
+        .await
+        .unwrap();
 
         let shared = gen_test_shared();
-        let mut rdb = Rdb::new(shared, "tests/rdb/rdb_test.rdb".into(), true);
-        rdb.load().await.unwrap();
+        load_rdb(
+            shared,
+            &RdbConf {
+                file_path: "tests/rdb/rdb_test.rdb".to_string(),
+                save: None,
+                enable_checksum: true,
+            },
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             db.get_object("str1".as_bytes()).await.unwrap().value(),

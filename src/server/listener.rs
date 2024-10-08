@@ -1,6 +1,6 @@
 use super::Handler;
 use crate::{
-    persist::rdb::Rdb,
+    persist::rdb::save_rdb,
     server::HandlerContext,
     shared::{Shared, SPECIAL_ID_RANGE},
 };
@@ -64,10 +64,10 @@ impl Listener {
                 .retry(backon::ExponentialBuilder::default())
                 .await?;
 
-            let (id, outbox, inbox) = post_office.new_mailbox(self.next_client_id);
+            let (id, mailbox) = post_office.register_handler_mailbox(self.next_client_id);
             self.next_client_id = id + 1;
 
-            let context = HandlerContext::new(self.shared, id, outbox, inbox);
+            let context = HandlerContext::new(self.shared, id, mailbox);
             match &self.tls_acceptor {
                 None => {
                     let handler = Handler::new(self.shared, stream, context);
@@ -75,6 +75,7 @@ impl Listener {
                     self.shared.pool().spawn_pinned(|| async move {
                         // 开始处理连接
                         if let Err(err) = handler.run().await {
+                            eprintln!("connection error: {:?}", err);
                             error!(cause = ?err, "connection error");
                         }
 
@@ -104,16 +105,17 @@ impl Listener {
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        let conf = self.shared.conf();
-        if let (true, Some(rdb)) = (conf.aof.is_none(), conf.rdb.as_ref()) {
-            let mut rdb = Rdb::new(self.shared, rdb.file_path.clone(), rdb.enable_checksum);
+        let shared = self.shared;
+        let conf = shared.conf();
 
-            let _delay_token = self.shared.post_office().delay_token();
-            self.shared.pool().spawn_pinned(move || async move {
-                rdb.save().await.ok();
-
-                drop(_delay_token);
+        if let Some(rdb_conf) = conf.rdb.as_ref() {
+            let handle = tokio::runtime::Handle::current();
+            let handle = std::thread::spawn(move || {
+                handle.block_on(async {
+                    save_rdb(shared, rdb_conf).await.ok();
+                });
             });
+            handle.join().ok();
         }
     }
 }

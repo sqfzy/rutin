@@ -3,7 +3,7 @@ use std::str::FromStr;
 use crate::conf::MasterInfo;
 use bytestring::ByteString;
 use clap::Parser;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 
 #[derive(Parser)]
 pub struct Cli {

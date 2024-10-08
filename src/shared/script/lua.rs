@@ -27,11 +27,10 @@ thread_local! {
 fn create_fake_handler() -> FakeHandler {
     let shared = *SHARED;
 
-    let (outbox, inbox) = shared.post_office().new_mailbox_with_special_id(NULL_ID);
+    let mailbox = shared.post_office().register_special_mailbox(NULL_ID);
     let context = HandlerContext::with_ac(
         NULL_ID,
-        outbox,
-        inbox,
+        mailbox,
         Arc::new(AccessControl::new_strict()),
         DEFAULT_USER,
     );

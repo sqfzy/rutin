@@ -1,12 +1,23 @@
 use crate::persist::aof::AppendFSync;
 use serde::{Deserialize, Deserializer};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AofConf {
     pub use_rdb_preamble: bool,
     pub file_path: String,
     pub append_fsync: AppendFSync,
-    pub auto_aof_rewrite_min_size: u128,
+    pub auto_aof_rewrite_min_size: u128, // 单位为MB
+}
+
+impl Default for AofConf {
+    fn default() -> Self {
+        AofConf {
+            use_rdb_preamble: true,
+            file_path: "appendonly.aof".to_string(),
+            append_fsync: AppendFSync::EverySec,
+            auto_aof_rewrite_min_size: 64,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for AofConf {
