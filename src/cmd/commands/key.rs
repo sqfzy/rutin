@@ -50,7 +50,7 @@ pub struct Del {
 }
 
 impl CmdExecutor for Del {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -96,7 +96,7 @@ pub struct Dump {
 }
 
 impl CmdExecutor for Dump {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -145,7 +145,7 @@ pub struct Exists {
 }
 
 impl CmdExecutor for Exists {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -190,7 +190,7 @@ pub struct Expire {
 }
 
 impl CmdExecutor for Expire {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -271,7 +271,7 @@ pub struct ExpireAt {
 }
 
 impl CmdExecutor for ExpireAt {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -360,7 +360,7 @@ pub struct ExpireTime {
 }
 
 impl CmdExecutor for ExpireTime {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -405,7 +405,7 @@ pub struct Keys {
 }
 
 impl CmdExecutor for Keys {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -459,7 +459,7 @@ impl CmdExecutor for Keys {
 // }
 //
 // impl CmdExecutor for NBKeys {
-//     #[instrument(level = "debug", skip(handler), ret, err)]
+//     #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
 //     async fn execute(
 //         self,
 //         handler: &mut Handler<impl AsyncStream>,
@@ -524,7 +524,7 @@ pub struct Persist {
 }
 
 impl CmdExecutor for Persist {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -567,7 +567,7 @@ pub struct Pttl {
 }
 
 impl CmdExecutor for Pttl {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -613,7 +613,7 @@ pub struct Ttl {
 }
 
 impl CmdExecutor for Ttl {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -657,7 +657,7 @@ pub struct Type {
 }
 
 impl CmdExecutor for Type {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

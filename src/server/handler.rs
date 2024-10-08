@@ -48,21 +48,6 @@ impl<S: AsyncStream> Handler<S> {
                 tokio::select! {
                     biased; // 有序轮询
 
-                    // 等待客户端请求
-                    res = self.conn.read_frames_buf(&mut frames_buf) => {
-                        if res?.is_none() {
-                            return Ok(());
-                        }
-
-                        for f in frames_buf.iter_mut() {
-                            if let Some(resp) = dispatch(f, &mut self).await? {
-                                self.conn.write_frames(&resp).await?;
-                            }
-                        }
-
-                        // 清空读缓冲区，所有RefMutResp3失效
-                        self.conn.finish_read();
-                    }
                     letter = &mut inbox_fut => {
                         // mailbox没有drop，所以不可能出现Err
                         match letter.unwrap() {
@@ -81,6 +66,21 @@ impl<S: AsyncStream> Handler<S> {
                         }
 
                         inbox_fut .set(inbox.recv_async());
+                    }
+                    // 等待客户端请求
+                    res = self.conn.read_frames_buf(&mut frames_buf) => {
+                        if res?.is_none() {
+                            return Ok(());
+                        }
+
+                        for f in frames_buf.iter_mut() {
+                            if let Some(resp) = dispatch(f, &mut self).await? {
+                                self.conn.write_frames(&resp).await?;
+                            }
+                        }
+
+                        // 清空读缓冲区，所有RefMutResp3失效
+                        self.conn.finish_read();
                     }
                 };
 

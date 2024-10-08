@@ -23,7 +23,7 @@ pub struct Publish {
 }
 
 impl CmdExecutor for Publish {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -80,7 +80,7 @@ pub struct Subscribe {
 }
 
 impl CmdExecutor for Subscribe {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -143,7 +143,7 @@ pub struct Unsubscribe {
 }
 
 impl CmdExecutor for Unsubscribe {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

@@ -74,10 +74,7 @@ impl Listener {
 
                     self.shared.pool().spawn_pinned(|| async move {
                         // 开始处理连接
-                        if let Err(err) = handler.run().await {
-                            eprintln!("connection error: {:?}", err);
-                            error!(cause = ?err, "connection error");
-                        }
+                        handler.run().await.ok();
 
                         #[cfg(not(feature = "debug"))]
                         drop(permit);
@@ -90,9 +87,7 @@ impl Listener {
 
                     self.shared.pool().spawn_pinned(|| async move {
                         // 开始处理连接
-                        if let Err(err) = handler.run().await {
-                            error!(cause = ?err, "connection error");
-                        }
+                        handler.run().await.ok();
 
                         #[cfg(not(feature = "debug"))]
                         drop(permit);

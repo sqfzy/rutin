@@ -25,7 +25,7 @@ pub struct AclCat {
 }
 
 impl CmdExecutor for AclCat {
-    #[instrument(level = "debug", skip(_handler), ret, err)]
+    #[instrument(level = "debug", skip(_handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         _handler: &mut Handler<impl AsyncStream>,
@@ -71,7 +71,7 @@ pub struct AclDelUser {
 }
 
 impl CmdExecutor for AclDelUser {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -120,7 +120,7 @@ pub struct AclSetUser {
 }
 
 impl CmdExecutor for AclSetUser {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -273,7 +273,7 @@ impl CmdExecutor for AclSetUser {
 pub struct AclUsers;
 
 impl CmdExecutor for AclUsers {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -298,7 +298,7 @@ impl CmdExecutor for AclUsers {
 pub struct AclWhoAmI;
 
 impl CmdExecutor for AclWhoAmI {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -317,7 +317,7 @@ impl CmdExecutor for AclWhoAmI {
 pub struct AppendOnly;
 
 impl CmdExecutor for AppendOnly {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -357,7 +357,7 @@ impl CmdExecutor for AppendOnly {
 pub struct BgSave;
 
 impl CmdExecutor for BgSave {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -547,7 +547,7 @@ pub struct ReplicaOf {
 }
 
 impl CmdExecutor for ReplicaOf {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -612,7 +612,7 @@ impl CmdExecutor for ReplicaOf {
 pub struct Save;
 
 impl CmdExecutor for Save {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

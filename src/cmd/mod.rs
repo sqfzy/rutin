@@ -14,7 +14,7 @@ use std::{
     iter::Iterator,
     num::NonZero,
 };
-use tracing::{error, instrument};
+use tracing::{debug, instrument, warn};
 
 pub trait CommandFlag {
     const NAME: &'static str;
@@ -95,7 +95,7 @@ pub trait CmdExecutor: CommandFlag + Sized + std::fmt::Debug {
 }
 
 #[inline]
-#[instrument(level = "debug", skip(handler), ret)]
+#[instrument(level = "debug", skip(handler))]
 pub async fn dispatch(
     cmd_frame: &mut StaticResp3,
     handler: &mut Handler<impl AsyncStream>,
@@ -120,10 +120,12 @@ pub async fn dispatch(
         AclSetUser::NAME => AclSetUser::apply(cmd, handler).await,
         AclUsers::NAME => AclUsers::apply(cmd, handler).await,
         AclWhoAmI::NAME => AclWhoAmI::apply(cmd, handler).await,
+        // AppendOnly::NAME => AppendOnly::apply(cmd, handler).await,
         BgSave::NAME => BgSave::apply(cmd, handler).await,
         PSync::NAME => PSync::apply(cmd, handler).await,
         ReplConf::NAME => ReplConf::apply(cmd, handler).await,
         ReplicaOf::NAME => ReplicaOf::apply(cmd, handler).await,
+        // Save::NAME => Save::apply(cmd, handler).await,
         /**************/
         /* connection */
         /**************/
@@ -172,7 +174,6 @@ pub async fn dispatch(
         LPop::NAME => LPop::apply(cmd, handler).await,
         LPos::NAME => LPos::apply(cmd, handler).await,
         LPush::NAME => LPush::apply(cmd, handler).await,
-        // NBLPop::NAME => NBLPop::apply(cmd, handler).await,
         /********/
         /* hash */
         /********/
@@ -215,7 +216,7 @@ pub async fn dispatch(
     match res {
         Ok(res) => Ok(res),
         Err(e) => {
-            error!("fail to dispatch cmd `{:?}`", cmd_frame);
+            warn!("fail to dispatch cmd `{:?}`", cmd_frame);
             let frame = e.try_into()?; // 尝试将错误转换为RESP3
             Ok(Some(frame))
         }
@@ -238,17 +239,7 @@ impl CmdUnparsed<'_> {
         self.inner.is_empty()
     }
 
-    // pub fn get_uppercase<'a>(&mut self, index: usize, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    //     match self.inner.get(index) {
-    //         Some(Resp3::BlobString { inner: b, .. }) => {
-    //             debug_assert!(b.len() <= buf.len());
-    //
-    //             Some(util::get_uppercase(b, buf).unwrap())
-    //         }
-    //         _ => None,
-    //     }
-    // }
-
+    #[inline]
     pub fn next_uppercase<const L: usize>(&mut self) -> Option<Uppercase<L, StaticBytes>> {
         self.next().map(|b| b.into_uppercase())
     }

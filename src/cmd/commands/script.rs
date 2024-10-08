@@ -17,7 +17,7 @@ pub struct Eval {
 }
 
 impl CmdExecutor for Eval {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -63,7 +63,7 @@ pub struct EvalName {
 }
 
 impl CmdExecutor for EvalName {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -107,7 +107,7 @@ pub struct ScriptExists {
 }
 
 impl CmdExecutor for ScriptExists {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -139,7 +139,7 @@ impl CmdExecutor for ScriptExists {
 pub struct ScriptFlush {}
 
 impl CmdExecutor for ScriptFlush {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -165,7 +165,7 @@ pub struct ScriptRegister {
 }
 
 impl CmdExecutor for ScriptRegister {
-    #[instrument(level = "debug", skip(handler), ret, err)]
+    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
