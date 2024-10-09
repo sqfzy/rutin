@@ -20,7 +20,7 @@ pub enum RutinError {
     #[snafu(display("incomplete frame"))]
     Incomplete,
 
-    #[snafu(display("invalid frame format: {}", msg))]
+    #[snafu(display("invalid frame format '{msg}'"))]
     InvalidFormat {
         msg: Cow<'static, str>,
     },

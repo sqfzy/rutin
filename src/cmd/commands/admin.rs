@@ -14,6 +14,7 @@ use bytestring::ByteString;
 use itertools::Itertools;
 use std::{any::Any, sync::Arc};
 use tokio::net::TcpStream;
+use tracing::instrument;
 
 /// # Reply:
 ///
@@ -336,46 +337,46 @@ impl CmdExecutor for AclWhoAmI {
     }
 }
 
-/// # Reply:
-/// **Simple string reply**: OK.
-#[derive(Debug)]
-pub struct AppendOnly;
-
-impl CmdExecutor for AppendOnly {
-    #[instrument(
-        level = "debug",
-        skip(handler),
-        ret(level = "debug"),
-        err(level = "debug")
-    )]
-    async fn execute(
-        self,
-        handler: &mut Handler<impl AsyncStream>,
-    ) -> RutinResult<Option<CheapResp3>> {
-        let shared = handler.shared;
-        let conf = shared.conf();
-
-        if conf.aof.is_some() {
-            return Ok(Some(Resp3::new_simple_string("OK".into())));
-        }
-
-        let f = |shared: &mut SharedInner| {
-            shared.conf.aof = Some(Default::default());
-        };
-
-        shared.post_office().send_reset_server(Box::new(f)).await;
-
-        Ok(Some(Resp3::new_simple_string("OK".into())))
-    }
-
-    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
-        if !args.is_empty() {
-            return Err(RutinError::WrongArgNum);
-        }
-
-        Ok(AppendOnly)
-    }
-}
+// /// # Reply:
+// /// **Simple string reply**: OK.
+// #[derive(Debug)]
+// pub struct AppendOnly;
+//
+// impl CmdExecutor for AppendOnly {
+//     #[instrument(
+//         level = "debug",
+//         skip(handler),
+//         ret(level = "debug"),
+//         err(level = "debug")
+//     )]
+//     async fn execute(
+//         self,
+//         handler: &mut Handler<impl AsyncStream>,
+//     ) -> RutinResult<Option<CheapResp3>> {
+//         let shared = handler.shared;
+//         let conf = shared.conf();
+//
+//         if conf.aof.is_some() {
+//             return Ok(Some(Resp3::new_simple_string("OK".into())));
+//         }
+//
+//         let f = |shared: &mut SharedInner| {
+//             shared.conf.aof = Some(Default::default());
+//         };
+//
+//         shared.post_office().send_reset_server(Box::new(f)).await;
+//
+//         Ok(Some(Resp3::new_simple_string("OK".into())))
+//     }
+//
+//     fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+//         if !args.is_empty() {
+//             return Err(RutinError::WrongArgNum);
+//         }
+//
+//         Ok(AppendOnly)
+//     }
+// }
 
 // 该命令用于在后台异步保存当前数据库的数据到磁盘
 /// # Reply:

@@ -41,7 +41,7 @@ gen_flag!(
     AclSetUser(admin, dangerous),
     AclUsers(admin, dangerous),
     AclWhoAmI(admin, dangerous),
-    AppendOnly(admin, dangerous),
+    // AppendOnly(admin, dangerous),
     BgSave(admin, dangerous),
     PSync(admin, dangerous),
     ReplConf(admin, dangerous),
@@ -194,7 +194,6 @@ where
 //     }
 // }
 
-// TODO: use SIMD
 pub fn cmds_flag_to_names(cmds_flag: CmdFlag) -> Vec<&'static str> {
     let mut names = Vec::new();
     let mut cursor = 1;

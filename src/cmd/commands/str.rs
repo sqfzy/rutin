@@ -713,6 +713,7 @@ impl CmdExecutor for Set {
         };
 
         let new_obj = Object::with_expire(Str::from(self.value), new_ex);
+
         let (_, old) = entry.insert2(new_obj);
 
         if self.get {

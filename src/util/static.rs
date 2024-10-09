@@ -123,7 +123,7 @@ impl From<StaticBytes> for BytesMut {
 
 impl From<StaticBytes> for Str {
     fn from(value: StaticBytes) -> Self {
-        Str::from(Bytes::copy_from_slice(value.as_ref()))
+        Str::from(value.as_ref())
     }
 }
 

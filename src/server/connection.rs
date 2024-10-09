@@ -4,12 +4,11 @@ use crate::{
     util::StaticBytes,
 };
 use bytes::{Buf, BytesMut};
-use core::panic;
 use flume::{
     r#async::{RecvFut, SendFut},
     Receiver, Sender,
 };
-use futures::{future::poll_immediate, io, Future};
+use futures::{future::poll_immediate, io, Future, FutureExt};
 use pin_project::{pin_project, pinned_drop};
 use std::{
     any::Any,
@@ -63,23 +62,23 @@ impl<S: AsyncStream> Connection<S> {
     pub fn finish_read(&mut self) {
         let reader_buf = &mut self.reader_buf;
 
-        // 清除reader_buf中已经使用过的数据，这会使RefMutResp3失效
-        if reader_buf.has_remaining() {
-            // // TEST:
-            //
-            // // 如果reader_buf中还有数据，则将其复制到buf的开头
-            // let len = reader_buf.remaining();
-            // let pos = reader_buf.position() as usize;
-            //
-            // let inner = reader_buf.get_mut();
-            // inner.copy_within(pos..pos + len, 0);
-            //
-            // inner.truncate(len);
-            panic!("foo");
-        } else {
-            reader_buf.get_mut().clear();
-        }
+        // // 清除reader_buf中已经使用过的数据，这会使RefMutResp3失效
+        // if reader_buf.has_remaining() {
+        //     // TEST:
+        //
+        //     // 如果reader_buf中还有数据，则将其复制到buf的开头
+        //     let len = reader_buf.remaining();
+        //     let pos = reader_buf.position() as usize;
+        //
+        //     let inner = reader_buf.get_mut();
+        //     inner.copy_within(pos..pos + len, 0);
+        //
+        //     inner.truncate(len);
+        // } else {
+        //     reader_buf.get_mut().clear();
+        // }
 
+        reader_buf.get_mut().clear();
         reader_buf.set_position(0);
     }
 
@@ -149,10 +148,11 @@ impl<S: AsyncStream> Connection<S> {
     pub async fn read_frames(&mut self) -> RutinResult<Option<Vec<StaticResp3>>> {
         let mut frames_buf = Vec::with_capacity(32);
 
-        Ok(self
-            .read_frames_buf(&mut frames_buf)
-            .await?
-            .map(|_| frames_buf))
+        let n = self.read_frames_buf(&mut frames_buf).await?;
+        match n {
+            0 => Ok(None),
+            _ => Ok(Some(frames_buf)),
+        }
     }
 
     // frames_buf中存有已经allocate的frame (一般是RefMutResp3::Array)， 为了避免
@@ -164,7 +164,7 @@ impl<S: AsyncStream> Connection<S> {
     pub async fn read_frames_buf(
         &mut self,
         frames_buf: &mut Vec<StaticResp3>,
-    ) -> RutinResult<Option<()>> {
+    ) -> RutinResult<usize> {
         let mut next = 0;
 
         loop {
@@ -176,12 +176,27 @@ impl<S: AsyncStream> Connection<S> {
                 }
 
                 let frame_buf = &mut frames_buf[next];
+
+                if self.read_frame_buf(frame_buf).await?.is_none() {
+                    return Ok(next);
+                }
+
                 next += 1;
                 self.batch += 1;
 
-                if self.read_frame_buf(frame_buf).await?.is_none() {
-                    return Ok(None);
-                }
+                // if self.batch >= self.max_batch {
+                //     if next >= frames_buf.len() {
+                //         frames_buf.push(StaticResp3::default());
+                //     }
+                //
+                //     let frame_buf = &mut frames_buf[next];
+                //     next += 1;
+                //     self.batch += 1;
+                //
+                //     if self.read_frame_buf(frame_buf).await?.is_none() {
+                //         return Ok(None);
+                //     }
+                // }
 
                 trace!("read frame {frame_buf:?}");
                 // println!(
@@ -197,12 +212,10 @@ impl<S: AsyncStream> Connection<S> {
             // 解析(服务端总是假定客户端会发送完整的RESP3 frame，如果出现半包情
             // 况，则需要等待该frame的完整数据，其它frame请求的处理也会被阻塞)。
             if !self.reader_buf.has_remaining() {
-                match poll_immediate(self.read_inner_buf()).await {
+                match self.read_inner_buf().now_or_never() {
                     Some(Ok(n)) if n != 0 => {}
-                    _ => return Ok(Some(())),
+                    _ => return Ok(next),
                 }
-
-                debug_assert!(self.reader_buf.has_remaining());
             }
         }
     }

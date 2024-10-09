@@ -9,7 +9,7 @@ use crate::{
     util::BackLog,
     Id,
 };
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use event_listener::{listener, Event, EventListener, IntoNotification};
 use futures::pin_mut;
 use std::{sync::Arc, time::Duration};
@@ -73,11 +73,14 @@ impl<S: AsyncStream> Handler<S> {
                     }
                     // 等待客户端请求
                     res = self.conn.read_frames_buf(&mut frames_buf) => {
-                        if res?.is_none() {
+                        debug_assert!(!self.conn.reader_buf.has_remaining());
+
+                        let n = res?;
+                        if n == 0 {
                             return Ok(());
                         }
 
-                        for f in frames_buf.iter_mut() {
+                        for f in &mut frames_buf[..n] {
                             if let Some(resp) = dispatch(f, &mut self).await? {
                                 self.conn.write_frames(&resp).await?;
                             }
