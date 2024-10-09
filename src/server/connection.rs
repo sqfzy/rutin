@@ -21,7 +21,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::TcpStream,
 };
-use tracing::{debug, error, instrument};
+use tracing::{error, instrument, trace};
 
 pub trait AsyncStream:
     AsyncRead + AsyncReadExt + AsyncWrite + AsyncWriteExt + Unpin + Send + Any
@@ -183,7 +183,7 @@ impl<S: AsyncStream> Connection<S> {
                     return Ok(None);
                 }
 
-                debug!("read frame {frame_buf:?}");
+                trace!("read frame {frame_buf:?}");
                 // println!(
                 //     "reader_buf remaining {:?}",
                 //     crate::util::bytes_to_string(
@@ -191,38 +191,6 @@ impl<S: AsyncStream> Connection<S> {
                 //     )
                 // );
             }
-
-            // // PERF: 该值影响pipeline的性能，以及内存占用
-            // if self.batch > self.max_batch {
-            //     // 超出最大批处理数则不再继续从网卡读取数据，但是必须消耗掉reader_buf中
-            //     // 的数据，否则会导致后续的数据读取错误。
-            //     while self.reader_buf.has_remaining() {
-            //         {
-            //             // RefMutResp3数量不够则新建一个默认的RefMutResp3，执行read_frame_buf之后
-            //             // 会转为实际的RefMutResp3。
-            //             if next >= frames_buf.len() {
-            //                 frames_buf.push(StaticResp3::default());
-            //             }
-            //
-            //             let frame_buf = &mut frames_buf[next];
-            //             next += 1;
-            //             self.batch += 1;
-            //
-            //             if self.read_frame_buf(frame_buf).await?.is_none() {
-            //                 return Ok(None);
-            //             }
-            //
-            //             debug!("read frame {frame_buf:?}");
-            //             // println!(
-            //             //     "reader_buf remaining {:?}",
-            //             //     crate::util::bytes_to_string(
-            //             //         &self.reader_buf.get_ref()[self.reader_buf.position() as usize..]
-            //             //     )
-            //             // );
-            //         }
-            //     }
-            //     return Ok(Some(()));
-            // }
 
             // 如果buffer为空则尝试继续从stream读取数据到buffer。如果阻塞或连接
             // 断开(内核中暂无数据)则返回目前解析到frame；如果读取到数据则继续
@@ -577,8 +545,6 @@ mod fake_cs_tests {
 
     #[tokio::test]
     async fn fake_poll_test() {
-        use tracing::debug;
-
         let data = BytesMut::from(b"a".as_slice());
         let data2 = BytesMut::from(b"b".as_slice());
 
@@ -591,25 +557,25 @@ mod fake_cs_tests {
 
             tokio::time::sleep(Duration::from_millis(100)).await;
             client.write_all(&data).await.unwrap(); // 写入数据，解除server.read_u8()的阻塞
-            debug!("client write data done");
+            eprintln!("client write data done");
 
             tokio::time::sleep(Duration::from_millis(100)).await;
             let mut buf = [0; 3];
             let _ = client.read_exact(&mut buf).await.unwrap(); // 读取数据，解除server.write_all(&data2)的阻塞
-            debug!("client read data: {:?}", buf);
+            eprintln!("client read data: {:?}", buf);
             assert_eq!(buf, b"bbb".as_slice());
         });
 
-        debug!("server reading data...");
+        eprintln!("server reading data...");
         let a = server.read_u8().await.unwrap(); // async阻塞
-        debug!("server read data: {:?}", a);
+        eprintln!("server read data: {:?}", a);
         assert_eq!(a, b'a');
 
-        debug!("server writing data...");
+        eprintln!("server writing data...");
         server.write_all(&data2).await.unwrap();
         server.write_all(&data2).await.unwrap();
         server.write_all(&data2).await.unwrap(); // async阻塞
-        debug!("server write data done");
+        eprintln!("server write data done");
         handle.await.unwrap();
     }
 

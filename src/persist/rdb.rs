@@ -17,7 +17,7 @@ use tokio::{
     sync::Mutex,
     time::Duration,
 };
-use tracing::{instrument, trace};
+use tracing::{info, instrument, trace};
 
 const RDB_VERSION: u32 = 7;
 
@@ -61,9 +61,11 @@ const RDB_ENC_LZF: u8 = 3;
 // 保证函数的原子性
 static CRITICAL: Mutex<()> = Mutex::const_new(());
 
-#[instrument(level = "debug", skip(shared), err)]
+#[instrument(level = "info", skip(shared), err)]
 pub async fn save_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> {
     let _guard = CRITICAL.lock().await;
+
+    let now = tokio::time::Instant::now();
 
     let _delay_token = shared.post_office().delay_shutdown_token();
 
@@ -80,14 +82,21 @@ pub async fn save_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> 
     let rdb_data = encode_rdb(shared.db(), *enable_checksum).await;
     temp_file.write_all(&rdb_data).await?;
 
-    tokio::fs::rename(&path, &bak_path).await?;
+    if tokio::fs::try_exists(&path).await? {
+        tokio::fs::rename(&path, &bak_path).await?;
+    }
     tokio::fs::rename(&temp_path, &path).await?;
+
+    info!("save rdb elapsed={:?}", now.elapsed());
 
     Ok(())
 }
 
+#[instrument(level = "info", skip(shared), err)]
 pub async fn load_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> {
     let _guard = CRITICAL.lock().await;
+
+    let now = tokio::time::Instant::now();
 
     let _delay_token = shared.post_office().delay_shutdown_token();
 
@@ -104,9 +113,11 @@ pub async fn load_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> 
 
     decode_rdb(&mut rdb, shared.db(), *enable_checksum).await?;
 
+    info!("load rdb elapsed={:?}", now.elapsed());
     Ok(())
 }
 
+#[instrument(level = "debug", skip(db))]
 pub async fn encode_rdb(db: &Db, enable_checksum: bool) -> BytesMut {
     let mut buf = BytesMut::with_capacity(1024 * 8);
     buf.extend_from_slice(b"REDIS");
@@ -280,6 +291,7 @@ pub fn encode_length(buf: &mut BytesMut, len: u32, special_format: Option<u8>) {
     }
 }
 
+#[instrument(level = "debug", skip(rdb_data, db), err)]
 pub async fn decode_rdb(
     rdb_data: &mut BytesMut,
     db: &Db,

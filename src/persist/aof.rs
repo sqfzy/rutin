@@ -7,7 +7,7 @@ use crate::{
     shared::{Letter, Shared, AOF_ID, SET_MASTER_ID},
 };
 use bytes::BytesMut;
-use event_listener::listener;
+use event_listener::{listener, IntoNotification};
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, time::Duration};
 use tokio::{
@@ -21,9 +21,11 @@ use tracing::{info, instrument};
 // 保证函数的原子性
 static CRITICAL: Mutex<()> = Mutex::const_new(());
 
-#[instrument(level = "debug", skip(shared), err)]
+// #[instrument(level = "info", skip(shared), err)]
+// 通过tracing记录elapsed
+#[instrument(level = "info", skip(shared), err)]
 pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> {
-    #[instrument(level = "debug", skip(shared), err)]
+    #[instrument(level = "info", skip(shared), err)]
     async fn rewrite_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> {
         let now = Instant::now();
 
@@ -44,11 +46,13 @@ pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
         temp_file.write_all(&rdb_data).await?;
 
         // 将旧AOF文件备份
-        tokio::fs::rename(&path, &bak_path).await?;
+        if tokio::fs::try_exists(&path).await? {
+            tokio::fs::rename(&path, &bak_path).await?;
+        }
         // 将新AOF文件重命名为AOF文件
         tokio::fs::rename(&temp_path, &path).await?;
 
-        info!("AOF file rewrited, elapse: {:?}", now.elapsed());
+        info!("rewrite aof elapsed={:?}", now.elapsed());
 
         Ok(())
     }
@@ -79,6 +83,7 @@ pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
                     break;
                 }
                 Letter::Block { unblock_event } => {
+                    unblock_event.notify(1.additional());
                     listener!(unblock_event  => listener);
                     listener.await;
                 }
@@ -111,6 +116,7 @@ pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
                         break;
                     }
                     Letter::Block { unblock_event } => {
+                        unblock_event.notify(1.additional());
                         listener!(unblock_event  => listener);
                         listener.await;
                     }
@@ -143,6 +149,7 @@ pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
                     break;
                 }
                 Letter::Block { unblock_event } => {
+                    unblock_event.notify(1.additional());
                     listener!(unblock_event  => listener);
                     listener.await;
                 }
@@ -175,12 +182,11 @@ pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
     Ok(())
 }
 
-#[instrument(level = "debug", skip(shared), err)]
+#[instrument(level = "info", skip(shared), err)]
 pub async fn load_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> {
     let _guard = CRITICAL.lock().await;
 
     let now = Instant::now();
-    info!("Loading AOF file in `{}`...", aof_conf.file_path);
 
     let mut aof_file = tokio::fs::OpenOptions::new()
         .read(true)
@@ -201,8 +207,7 @@ pub async fn load_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
         dispatch(&mut cmd_frame, &mut handler).await?;
     }
 
-    info!("AOF file loaded, elapse: {:?}", now.elapsed());
-
+    info!("load aof elapsed={:?}", now.elapsed());
     Ok(())
 }
 

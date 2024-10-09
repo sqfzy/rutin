@@ -73,6 +73,7 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
         Ok(self)
     }
 
+    #[inline]
     pub fn visit(self, f: impl FnOnce(&ObjectValue) -> RutinResult<()>) -> RutinResult<Self> {
         if let StaticEntryRef::Occupied(e) = &self.inner {
             let obj = e.get();
@@ -93,7 +94,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     ///
     /// 如果对象不存在，对象为空或者对象已过期则返回RutinError::Null
     #[inline]
-    #[instrument(level = "debug", skip(self, f), err)]
     pub fn update1(
         mut self,
         f: impl FnOnce(&mut ObjectValue) -> RutinResult<()>,
@@ -111,7 +111,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     }
 
     #[inline]
-    #[instrument(level = "debug", skip(self, f), err)]
     pub fn update2<F: FnOnce(&mut ObjectValue) -> RutinResult<()>>(
         mut self,
         f: F,
@@ -135,7 +134,7 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     /// # Return:
     ///
     /// 返回一个新的[`ObjectEntryMut`]以便继续其它操作。
-    #[instrument(level = "debug", skip(self))]
+    #[inline]
     pub fn or_insert(self, value: Object) -> Self
     where
         Key: From<&'b Q>,
@@ -150,7 +149,7 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, value))]
+    #[inline]
     pub fn or_insert_with(self, value: impl FnOnce() -> Object) -> Self
     where
         Key: From<&'b Q>,
@@ -165,7 +164,7 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
         }
     }
 
-    #[instrument(level = "debug", skip(self, value))]
+    #[inline]
     pub fn or_try_insert_with(
         self,
         value: impl FnOnce() -> RutinResult<Object>,
@@ -189,7 +188,7 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     /// # Return:
     ///
     /// 返回一个旧对象和[`ObjectEntryMut`]以便重复操作。
-    #[instrument(level = "debug", skip(self))]
+    #[inline]
     pub fn insert1(mut self, object: Object) -> Self
     where
         Key: From<&'b Q>,
@@ -211,7 +210,7 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[inline]
     pub fn insert2(mut self, object: Object) -> (Self, Option<Object>)
     where
         Key: From<&'b Q>,
@@ -237,7 +236,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     ///
     /// 移除对象。如果存在旧对象，则会触发旧对象中的**Track**事件
     #[inline]
-    #[instrument(level = "debug", skip(self), ret)]
     pub fn remove(self) -> Option<(Key, Object)> {
         match self.inner {
             StaticEntryRef::Occupied(e) => {
@@ -273,8 +271,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     /// # Desc:
     ///
     /// 如果对象存在且不为空，则添加监听事件
-    #[inline]
-    #[instrument(level = "debug", skip(self))]
     pub fn add_lock_event(mut self) -> Self {
         match &mut self.inner {
             StaticEntryRef::Occupied(e) => {
@@ -294,8 +290,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
     ///
     /// 如果创建了一个空对象，但监听事件长时间（或永远）不会被触发，则会浪费
     /// 内存
-    #[inline]
-    #[instrument(level = "debug", skip(self, event))]
     pub fn add_read_event(mut self, event: ReadEvent) -> Self {
         match self.inner {
             StaticEntryRef::Occupied(ref mut e) => {
@@ -308,8 +302,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
         }
     }
 
-    #[inline]
-    #[instrument(level = "debug", skip(self, event))]
     pub fn add_write_event(mut self, event: WriteEvent) -> Self {
         match self.inner {
             StaticEntryRef::Occupied(ref mut e) => {
@@ -322,8 +314,6 @@ impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
         }
     }
 
-    #[inline]
-    #[instrument(level = "debug", skip(self, f, event))]
     pub fn add_write_event_force(mut self, f: impl FnOnce() -> Object, event: WriteEvent) -> Self
     where
         Key: From<&'b Q>,

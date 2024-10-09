@@ -14,7 +14,7 @@ use std::{
     iter::Iterator,
     num::NonZero,
 };
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument};
 
 pub trait CommandFlag {
     const NAME: &'static str;
@@ -216,7 +216,7 @@ pub async fn dispatch(
     match res {
         Ok(res) => Ok(res),
         Err(e) => {
-            warn!("fail to dispatch cmd `{:?}`", cmd_frame);
+            debug!("fail to dispatch cmd `{:?}`", cmd_frame);
             let frame = e.try_into()?; // 尝试将错误转换为RESP3
             Ok(Some(frame))
         }

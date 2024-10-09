@@ -10,10 +10,10 @@ use crate::{
     Id,
 };
 use bytes::BytesMut;
-use event_listener::{listener, Event, EventListener};
+use event_listener::{listener, Event, EventListener, IntoNotification};
 use futures::pin_mut;
 use std::{sync::Arc, time::Duration};
-use tracing::{error, instrument};
+use tracing::{debug, instrument};
 
 pub struct Handler<S: AsyncStream> {
     pub shared: Shared,
@@ -36,9 +36,12 @@ impl<S: AsyncStream> Handler<S> {
     }
 
     #[inline]
-    #[instrument(level = "debug", skip(self), fields(client_id), err)]
+    #[instrument(level = "debug", skip(self), fields(client_id=%self.context.id), err)]
     pub async fn run(mut self) -> RutinResult<()> {
+        debug!("client connected");
+
         let res = ID.scope(self.context.id, async {
+
             let inbox = self.context.mailbox.inbox.clone();
             let inbox_fut = inbox.recv_async();
             pin_mut!(inbox_fut);
@@ -59,6 +62,7 @@ impl<S: AsyncStream> Handler<S> {
 
                             }
                             Letter::Block { unblock_event } => {
+                                unblock_event.notify(1.additional());
                                 listener!(unblock_event  => listener);
                                 listener.await;
                             }
@@ -96,9 +100,7 @@ impl<S: AsyncStream> Handler<S> {
         })
         .await;
 
-        if res.is_err() {
-            eprintln!("reader_buf={:?}", self.conn.reader_buf.get_ref());
-        }
+        debug!("client disconnected");
 
         res
     }
@@ -106,11 +108,14 @@ impl<S: AsyncStream> Handler<S> {
     // 1. 从节点向主节点不会返回响应，除非是REPLCONF GETACK命令
     // 2. 从节点每秒向主节点发送REPLCONF ACK <offset>命令，以便主节点知道当前同步进度
     // 3. offset记录了主节点发来的所有命令的字节数(不仅是写命令)
+    #[instrument(level = "debug", skip(self, offset), fields(client_id=%self.context.id), err)]
     pub async fn run_replica(
         mut self,
         mut offset: tokio::sync::MutexGuard<'_, u64>,
     ) -> RutinResult<()> {
-        ID.scope(self.context.id, async {
+        debug!("connected to master");
+
+        let res = ID.scope(self.context.id, async {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
 
             let mut buf = itoa::Buffer::new();
@@ -132,9 +137,10 @@ impl<S: AsyncStream> Handler<S> {
                     letter = &mut inbox_fut => {
                         match letter.unwrap() {
                             Letter::Shutdown => {
-                                break;
+                                return Ok(());
                             }
                             Letter::Block { unblock_event } => {
+                                unblock_event.notify(1.additional());
                                 listener!(unblock_event  => listener);
                                 listener.await;
                             }
@@ -145,7 +151,7 @@ impl<S: AsyncStream> Handler<S> {
                             Letter::Wcmd(_) | Letter::Psync {..} | Letter::ModifyShared(..) => {}
                         }
 
-                        inbox_fut .set(inbox.recv_async());
+                        inbox_fut.set(inbox.recv_async());
                     }
                     // 等待master请求(一般为master传播的写命令)
                     res = self.conn.read_frames() => {
@@ -173,25 +179,19 @@ impl<S: AsyncStream> Handler<S> {
 
                         self.conn.write_frame(&resp3).await?;
                         // 等待master响应"+OK\r\n"
-                        let resp = self.conn.read_frame_force().await?;
-                        if resp.is_simple_error() {
-                            error!("REPLCONF ACK command get error: {}", resp);
-                        }
+                        // let resp = self.conn.read_frame_force().await?;
+                        // if resp.is_simple_error() {
+                        //     error!("replica send REPLCONF ACK command and get error: {}", resp);
+                        // }
                     }
                 };
             }
-
-            // let bg_tasks = &mut self.context.background_tasks;
-            // if !bg_tasks.is_empty() {
-            //     // 移除已经完成的后台任务
-            //     bg_tasks.retain(|task| {
-            //         !task.is_finished()
-            //     });
-            // }
-
-            Ok(())
         })
-        .await
+        .await;
+
+        debug!("disconnected from master");
+
+        res
     }
 
     #[inline]

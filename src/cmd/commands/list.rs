@@ -35,7 +35,12 @@ pub struct BLMove {
 }
 
 impl CmdExecutor for BLMove {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -209,7 +214,12 @@ pub struct BLPop {
 }
 
 impl CmdExecutor for BLPop {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -352,7 +362,12 @@ pub struct LPos {
 }
 
 impl CmdExecutor for LPos {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -478,7 +493,12 @@ pub struct LLen {
 }
 
 impl CmdExecutor for LLen {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -525,7 +545,12 @@ pub struct LPop {
 }
 
 impl CmdExecutor for LPop {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -597,7 +622,12 @@ pub struct LPush {
 }
 
 impl CmdExecutor for LPush {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -656,7 +686,12 @@ impl CmdExecutor for LPush {
 // }
 //
 // impl CmdExecutor for NBLPop {
-//     #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+// #[instrument(
+//     level = "debug",
+//     skip(handler),
+//     ret(level = "debug"),
+//     err(level = "debug")
+// )]
 //     async fn execute(
 //         self,
 //         handler: &mut Handler<impl AsyncStream>,

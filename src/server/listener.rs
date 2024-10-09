@@ -8,7 +8,6 @@ use backon::Retryable;
 use std::sync::Arc;
 use tokio::{net::TcpListener, sync::Semaphore};
 use tokio_rustls::TlsAcceptor;
-use tracing::error;
 
 pub struct Listener {
     pub shared: Shared,

@@ -26,7 +26,12 @@ pub struct Append {
 }
 
 impl CmdExecutor for Append {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -79,7 +84,12 @@ pub struct Decr {
 }
 
 impl CmdExecutor for Decr {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -123,7 +133,12 @@ pub struct DecrBy {
 }
 
 impl CmdExecutor for DecrBy {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -171,7 +186,12 @@ pub struct Get {
 
 impl CmdExecutor for Get {
     #[inline]
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -227,7 +247,12 @@ pub struct GetRange {
 }
 
 impl CmdExecutor for GetRange {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -292,7 +317,12 @@ pub struct GetSet {
 }
 
 impl CmdExecutor for GetSet {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -339,7 +369,12 @@ pub struct Incr {
 }
 
 impl CmdExecutor for Incr {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -384,7 +419,12 @@ pub struct IncrBy {
 }
 
 impl CmdExecutor for IncrBy {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -431,7 +471,12 @@ pub struct MGet {
 }
 
 impl CmdExecutor for MGet {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -495,7 +540,12 @@ pub struct MSet {
 }
 
 impl CmdExecutor for MSet {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -539,7 +589,12 @@ pub struct MSetNx {
 }
 
 impl CmdExecutor for MSetNx {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -604,7 +659,12 @@ enum SetOpt {
 
 impl CmdExecutor for Set {
     #[inline]
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -793,7 +853,12 @@ pub struct SetEx {
 }
 
 impl CmdExecutor for SetEx {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -839,7 +904,12 @@ pub struct SetNx {
 }
 
 impl CmdExecutor for SetNx {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -883,7 +953,12 @@ pub struct StrLen {
 }
 
 impl CmdExecutor for StrLen {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

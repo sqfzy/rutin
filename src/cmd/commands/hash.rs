@@ -17,7 +17,12 @@ pub struct HDel {
 }
 
 impl CmdExecutor for HDel {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -68,7 +73,12 @@ pub struct HExists {
 }
 
 impl CmdExecutor for HExists {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -115,7 +125,12 @@ pub struct HGet {
 }
 
 impl CmdExecutor for HGet {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -161,7 +176,12 @@ pub struct HSet {
 }
 
 impl CmdExecutor for HSet {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

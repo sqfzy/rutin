@@ -2,7 +2,7 @@
 host = "127.0.0.1"
 port = 6379                    # 服务器端口
 expire_check_interval_secs = 3 # 检查过期键的频率，每次随机检查一个键，单位为秒
-log_level = "off"              # 日志级别
+log_level = "info"             # 日志级别
 max_connections = 256          # 最大连接数
 # max_batch = 1024               # 最大批量操作数
 
@@ -21,14 +21,13 @@ max_connections = 256          # 最大连接数
 # replicaof = "127.0.0.1:6380" # 主服务器地址
 read_only = true
 
-# [rdb]
-# file_path = "dump.rdb" # RDB文件路径
-#
-# # RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
-# # 每seconds时间内有changes个键发生变化，则触发RDB快照
+[rdb]
+file_path = "dump.rdb" # RDB文件路径
+
+# RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
+# 每seconds时间内有changes个键发生变化，则触发RDB快照
 # interval = { seconds = 1, changes = 0 }
-# version = 6                             # RDB版本
-# enable_checksum = false                 # 是否开启RDB校验和
+enable_checksum = false # 是否开启RDB校验和
 #
 # [aof]
 # use_rdb_preamble = true        # 是否在AOF文件开头加入RDB版本信息

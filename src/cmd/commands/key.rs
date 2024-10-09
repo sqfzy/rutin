@@ -50,7 +50,12 @@ pub struct Del {
 }
 
 impl CmdExecutor for Del {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -96,7 +101,12 @@ pub struct Dump {
 }
 
 impl CmdExecutor for Dump {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -145,7 +155,12 @@ pub struct Exists {
 }
 
 impl CmdExecutor for Exists {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -190,7 +205,12 @@ pub struct Expire {
 }
 
 impl CmdExecutor for Expire {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -271,7 +291,12 @@ pub struct ExpireAt {
 }
 
 impl CmdExecutor for ExpireAt {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -360,7 +385,12 @@ pub struct ExpireTime {
 }
 
 impl CmdExecutor for ExpireTime {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -405,7 +435,12 @@ pub struct Keys {
 }
 
 impl CmdExecutor for Keys {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -448,71 +483,6 @@ impl CmdExecutor for Keys {
     }
 }
 
-/// # Reply:
-///
-/// **Array reply:** a list of keys matching pattern.
-// // TODO: 也许应该返回Resp3::Push?
-// #[derive(Debug)]
-// pub struct NBKeys {
-//     pattern: StaticBytesMut,
-//     redirect: Id, // 0表示不重定向
-// }
-//
-// impl CmdExecutor for NBKeys {
-//     #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
-//     async fn execute(
-//         self,
-//         handler: &mut Handler<impl AsyncStream>,
-//     ) -> RutinResult<Option<CheapResp3>> {
-//         let re = regex::bytes::Regex::new(std::str::from_utf8(&self.pattern)?)?;
-//
-//         let outbox = if self.redirect != 0 {
-//             &handler
-//                 .shared
-//                 .post_office()
-//                 .get_outbox(self.redirect)
-//                 .ok_or(RutinError::from("ERR The client ID does not exist"))?
-//         } else {
-//             &handler.context.outbox
-//         };
-//
-//         tokio::task::block_in_place(|| {
-//             let db = handler.shared.db();
-//
-//             let matched_keys = db
-//                 .entries
-//                 .iter()
-//                 .filter_map(|entry| {
-//                     std::str::from_utf8(&entry.key()).ok().and_then(|key| {
-//                         re.is_match(key)
-//                             .then(|| CheapResp3::new_blob_string(entry.key().clone()))
-//                     })
-//                 })
-//                 .collect::<Vec<CheapResp3>>();
-//
-//             let _ = outbox.send(Letter::Resp3(CheapResp3::new_array(matched_keys)));
-//         });
-//
-//         Ok(None)
-//     }
-//
-//     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
-//         if args.len() != 2 {
-//             return Err(RutinError::WrongArgNum);
-//         }
-//
-//         let pattern = args.next().unwrap();
-//         if ac.deny_reading_or_writing_key(&pattern, Self::CATS_FLAG) {
-//             return Err(RutinError::NoPermission);
-//         }
-//
-//         Ok(NBKeys {
-//             pattern,
-//             redirect: atoi::<Id>(args.next().unwrap())?,
-//         })
-//     }
-// }
-
 /// 移除 key 的过期时间，key 将持久保持。
 /// # Reply:
 ///
@@ -522,9 +492,13 @@ impl CmdExecutor for Keys {
 pub struct Persist {
     pub key: StaticBytes,
 }
-
 impl CmdExecutor for Persist {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -567,7 +541,12 @@ pub struct Pttl {
 }
 
 impl CmdExecutor for Pttl {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -613,7 +592,12 @@ pub struct Ttl {
 }
 
 impl CmdExecutor for Ttl {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -657,7 +641,12 @@ pub struct Type {
 }
 
 impl CmdExecutor for Type {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

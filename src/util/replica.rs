@@ -12,7 +12,7 @@ use bytes::Buf;
 use std::{sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::Mutex};
 use tokio_util::time::FutureExt as _;
-use tracing::{error, instrument};
+use tracing::instrument;
 
 /// ## set_server_to_replica意味着：
 ///
@@ -118,7 +118,7 @@ pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> R
     }
 
     // 获取旧的offset
-    let offset = OFFSET.lock().await;
+    let mut offset = OFFSET.lock().await;
 
     // 发送PSYNC命令
     if run_id == "?" {
@@ -160,53 +160,41 @@ pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> R
     }
 
     /* step3: 进行同步 */
-    let mut offset = OFFSET.lock().await;
     *offset = 0;
 
-    loop {
-        let resp = handle_master.conn.read_frame_force().await.unwrap();
-        match resp {
-            // 如果响应为+FULLRESYNC run_id offset，执行全量同步
-            // 如果响应为+CONTINUE，执行增量同步(什么都不做，等之后向主节点发送REPLCONF ACK
-            // <offset>时会进行同步)
-            Resp3::SimpleString { inner, .. } => {
-                let mut splits = inner.split_whitespace().map(|s| s.to_string());
+    let resp = handle_master.conn.read_frame_force().await.unwrap();
+    match resp {
+        // 如果响应为+FULLRESYNC run_id offset，执行全量同步
+        // 如果响应为+CONTINUE，执行增量同步
+        Resp3::SimpleString { inner, .. } => {
+            let mut splits = inner.split_whitespace().map(|s| s.to_string());
 
-                if let Some(fullresync) = splits.next()
-                    && fullresync == "FULLRESYNC"
-                {
-                    let run_id = splits.next().unwrap();
-                    let master_offset = splits.next().unwrap().parse::<u64>().unwrap();
-
-                    {
-                        let mut master_info = replica_conf.master_info.lock().unwrap();
-                        master_info.as_mut().unwrap().run_id = run_id.into();
-
-                        *offset = master_offset;
-                    }
-
-                    full_sync(&mut handle_master).await.unwrap();
-                }
-            }
-            // 如果响应为ping命令，则代表同步成功
-            Resp3::Array { inner, .. }
-                if inner
-                    .back()
-                    .is_some_and(|resp3| resp3.to_string().eq_ignore_ascii_case("PING")) =>
+            if let Some(fullresync) = splits.next()
+                && fullresync == "FULLRESYNC"
             {
-                break;
+                let run_id = splits.next().unwrap();
+                let master_offset = splits.next().unwrap().parse::<u64>().unwrap();
+
+                {
+                    let mut master_info = replica_conf.master_info.lock().unwrap();
+                    master_info.as_mut().unwrap().run_id = run_id.into();
+
+                    *offset = master_offset;
+                }
+
+                full_sync(&mut handle_master).await.unwrap();
             }
-            _ => panic!(
-                "expect +FULLRESYNC <run_id> <offset>, +CONTINUE or ping, but got {:?}",
+        }
+        _ => {
+            return Err(RutinError::new_server_error(format!(
+                "expect +FULLRESYNC <run_id> <offset>, +CONTINUE, but got {:?}",
                 resp
-            ),
+            )))
         }
     }
 
     /* step4: 接收并处理传播的写命令 */
-    if let Err(e) = handle_master.run_replica(offset).await {
-        error!(cause = %e, "replica run error");
-    }
+    handle_master.run_replica(offset).await?;
 
     Ok(())
 }

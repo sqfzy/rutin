@@ -42,7 +42,12 @@ pub struct Ping {
 }
 
 impl CmdExecutor for Ping {
-    #[instrument(level = "debug", skip(_handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(_handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         _handler: &mut Handler<impl AsyncStream>,
@@ -77,7 +82,12 @@ pub struct Echo {
 }
 
 impl CmdExecutor for Echo {
-    #[instrument(level = "debug", skip(_handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(_handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         _handler: &mut Handler<impl AsyncStream>,
@@ -105,7 +115,12 @@ pub struct Auth {
 }
 
 impl CmdExecutor for Auth {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,
@@ -162,7 +177,12 @@ pub struct ClientTracking {
 }
 
 impl CmdExecutor for ClientTracking {
-    #[instrument(level = "debug", skip(handler), ret, err(level = "warn"))]
+    #[instrument(
+        level = "debug",
+        skip(handler),
+        ret(level = "debug"),
+        err(level = "debug")
+    )]
     async fn execute(
         self,
         handler: &mut Handler<impl AsyncStream>,

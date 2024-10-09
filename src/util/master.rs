@@ -8,7 +8,7 @@ use crate::{
     shared::{Letter, Shared, SET_MASTER_ID},
 };
 use bytes::{Buf, BytesMut};
-use event_listener::listener;
+use event_listener::{listener, IntoNotification};
 use futures::{future::select_all, FutureExt};
 use std::{future::pending, sync::Arc, time::Duration};
 use tokio::{net::TcpStream, time::error::Elapsed};
@@ -64,7 +64,7 @@ impl BackLog {
 
 // 执行该函数后，服务应满足：
 // 1. 不存在SET_REPLICA任务
-// 2. post_office中存在SET_MASTER_ID mailbox以及set_master_outbox
+// 2. post_office中存在SET_MASTER_ID mailbox以及set_master_outbox字段
 // 3. 服务会定期向从节点发送PING命令，以便从节点知道主节点是否存活
 #[instrument(level = "debug", skip(shared), err)]
 pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> RutinResult<()> {
@@ -104,6 +104,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                         return Ok(());
                     }
                     Letter::Block { unblock_event } => {
+                        unblock_event.notify(1.additional());
                         listener!(unblock_event  => listener);
                         listener.await;
                     }
@@ -113,17 +114,14 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                         }
 
                         for handler in replica_handlers.iter_mut() {
-                            dbg!(&wcmd);
                             handler.conn.write_all(&wcmd).await?;
                             handler.conn.write_all(&wcmd).await?;
                         }
 
                         back_log.push(wcmd);
                     }
+                    // 执行Psync命令时，要求db与back_log的状态保持一致，并且db不会被修改
                     Letter::Psync { mut handle_replica, repl_id, repl_offset } => {
-                        let run_id = conf.server.run_id.clone();
-                        let master_offset = back_log.offset;
-
                         // 设置ac
                         handle_replica.context.ac = Arc::new(get_handle_replica_ac());
 
@@ -138,6 +136,42 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                                 }
                             }
                         }
+
+                        // 阻塞所有任务，防止Db被修改，防止送来更多的Wcmd
+                        let _guard = post_office.send_block_all(SET_MASTER_ID);
+
+                        // 有可能接收到Psync后仍有Wcmd在其后，这些Wcmd已经作用于Db，
+                        // 因此back_log需要反应这一点
+                        let mut letter_buf = vec![];
+                        while let Ok(letter) = mailbox.inbox.try_recv() {
+                            match letter {
+                                // 接收剩余的wcmd，保持back_log与db的状态一致
+                                Letter::Wcmd(wcmd) => {
+                                    if replica_handlers.is_empty() {
+                                        continue;
+                                    }
+
+                                    for handler in replica_handlers.iter_mut() {
+                                        handler.conn.write_all(&wcmd).await?;
+                                        handler.conn.write_all(&wcmd).await?;
+                                    }
+
+                                    back_log.push(wcmd);
+                                }
+                                letter => {
+                                    letter_buf.push(letter);
+                                }
+                            }
+                        }
+
+                        // 重新放回非wcmd的letter
+                        for letter in letter_buf {
+                            mailbox.send(letter);
+                        }
+
+                        let run_id = conf.server.run_id.clone();
+                        let master_offset = back_log.offset;
+
 
                         if repl_id == run_id && let Some(gap_data) = back_log.get_gap_data(repl_offset) {
                             // 如果id匹配且BackLog中有足够的数据，则进行增量复制
@@ -171,28 +205,17 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                                 )))
                                 .await?;
 
-                            // 全量复制可能非常耗时，因此放到新线程中执行，执行完毕后
-                            // 再次发送Psync请求，直到可以进行增量复制。为了避免重复
-                            // 执行全量复制，BackLog的大小应该足够大
-                            let handle = tokio::runtime::Handle::current();
-                            tokio::task::spawn_blocking(move || {
-                                handle.block_on(async move {
-                                    full_sync(&mut handle_replica).await.unwrap();
+                            full_sync(&mut handle_replica).await.unwrap();
 
-                                    post_office
-                                        .get_outbox(SET_MASTER_ID)
-                                        .unwrap()
-                                        .send(Letter::Psync {
-                                            handle_replica,
-                                            repl_id: run_id,
-                                            repl_offset: master_offset,
-                                        })
-                                        .ok();
-                                });
-                            });
+                            replica_handlers.push(handle_replica);
+
+                            // 丢弃之前的futs，重新构建futs，futs一定不为空
+                            futs = select_all(
+                                unsafe { &mut *replica_handlers_ptr }
+                                    .iter_mut()
+                                    .map(|handler| handler.conn.read_frame().timeout(timeout).boxed_local()),
+                            );
                         }
-
-
                     }
                     Letter::Resp3(_) | Letter::ModifyShared(..) => {}
                 }

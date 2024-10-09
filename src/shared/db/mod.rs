@@ -95,7 +95,7 @@ impl Db {
     // # Error:
     // 对象不存在
     // 对象已过期
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "trace", skip(self), err(level = "trace"))]
     pub async fn get_object<Q>(&self, key: &Q) -> RutinResult<Ref<'_, Key, Object>>
     where
         Q: std::hash::Hash + Eq + ?Sized + Debug,
@@ -129,7 +129,7 @@ impl Db {
     // OOM
     // 对象不存在
     // 对象已过期
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "trace", skip(self), err(level = "trace"))]
     pub async fn get_object_mut<Q>(&self, key: &Q) -> RutinResult<RefMut<'_, Key, Object>>
     where
         Q: std::hash::Hash + Eq + Debug,
@@ -159,13 +159,12 @@ impl Db {
         Err(RutinError::Null)
     }
     // #[inline]
-    // #[instrument(level = "debug", skip(self))]
+    // #[instrument(level = "trace", skip(self))]
     // async fn update_object_expired(&self, key: &[u8], ex: Instant) -> RutinResult<()> {
     //     *self.object_entry(key).await?.expire_mut() = ex;
     //     Ok(())
     // }
 
-    #[instrument(level = "debug", skip(self))]
     async fn object_entry_unchecked_oom<'a, 'b, Q>(&'a self, key: &'b Q) -> ObjectEntry<'a, 'b, Q>
     where
         Q: std::hash::Hash + Equivalent<Key> + ?Sized + Debug,
@@ -205,7 +204,7 @@ impl Db {
     }
 
     #[inline]
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "trace", skip(self), err(level = "trace"))]
     pub async fn object_entry<'a, 'b, Q>(
         &'a self,
         key: &'b Q,
@@ -218,7 +217,7 @@ impl Db {
     }
 
     /// 检验对象是否合法存在。如果对象不存在，对象为空或者对象已过期则返回false，否则返回true
-    #[instrument(level = "debug", skip(self), ret)]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     pub async fn contains_object<Q>(&self, key: &Q) -> bool
     where
         Q: std::hash::Hash + Eq + ?Sized + Debug,
@@ -234,7 +233,7 @@ impl Db {
     }
 
     #[inline]
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "trace", skip(self), err(level = "trace"))]
     pub async fn get_object_expired<Q>(&self, key: &Q) -> RutinResult<Instant>
     where
         Q: std::hash::Hash + Eq + ?Sized + Debug,
@@ -252,7 +251,7 @@ impl Db {
     /// 对象不存在
     /// 对象已过期
     /// f返回错误
-    #[instrument(level = "debug", skip(self, f))]
+    #[instrument(level = "trace", skip(self, f), err(level = "trace"))]
     pub async fn visit_object<Q>(
         &self,
         key: &Q,
@@ -272,7 +271,7 @@ impl Db {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self, f), err)]
+    #[instrument(level = "trace", skip(self, f), err(level = "trace"))]
     pub async fn update_object<'b, Q>(
         &self,
         key: &'b Q,
@@ -287,6 +286,7 @@ impl Db {
     }
 
     #[inline]
+    #[instrument(level = "trace", skip(self), err(level = "trace"))]
     pub async fn insert_object<'b, Q>(
         &self,
         key: &'b Q,
@@ -300,7 +300,7 @@ impl Db {
     }
 
     #[inline]
-    #[instrument(level = "debug", skip(self), ret)]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     pub async fn remove_object<'b, Q>(&self, key: &'b Q) -> Option<(Key, Object)>
     where
         Q: std::hash::Hash + ?Sized + Equivalent<Key> + Debug,
@@ -309,7 +309,7 @@ impl Db {
     }
 
     // #[inline]
-    // #[instrument(level = "debug", skip(self), ret)]
+    // #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     // pub async fn remove_object<'a, 'b, Q>(&'a self, key: &'b Q) -> Option<(Key, Object)>
     // where
     //     Q: std::hash::Hash + equivalent::Equivalent<Key> + Debug,
@@ -318,7 +318,7 @@ impl Db {
     //     self.entry_unchecked_oom(key).await.remove()
     // }
 
-    #[instrument(level = "debug", skip(self, f1, f2), err)]
+    #[instrument(level = "trace", skip(self, f1, f2), err(level = "trace"))]
     pub async fn update_object_force<'a, 'b, Q>(
         &'a self,
         key: &'b Q,
@@ -340,19 +340,19 @@ impl Db {
 
 impl Db {
     // 获取该频道的所有监听者
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(level = "trace", skip(self), ret(level = "trace"))]
     pub fn get_channel_all_listener(&self, topic: &[u8]) -> Option<Vec<Outbox>> {
         self.pub_sub.get(topic).map(|listener| listener.clone())
     }
 
     // 向频道添加一个监听者
-    #[instrument(level = "debug", skip(self, listener))]
+    #[instrument(level = "trace", skip(self, listener))]
     pub fn add_channel_listener(&self, topic: Key, listener: Outbox) {
         self.pub_sub.entry(topic).or_default().push(listener);
     }
 
     // 移除频道的一个监听者
-    #[instrument(level = "debug", skip(self, listener))]
+    #[instrument(level = "trace", skip(self, listener), ret(level = "trace"))]
     pub fn remove_channel_listener(&self, topic: &[u8], listener: &Outbox) -> Option<Outbox> {
         if let Some(mut pubs) = self.pub_sub.get_mut(topic) {
             // 如果找到匹配的listener，则移除

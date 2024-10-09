@@ -3,9 +3,10 @@
 /benches/flamegraph
 /temp
 /ca
-env/
+/logs/*
 
 dump.rdb
+dump.rdb.bak
 appendonly.aof
 appendonly.aof.bak
 flamegraph.svg

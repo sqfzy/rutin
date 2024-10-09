@@ -10,7 +10,7 @@
 #![feature(async_closure)]
 #![feature(core_intrinsics)]
 #![feature(vec_pop_if)]
-// #![feature(option_get_or_insert_default)]
+#![feature(option_get_or_insert_default)]
 // #![feature(closure_lifetime_binder)]
 // #![feature(specialization)]
 

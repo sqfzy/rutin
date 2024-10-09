@@ -10,7 +10,7 @@ use std::{fmt::Debug, sync::Arc};
 use crate::{conf::Conf, frame::CheapResp3, server::Handler, shared::SharedInner, Id};
 use bytes::{Bytes, BytesMut};
 use dashmap::{mapref::one::Ref, DashMap, Entry};
-use event_listener::Event;
+use event_listener::{listener, Event};
 use flume::{Receiver, Sender};
 use tokio::{net::TcpStream, time::Duration};
 use tracing::instrument;
@@ -234,27 +234,50 @@ impl PostOffice {
     #[instrument(level = "debug", skip(self))]
     pub async fn send_block(&self, id: Id) -> BlockGuard {
         let event = Arc::new(Event::new());
+        {
+            listener!(event => listener);
 
-        // 向指定的task发送
-        if let Some(outbox) = self.get_outbox(id) {
-            outbox
-                .send_async(Letter::Block {
-                    unblock_event: event.clone(),
-                })
-                .await
-                .ok();
+            // 向指定的task发送
+            if let Some(outbox) = self.get_outbox(id) {
+                outbox
+                    .send_async(Letter::Block {
+                        unblock_event: event.clone(),
+                    })
+                    .await
+                    .ok();
+            }
+
+            // 等待task返回响应，证明已经阻塞
+            listener.await;
         }
 
         BlockGuard(event)
     }
 
+    // send_block_all执行之后，Shared不再被访问
     #[instrument(level = "debug", skip(self))]
     pub async fn send_block_all(&self, src_id: Id) -> BlockGuard {
         let event = Arc::new(Event::new());
 
+        // 先阻塞主任务，避免有新的任务加入
+        {
+            listener!(event => listener);
+            if let Some(outbox) = self.get_outbox(MAIN_ID) {
+                outbox
+                    .send_async(Letter::Block {
+                        unblock_event: event.clone(),
+                    })
+                    .await
+                    .ok();
+            }
+            listener.await;
+        }
+
+        let mut count = 0;
         // 向除自己以外的task发送
         for entry in self.inner.iter() {
-            if *entry.key() == src_id {
+            let key = *entry.key();
+            if key == src_id || key == MAIN_ID {
                 continue;
             }
 
@@ -265,6 +288,14 @@ impl PostOffice {
                 })
                 .await
                 .ok();
+
+            count += 1;
+        }
+
+        // 等待所有task返回响应，证明已经阻塞
+        for _ in 0..count {
+            listener!(event => listener);
+            listener.await;
         }
 
         BlockGuard(event)

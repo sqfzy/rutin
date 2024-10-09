@@ -3,13 +3,14 @@ mod handler;
 mod listener;
 
 pub use connection::*;
-use event_listener::listener;
+use event_listener::{listener, IntoNotification};
 use futures::pin_mut;
 pub use handler::*;
 pub use listener::*;
 
 use bytes::BytesMut;
 use sysinfo::{ProcessRefreshKind, System};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 use crate::{
     persist::{aof::load_aof, rdb::load_rdb},
@@ -35,7 +36,7 @@ use tokio::{
     task_local,
     time::{interval, Instant},
 };
-use tracing::error;
+use tracing::{error, info, level_filters::LevelFilter};
 
 #[cfg(not(feature = "test_util"))]
 pub static SHARED: LazyLock<Shared> = LazyLock::new(Shared::new);
@@ -96,6 +97,9 @@ pub fn using_local_buf(f: impl FnOnce(&mut BytesMut)) -> BytesMut {
 #[inline]
 pub async fn run() {
     let shared = *SHARED;
+
+    init_log(shared);
+
     let post_office = shared.post_office();
 
     let mut mailbox = post_office.register_special_mailbox(MAIN_ID);
@@ -118,11 +122,13 @@ pub async fn run() {
                         f(unsafe { shared.inner_mut() });
 
                         mailbox = post_office.register_special_mailbox(MAIN_ID);
+                        // drop旧server，保存rdb，新建server
                         server = Listener::new(shared).await;
 
                         init_server(&mut server).await.unwrap();
                     }
                     Letter::Block { unblock_event } => {
+                        unblock_event.notify(1.additional());
                         listener!(unblock_event => listener);
                         listener.await;
                     }
@@ -143,6 +149,28 @@ pub async fn run() {
     shared.wait_shutdown_complete().await;
 }
 
+pub fn init_log(shared: Shared) {
+    let level = tracing::Level::from_str(shared.conf().server.log_level.as_ref())
+        .expect("invalid log level");
+
+    let logfile = tracing_appender::rolling::hourly("logs", "rutin.log");
+    let file_layer = fmt::layer()
+        .with_writer(logfile)
+        .with_ansi(false) // 文件日志不使用 ANSI
+        .with_filter(LevelFilter::from_level(level));
+
+    let stdout_layer = fmt::layer()
+        .pretty()
+        .with_writer(std::io::stdout)
+        .with_thread_ids(true)
+        .with_filter(LevelFilter::from_level(level));
+
+    tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(file_layer)
+        .init();
+}
+
 pub async fn init_server(server: &mut Listener) -> anyhow::Result<()> {
     let shared = server.shared;
     let post_office = shared.post_office();
@@ -155,22 +183,15 @@ pub async fn init_server(server: &mut Listener) -> anyhow::Result<()> {
             _ = mailbox.recv_async() => {}
             res = tokio::signal::ctrl_c() => {
                 if let Err(e) = res {
-                    eprintln!("Failed to wait for CTRL+C: {}", e);
+                    error!("failed to wait for CTRL+C: {}", e);
                     std::process::exit(1);
                 } else {
-                    eprintln!("\nShutting down server...");
+                    info!("shutting down server...");
                     post_office.send_shutdown_server().await;
                 }
             }
         }
     });
-
-    if let Ok(level) = tracing::Level::from_str(shared.conf().server.log_level.as_ref()) {
-        tracing_subscriber::fmt()
-            .pretty()
-            .with_max_level(level)
-            .init();
-    }
 
     /*******************/
     /* 是否加载rdb文件 */
@@ -273,7 +294,11 @@ pub async fn init_server(server: &mut Listener) -> anyhow::Result<()> {
                 _ = interval.tick() => {}
             };
 
-            system.refresh_processes_specifics(sysinfo::ProcessesToUpdate::Some(&[pid]), kind);
+            system.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                false,
+                kind,
+            );
             let new_used_mem = system.process(pid).unwrap().memory();
             USED_MEMORY.store(new_used_mem, Ordering::Relaxed);
         }
