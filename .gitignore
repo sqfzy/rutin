@@ -1,8 +1,8 @@
 /target
-/benches/perf/*
-/benches/flamegraph
+/benches/compare_redis/venv
+/benches/compare_redis/__pycache__
 /temp
-/ca
+/ca/*
 /logs/*
 
 dump.rdb

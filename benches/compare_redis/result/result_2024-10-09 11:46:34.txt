@@ -1,0 +1,2 @@
+
+Benchmark: GET command, varying client sessions, measuring throughput and latency

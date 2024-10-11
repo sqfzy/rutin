@@ -32,7 +32,7 @@ const LOCK_EVENT_FLAG: u8 = 0b0000_0100;
 
 #[derive(Default, Debug)]
 pub struct Events {
-    // 使用tinyvec
+    // TODO: 使用tinyvec
     inner: Vec<Event>,
     // 是否存在读事件，是否存在写事件，是否存在锁事件
     flags: AtomicU8,
