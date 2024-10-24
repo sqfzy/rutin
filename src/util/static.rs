@@ -1,12 +1,33 @@
-use crate::{
-    frame::leak_bytes,
-    shared::db::{Key, Str},
-    util::Uppercase,
-};
+use crate::shared::db::{Key, Str};
 use bytes::{Bytes, BytesMut};
-use equivalent::Equivalent;
-use std::{cmp::PartialEq, fmt::Debug, hash::Hash, ops::Deref};
+use std::{
+    cmp::PartialEq,
+    fmt::{Debug, Display},
+    hash::Hash,
+    ops::Deref,
+};
 
+#[inline]
+pub unsafe fn leak_bytes(b: &[u8]) -> StaticBytes {
+    std::mem::transmute::<&[u8], &'static [u8]>(b).into()
+}
+
+#[inline]
+pub unsafe fn leak_bytes_mut(b: &mut [u8]) -> StaticBytes {
+    std::mem::transmute::<&mut [u8], &'static mut [u8]>(b).into()
+}
+
+#[inline]
+pub unsafe fn leak_str(s: &str) -> StaticStr {
+    std::mem::transmute::<&str, &'static str>(s).into()
+}
+
+#[inline]
+pub unsafe fn leak_str_mut(s: &mut str) -> StaticStr {
+    std::mem::transmute::<&mut str, &'static mut str>(s).into()
+}
+
+#[derive(Debug, Eq)]
 pub enum StaticBytes {
     Const(&'static [u8]),
     Mut(&'static mut [u8]),
@@ -31,16 +52,6 @@ impl StaticBytes {
         }
     }
 
-    pub fn into_uppercase<const L: usize>(mut self) -> Uppercase<L, StaticBytes> {
-        match &mut self {
-            Self::Const(s) => Uppercase::from_const(s),
-            Self::Mut(s) => {
-                s.make_ascii_uppercase();
-                Uppercase::Mut(self)
-            }
-        }
-    }
-
     pub fn as_mut_unchecked(&mut self) -> &mut [u8] {
         match self {
             Self::Const(_) => panic!("cannot mutate const bytes"),
@@ -55,51 +66,9 @@ impl Hash for StaticBytes {
     }
 }
 
-impl PartialEq<StaticBytes> for StaticBytes {
-    fn eq(&self, other: &StaticBytes) -> bool {
+impl<B: AsRef<[u8]>> PartialEq<B> for StaticBytes {
+    fn eq(&self, other: &B) -> bool {
         self.as_ref() == other.as_ref()
-    }
-}
-
-impl Equivalent<Key> for StaticBytes {
-    fn equivalent(&self, key: &Key) -> bool {
-        self == key
-    }
-}
-
-impl Equivalent<Bytes> for StaticBytes {
-    fn equivalent(&self, key: &Bytes) -> bool {
-        self == key
-    }
-}
-
-impl PartialEq<Key> for StaticBytes {
-    fn eq(&self, other: &Key) -> bool {
-        self.eq(other.as_ref())
-    }
-}
-
-impl PartialEq<Bytes> for StaticBytes {
-    fn eq(&self, other: &Bytes) -> bool {
-        self.eq(other.as_ref())
-    }
-}
-
-impl PartialEq<[u8]> for StaticBytes {
-    fn eq(&self, other: &[u8]) -> bool {
-        self.as_ref() == other
-    }
-}
-
-impl From<StaticBytes> for Key {
-    fn from(val: StaticBytes) -> Self {
-        Bytes::copy_from_slice(val.as_ref()).into()
-    }
-}
-
-impl From<&StaticBytes> for Key {
-    fn from(value: &StaticBytes) -> Self {
-        Bytes::copy_from_slice(value.as_ref()).into()
     }
 }
 
@@ -127,15 +96,21 @@ impl From<StaticBytes> for Str {
     }
 }
 
-impl From<&'static [u8]> for StaticBytes {
-    fn from(s: &'static [u8]) -> Self {
-        Self::Const(s)
+impl From<&[u8]> for StaticBytes {
+    fn from(value: &[u8]) -> Self {
+        unsafe { leak_bytes(value) }
     }
 }
 
-impl From<&'static mut [u8]> for StaticBytes {
-    fn from(s: &'static mut [u8]) -> Self {
-        Self::Mut(s)
+impl From<&mut [u8]> for StaticBytes {
+    fn from(value: &mut [u8]) -> Self {
+        unsafe { leak_bytes_mut(value) }
+    }
+}
+
+impl From<Vec<u8>> for StaticBytes {
+    fn from(value: Vec<u8>) -> Self {
+        Self::Mut(value.leak())
     }
 }
 
@@ -156,7 +131,7 @@ impl AsRef<[u8]> for StaticBytes {
     }
 }
 
-impl Debug for StaticBytes {
+impl Display for StaticBytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Const(s) => write!(f, "{}", String::from_utf8_lossy(s)),
@@ -168,7 +143,7 @@ impl Debug for StaticBytes {
 impl mlua::FromLua<'_> for StaticBytes {
     fn from_lua(value: mlua::Value<'_>, _lua: &'_ mlua::Lua) -> mlua::Result<Self> {
         match value {
-            mlua::Value::String(s) => Ok(leak_bytes(s.as_bytes())),
+            mlua::Value::String(s) => Ok(unsafe { leak_bytes(s.as_bytes()) }),
             _ => Err(mlua::Error::FromLuaConversionError {
                 from: value.type_name(),
                 to: "StaticBytes",
@@ -184,7 +159,7 @@ impl mlua::IntoLua<'_> for StaticBytes {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, Eq)]
 pub enum StaticStr {
     Const(&'static str),
     Mut(&'static mut str),
@@ -217,21 +192,33 @@ impl StaticStr {
     }
 }
 
-impl PartialEq<str> for StaticStr {
-    fn eq(&self, other: &str) -> bool {
-        self.as_ref() == other
+impl Hash for StaticStr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_ref().hash(state)
     }
 }
 
-impl From<&'static str> for StaticStr {
-    fn from(s: &'static str) -> Self {
-        Self::Const(s)
+impl<S: AsRef<str>> PartialEq<S> for StaticStr {
+    fn eq(&self, other: &S) -> bool {
+        self.as_ref() == other.as_ref()
     }
 }
 
-impl From<&'static mut str> for StaticStr {
-    fn from(s: &'static mut str) -> Self {
-        Self::Mut(s)
+impl From<&str> for StaticStr {
+    fn from(s: &str) -> Self {
+        unsafe { leak_str(s) }
+    }
+}
+
+impl From<&mut str> for StaticStr {
+    fn from(s: &mut str) -> Self {
+        unsafe { leak_str_mut(s) }
+    }
+}
+
+impl From<String> for StaticStr {
+    fn from(s: String) -> Self {
+        Self::Mut(s.leak())
     }
 }
 
@@ -248,6 +235,15 @@ impl AsRef<str> for StaticStr {
         match self {
             Self::Const(s) => s,
             Self::Mut(s) => s,
+        }
+    }
+}
+
+impl Display for StaticStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Const(s) => write!(f, "{}", s),
+            Self::Mut(s) => write!(f, "{}", s),
         }
     }
 }

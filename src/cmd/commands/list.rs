@@ -7,7 +7,7 @@ use crate::{
     server::{AsyncStream, Handler, NEVER_EXPIRE},
     shared::{
         db::{
-            Key, List, ObjectValue,
+            str_as_bytes, Key, List, ObjectValue,
             WriteEvent::{self},
         },
         Letter,
@@ -26,15 +26,19 @@ use tracing::instrument;
 /// **Bulk string reply:** the element being popped from the source and pushed to the destination.
 /// **Null reply:** the operation timed-out
 #[derive(Debug)]
-pub struct BLMove {
-    source: StaticBytes,
-    destination: StaticBytes,
+pub struct BLMove<A> {
+    source: A,
+    destination: A,
     wherefrom: Where,
     whereto: Where,
     timeout: u64,
 }
 
-impl CmdExecutor for BLMove {
+impl<A> CmdExecutor<A> for BLMove<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -137,7 +141,7 @@ impl CmdExecutor for BLMove {
 
         let shutdown = context.shutdown.listen();
         let outbox = context.mailbox.outbox.clone();
-        let dst = Key::from(self.destination.as_ref());
+        let dst = self.destination;
         let shared = *shared;
 
         shared.pool().spawn_pinned(move || async move {
@@ -177,7 +181,7 @@ impl CmdExecutor for BLMove {
         Ok(None)
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 5 {
             return Err(RutinError::WrongArgNum);
         }
@@ -197,7 +201,7 @@ impl CmdExecutor for BLMove {
             destination,
             wherefrom: Where::try_from(args.next_back().unwrap().into_uppercase::<8>().as_ref())?,
             whereto: Where::try_from(args.next_back().unwrap().into_uppercase::<8>().as_ref())?,
-            timeout: atoi::<u64>(&args.next_back().unwrap())?,
+            timeout: atoi::<u64>(args.next_back().unwrap().as_ref())?,
         })
     }
 }
@@ -208,12 +212,16 @@ impl CmdExecutor for BLMove {
 /// **Null reply:** no element could be popped and the timeout expired
 /// **Array reply:** the key from which the element was popped and the value of the popped element.
 #[derive(Debug)]
-pub struct BLPop {
-    keys: Vec<StaticBytes>,
+pub struct BLPop<A> {
+    keys: Vec<A>,
     timeout: u64,
 }
 
-impl CmdExecutor for BLPop {
+impl<A> CmdExecutor<A> for BLPop<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -221,7 +229,7 @@ impl CmdExecutor for BLPop {
         err(level = "debug")
     )]
     async fn execute(
-        self,
+        mut self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
         let Handler {
@@ -229,7 +237,7 @@ impl CmdExecutor for BLPop {
         } = handler;
         let db = shared.db();
 
-        for key in &self.keys {
+        for (i, key) in self.keys.iter().enumerate() {
             let source_entry = db.object_entry(key).await?;
             let mut elem = None;
 
@@ -244,7 +252,7 @@ impl CmdExecutor for BLPop {
 
             if let Some(elem) = elem {
                 return Ok(Some(CheapResp3::new_array(vec![
-                    Resp3::new_blob_string(key.into()),
+                    Resp3::new_blob_string(self.keys.swap_remove(i).into_bytes()),
                     Resp3::new_blob_string(elem.to_bytes()),
                 ])));
             }
@@ -258,11 +266,7 @@ impl CmdExecutor for BLPop {
             Instant::now() + Duration::from_secs(self.timeout)
         };
 
-        let keys = self
-            .keys
-            .into_iter()
-            .map(|k| Key::from(k.as_ref()))
-            .collect_vec();
+        let keys: Vec<Key> = self.keys.into_iter().map(|k| k.into()).collect_vec();
 
         let (tx, rx) = flume::bounded(1);
 
@@ -283,7 +287,7 @@ impl CmdExecutor for BLPop {
 
                     if let Some(elem) = elem {
                         tx.send(CheapResp3::new_array(vec![
-                            Resp3::new_blob_string(key.clone().into()),
+                            Resp3::new_blob_string(key.clone()),
                             Resp3::new_blob_string(elem.to_bytes()),
                         ]))
                         .ok();
@@ -327,12 +331,12 @@ impl CmdExecutor for BLPop {
         Ok(None)
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
 
-        let timeout = atoi::<u64>(&args.next_back().unwrap())?;
+        let timeout = atoi::<u64>(args.next_back().unwrap().as_ref())?;
 
         let keys = args
             .map(|k| {
@@ -353,15 +357,19 @@ impl CmdExecutor for BLPop {
 /// **Integer reply:** an integer representing the matching element.
 /// **Array reply:** If the COUNT option is given, an array of integers representing the matching elements (or an empty array if there are no matches).
 #[derive(Debug)]
-pub struct LPos {
-    key: StaticBytes,
-    element: StaticBytes,
+pub struct LPos<A> {
+    key: A,
+    element: A,
     rank: Int,
     count: usize,
     max_len: Option<usize>,
 }
 
-impl CmdExecutor for LPos {
+impl<A> CmdExecutor<A> for LPos<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -393,7 +401,7 @@ impl CmdExecutor for LPos {
                 let list = obj.on_list()?;
                 if rank >= 0 {
                     for i in 0..self.max_len.unwrap_or(list.len()) {
-                        if self.element != list[i].to_bytes() {
+                        if self.element.as_ref() != str_as_bytes!(list[i]) {
                             continue;
                         }
                         // 只有当rank减为0时，才开始收入元素
@@ -412,7 +420,7 @@ impl CmdExecutor for LPos {
                     let lower_bound = list_len.saturating_sub(self.max_len.unwrap_or(list_len));
                     let upper_bound = list_len - 1;
                     for i in (lower_bound..=upper_bound).rev() {
-                        if self.element != list[i].to_bytes() {
+                        if self.element.as_ref() != list[i].to_bytes() {
                             continue;
                         }
                         // 只有当rank增为0时，才开始收入元素
@@ -444,7 +452,7 @@ impl CmdExecutor for LPos {
         Ok(Some(res))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if !(args.len() == 2 || args.len() == 4 || args.len() == 6 || args.len() == 8) {
             return Err(RutinError::WrongArgNum);
         }
@@ -461,7 +469,7 @@ impl CmdExecutor for LPos {
         let mut max_len = None;
 
         while let Some(opt) = args.next() {
-            let len = opt.len();
+            let len = opt.as_ref().len();
             if len > 6 {
                 return Err("ERR invalid option is given".into());
             }
@@ -488,11 +496,15 @@ impl CmdExecutor for LPos {
 
 /// **Integer reply:** the length of the list.
 #[derive(Debug)]
-pub struct LLen {
-    key: StaticBytes,
+pub struct LLen<A> {
+    key: A,
 }
 
-impl CmdExecutor for LLen {
+impl<A> CmdExecutor<A> for LLen<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -519,7 +531,7 @@ impl CmdExecutor for LLen {
         Ok(res)
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -539,12 +551,16 @@ impl CmdExecutor for LLen {
 /// **Bulk string reply:** when called without the count argument, the value of the first element.
 /// **Array reply:** when called with the count argument, a list of popped elements.
 #[derive(Debug)]
-pub struct LPop {
-    key: StaticBytes,
+pub struct LPop<A> {
+    key: A,
     count: u32,
 }
 
-impl CmdExecutor for LPop {
+impl<A> CmdExecutor<A> for LPop<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -592,7 +608,7 @@ impl CmdExecutor for LPop {
         Ok(res)
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -603,7 +619,7 @@ impl CmdExecutor for LPop {
         }
 
         let count = if let Some(count) = args.next() {
-            atoi::<u32>(&count)?
+            atoi::<u32>(count.as_ref())?
         } else {
             1
         };
@@ -616,12 +632,16 @@ impl CmdExecutor for LPop {
 ///
 /// **Integer reply:** the length of the list after the push operation.
 #[derive(Debug)]
-pub struct LPush {
-    key: StaticBytes,
-    values: Vec<StaticBytes>,
+pub struct LPush<A> {
+    key: A,
+    values: Vec<A>,
 }
 
-impl CmdExecutor for LPush {
+impl<A> CmdExecutor<A> for LPush<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -655,7 +675,7 @@ impl CmdExecutor for LPush {
         Ok(Some(Resp3::new_integer(len as Int)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -672,108 +692,6 @@ impl CmdExecutor for LPush {
     }
 }
 
-//
-// /// # Reply:
-// ///
-// /// **Null reply:** no element could be popped and the timeout expired
-// /// **Array reply:** the key from which the element was popped and the value of the popped element.
-// // TODO: 也许应该返回Resp3::Push?
-// #[derive(Debug)]
-// pub struct NBLPop {
-//     keys: Vec<Key>,
-//     timeout: u64,
-//     redirect: Id, // 0表示不重定向
-// }
-//
-// impl CmdExecutor for NBLPop {
-// #[instrument(
-//     level = "debug",
-//     skip(handler),
-//     ret(level = "debug"),
-//     err(level = "debug")
-// )]
-//     async fn execute(
-//         self,
-//         handler: &mut Handler<impl AsyncStream>,
-//     ) -> RutinResult<Option<CheapResp3>> {
-//         let shared = handler.shared;
-//
-//         match first_round(&self.keys, shared).await {
-//             // 弹出成功，直接返回
-//             Ok(Some(frame)) => {
-//                 return Ok(Some(frame));
-//             }
-//             // 弹出失败，继续后续操作
-//             Ok(None) => {}
-//             // 发生错误，直接返回
-//             Err(e) => {
-//                 return Err(e);
-//             }
-//         }
-//
-//         // 加入监听事件
-//         let (key_tx, key_rx) = flume::bounded(1);
-//         for key in self.keys {
-//             shared
-//                 .db()
-//                 .add_may_update_event(key, key_tx.clone())
-//                 .await?;
-//         }
-//
-//         let deadline = if self.timeout == 0 {
-//             None
-//         } else {
-//             Some(Instant::now() + Duration::from_secs(self.timeout))
-//         };
-//
-//         let outbox = if self.redirect != 0 {
-//             handler
-//                 .shared
-//                 .post_office()
-//                 .get_outbox(self.redirect)
-//                 .ok_or(RutinError::from("ERR The client ID does not exist"))?
-//                 .clone()
-//         } else {
-//             handler.context.outbox.clone()
-//         };
-//
-//         tokio::spawn(async move {
-//             let res = match pop_timeout_at(shared, key_tx, key_rx, deadline).await {
-//                 Ok(res) => res,
-//                 Err(e) => e.try_into().unwrap(),
-//             };
-//             let _ = outbox.send(Letter::Resp3(res));
-//         });
-//
-//         // 开启后台任务后，向客户端返回的响应不由该函数负责，而是由后台任务负责
-//         Ok(None)
-//     }
-//
-//     fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
-//         if args.len() < 3 {
-//             return Err(RutinError::WrongArgNum);
-//         }
-//
-//         let redirect = atoi::<Id>(&args.next_back().unwrap())?;
-//         let timeout = atoi::<u64>(&args.next_back().unwrap())?;
-//
-//         let keys = args
-//             .map(|k| {
-//                 if ac.deny_reading_or_writing_key(&k, Self::CATS_FLAG) {
-//                     return Err(RutinError::NoPermission);
-//                 }
-//                 Ok(k.into())
-//             })
-//             .collect::<RutinResult<Vec<Key>>>()?;
-//
-//         Ok(Self {
-//             keys,
-//             timeout,
-//             redirect,
-//         })
-//     }
-// }
-//
 #[derive(Debug, Clone, Copy)]
 pub enum Where {
     Left,
@@ -807,55 +725,29 @@ mod cmd_list_tests {
         test_init();
         let mut handler = gen_test_handler();
 
-        let llen = LLen::parse(
-            gen_cmdunparsed_test(["list"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        matches!(
-            llen.execute(&mut handler).await.unwrap_err(),
-            RutinError::ErrCode { code } if code == 0
-        );
+        // Case: 空列表
+        let llen_res = LLen::test(&["list"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(llen_res.into_integer_unchecked(), 0);
 
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["list", "key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(1)),
-            lpush.execute(&mut handler).await.unwrap()
-        );
+        // Case: 插入一个元素
+        let lpush_res = LPush::test(&["list", "key1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 1);
 
-        let llen = LLen::parse(
-            gen_cmdunparsed_test(["list"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(1)),
-            llen.execute(&mut handler).await.unwrap()
-        );
+        let llen_res = LLen::test(&["list"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(llen_res.into_integer_unchecked(), 1);
 
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["list", "key2", "key3"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(3)),
-            lpush.execute(&mut handler).await.unwrap()
-        );
+        // Case: 插入多个元素
+        let lpush_res = LPush::test(&["list", "key2", "key3"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 3);
 
-        let llen = LLen::parse(
-            gen_cmdunparsed_test(["list"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(3)),
-            llen.execute(&mut handler).await.unwrap()
-        );
+        let llen_res = LLen::test(&["list"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(llen_res.into_integer_unchecked(), 3);
     }
 
     #[tokio::test]
@@ -863,391 +755,184 @@ mod cmd_list_tests {
         test_init();
         let mut handler = gen_test_handler();
 
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["list", "key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(1)),
-            lpush.execute(&mut handler).await.unwrap()
-        );
-        // key1
+        // Case: 插入一个元素
+        let lpush_res = LPush::test(&["list", "key1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 1);
 
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["list", "key2", "key3"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Some(Resp3::new_integer(3)),
-            lpush.execute(&mut handler).await.unwrap()
-        );
-        // key3 key2 key1
+        // Case: 插入多个元素
+        let lpush_res = LPush::test(&["list", "key2", "key3"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 3);
 
-        let lpop = LPop::parse(
-            gen_cmdunparsed_test(["list"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Resp3::new_blob_string("key3".into()),
-            lpop.execute(&mut handler).await.unwrap().unwrap()
-        );
+        // Case: 弹出一个元素
+        let lpop_res = LPop::test(&["list"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(lpop_res.into_blob_string_unchecked(), "key3");
 
-        let lpop = LPop::parse(
-            gen_cmdunparsed_test(["list", "2"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        // Case: 弹出多个元素
+        let lpop_res = LPop::test(&["list", "2"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            Resp3::new_array(vec![
-                Resp3::new_blob_string("key2".into()),
-                Resp3::new_blob_string("key1".into())
-            ]),
-            lpop.execute(&mut handler).await.unwrap().unwrap()
+            lpop_res.into_array_unchecked(),
+            &[
+                Resp3::new_blob_string("key2"),
+                Resp3::new_blob_string("key1")
+            ]
         );
 
-        let lpop = LPop::parse(
-            gen_cmdunparsed_test(["list"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Resp3::Null,
-            lpop.execute(&mut handler).await.unwrap().unwrap()
-        );
+        // Case: 列表为空
+        let lpop_res = LPop::test(&["list"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(lpop_res, Resp3::Null);
     }
 
     #[tokio::test]
     async fn blpop_test() {
         test_init();
 
-        /***************/
-        /* 非阻塞测试 */
-        /***************/
+        // 非阻塞测试
         let mut handler = gen_test_handler();
 
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["l1", "key1a", "key1", "key1c"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let lpush_res = LPush::test(&["l1", "key1a", "key1", "key1c"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 3);
+
+        let lpush_res = LPush::test(&["l2", "key2a", "key2", "key2c"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 3);
+
+        let blpop_res = BLPop::test(&["l1", "l2", "1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            Some(Resp3::new_integer(3)),
-            lpush.execute(&mut handler).await.unwrap()
+            blpop_res.into_array_unchecked(),
+            &[
+                Resp3::new_blob_string("l1"),
+                Resp3::new_blob_string("key1c")
+            ]
         );
-        // l1: key1c key1b key1a
 
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["l2", "key2a", "key2", "key2c"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let blpop_res = BLPop::test(&["l2", "list1", "1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            Some(Resp3::new_integer(3)),
-            lpush.execute(&mut handler).await.unwrap()
+            blpop_res.into_array_unchecked(),
+            &[
+                Resp3::new_blob_string("l2"),
+                Resp3::new_blob_string("key2c")
+            ]
         );
-        // l2: key2c key2b key2a
 
-        let blpop = BLPop::parse(
-            gen_cmdunparsed_test(["l1", "l2", "1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            blpop.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_array(vec![
-                Resp3::new_blob_string("l1".into()),
-                Resp3::new_blob_string("key1c".into())
-            ]),
-        );
-        // l1: key1b key1a
+        // 阻塞测试 (无超时)
+        let (mut handler, _) = Handler::new_fake();
+        let blpop = BLPop::test(&["l3", "0"], &mut handler).await.unwrap();
 
-        let blpop = BLPop::parse(
-            gen_cmdunparsed_test(["l2", "list1", "1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            blpop.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_array(vec![
-                Resp3::new_blob_string("l2".into()),
-                Resp3::new_blob_string("key2c".into())
-            ]),
-        );
-        // l2: key2b key2a
-
-        // TODO:
-        /************************/
-        /* 无超时时间，阻塞测试 */
-        /************************/
-        let (mut handler2, _) = Handler::new_fake();
-
-        let blpop = BLPop::parse(
-            gen_cmdunparsed_test(["l3", "0"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        blpop.execute(&mut handler2).await.unwrap();
-
-        let inbox = handler2.context.mailbox.inbox.clone();
-        let handle = handler2.shared.pool().spawn_pinned(move || async move {
+        let inbox = handler.context.mailbox.inbox.clone();
+        let handle = handler.shared.pool().spawn_pinned(move || async move {
             assert_eq!(
                 inbox.recv().unwrap().into_resp3_unchecked(),
                 Resp3::new_array(vec![
-                    Resp3::new_blob_string("l3".into()),
-                    Resp3::new_blob_string("key".into())
-                ]),
+                    Resp3::new_blob_string("l3"),
+                    Resp3::new_blob_string("key")
+                ])
             );
         });
 
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["l3", "key"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Resp3::new_integer(1),
-            lpush.execute(&mut handler2).await.unwrap().unwrap()
-        );
+        let lpush_res = LPush::test(&["l3", "key"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 1);
 
         handle.await.unwrap();
 
-        /************************/
-        /* 有超时时间，阻塞测试 */
-        /************************/
-        let (mut handler3, _) = Handler::new_fake();
+        // 阻塞测试 (有超时)
+        let (mut handler, _) = Handler::new_fake();
+        let blpop = BLPop::test(&["l4", "2"], &mut handler).await.unwrap();
 
-        let blpop = BLPop::parse(
-            gen_cmdunparsed_test(["l4", "2"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        blpop.execute(&mut handler3).await.unwrap();
-
-        let inbox = handler3.context.mailbox.inbox.clone();
-        let handle = handler3.shared.pool().spawn_pinned(move || async move {
+        let inbox = handler.context.mailbox.inbox.clone();
+        let handle = handler.shared.pool().spawn_pinned(move || async move {
             assert_eq!(
                 inbox.recv().unwrap().into_resp3_unchecked(),
                 Resp3::new_array(vec![
-                    Resp3::new_blob_string("l4".into()),
-                    Resp3::new_blob_string("key".into())
-                ]),
+                    Resp3::new_blob_string("l4"),
+                    Resp3::new_blob_string("key")
+                ])
             );
         });
 
         sleep(Duration::from_millis(500)).await;
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["l4", "key"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            Resp3::new_integer(1),
-            lpush.execute(&mut handler3).await.unwrap().unwrap()
-        );
+        let lpush_res = LPush::test(&["l4", "key"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpush_res.into_integer_unchecked(), 1);
 
         handle.await.unwrap();
     }
 
-    // #[tokio::test]
-    // async fn nblpop_test() {
-    //     test_init();
-    //
-    //     let mut handler = gen_test_handler();
-    //
-    //     /************/
-    //     /* 普通测试 */
-    //     /************/
-    //     let lpush = LPush::parse(
-    //         gen_cmdunparsed_test(["l1", "key1a", "key1", "key1c"].as_ref()),
-    //         &AccessControl::new_loose(),
-    //     )
-    //     .unwrap();
-    //     assert_eq!(
-    //         Some(Resp3::new_integer(3)),
-    //         lpush.execute(&mut handler).await.unwrap()
-    //     );
-    //     // l1: key1c key1b key1a
-    //
-    //     let lpush = LPush::parse(
-    //         gen_cmdunparsed_test(["l2", "key2a", "key2", "key2c"].as_ref()),
-    //         &AccessControl::new_loose(),
-    //     )
-    //     .unwrap();
-    //     assert_eq!(
-    //         Some(Resp3::new_integer(3)),
-    //         lpush.execute(&mut handler).await.unwrap()
-    //     );
-    //     // l2: key2c key2b key2a
-    //
-    //     /**************/
-    //     /* 有超时时间 */
-    //     /**************/
-    //     let nblpop = NBLPop::parse(
-    //         gen_cmdunparsed_test(["list3", "2", "0"].as_ref()),
-    //         &AccessControl::new_loose(),
-    //     )
-    //     .unwrap();
-    //     nblpop.execute(&mut handler).await.unwrap();
-    //
-    //     let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-    //     assert_eq!(
-    //         "PONG".to_string(),
-    //         ping.execute(&mut handler)
-    //             .await
-    //             .unwrap()
-    //             .unwrap()
-    //             .try_simple_string()
-    //             .unwrap()
-    //             .to_string()
-    //     );
-    //
-    //     sleep(Duration::from_millis(500)).await;
-    //     let lpush = LPush::parse(
-    //         gen_cmdunparsed_test(["list3", "key"].as_ref()),
-    //         &AccessControl::new_loose(),
-    //     )
-    //     .unwrap();
-    //     assert_eq!(
-    //         Resp3::new_integer(1),
-    //         lpush.execute(&mut handler).await.unwrap().unwrap()
-    //     );
-    //
-    //     assert_eq!(
-    //         &Resp3::new_array(vec![
-    //             Resp3::new_blob_string("list3".into()),
-    //             Resp3::new_blob_string("key".into())
-    //         ]),
-    //         handler
-    //             .context
-    //             .inbox
-    //             .recv_async()
-    //             .await
-    //             .as_resp3_unchecked()
-    //     );
-    //
-    //     /************************/
-    //     /* 有超时时间，超时测试 */
-    //     /************************/
-    //     let nblpop = NBLPop::parse(
-    //         gen_cmdunparsed_test(["whatever", "1", "0"].as_ref()),
-    //         &AccessControl::new_loose(),
-    //     )
-    //     .unwrap();
-    //     nblpop.execute(&mut handler).await.unwrap();
-    //     assert_eq!(
-    //         &Resp3::new_null(),
-    //         handler
-    //             .context
-    //             .inbox
-    //             .recv_async()
-    //             .await
-    //             .as_resp3_unchecked()
-    //     );
-    //
-    //     /**************/
-    //     /* 无超时时间 */
-    //     /**************/
-    //     let nblpop = NBLPop::parse(
-    //         gen_cmdunparsed_test(["list3", "0", "0"].as_ref()),
-    //         &AccessControl::new_loose(),
-    //     )
-    //     .unwrap();
-    //     nblpop.execute(&mut handler).await.unwrap();
-    //
-    //     let ping = Ping::parse(CmdUnparsed::default(), &AccessControl::new_loose()).unwrap();
-    //     assert_eq!(
-    //         "PONG".to_string(),
-    //         ping.execute(&mut handler)
-    //             .await
-    //             .unwrap()
-    //             .unwrap()
-    //             .try_simple_string()
-    //             .unwrap()
-    //             .to_string()
-    //     );
-    //
-    //     sleep(Duration::from_millis(500)).await;
-    //     let lpush = LPush::parse(
-    //         gen_cmdunparsed_test(["list3", "key"].as_ref()),
-    //         &AccessControl::new_loose(),
-    //     )
-    //     .unwrap();
-    //     assert_eq!(
-    //         Resp3::new_integer(1),
-    //         lpush.execute(&mut handler).await.unwrap().unwrap()
-    //     );
-    //
-    //     assert_eq!(
-    //         &Resp3::new_array(vec![
-    //             Resp3::new_blob_string("list3".into()),
-    //             Resp3::new_blob_string("key".into())
-    //         ]),
-    //         handler
-    //             .context
-    //             .inbox
-    //             .recv_async()
-    //             .await
-    //             .as_resp3_unchecked()
-    //     );
-    // }
     #[tokio::test]
     async fn lpos_test() {
         test_init();
 
         let mut handler = gen_test_handler();
-        let lpush = LPush::parse(
-            gen_cmdunparsed_test(["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"].as_ref()),
-            &AccessControl::new_loose(),
+        let lpush_res = LPush::test(
+            &["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        lpush.execute(&mut handler).await.unwrap().unwrap();
 
-        let lpos = LPos::parse(
-            gen_cmdunparsed_test(["list", "1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = lpos.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(res.into_integer_unchecked(), 1);
+        let lpos_res = LPos::test(&["list", "1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(lpos_res.into_integer_unchecked(), 1);
 
-        let lpos = LPos::parse(
-            gen_cmdunparsed_test(["list", "2", "count", "0"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = lpos.execute(&mut handler).await.unwrap().unwrap();
+        let lpos_res = LPos::test(&["list", "2", "count", "0"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            res.into_array_unchecked(),
+            lpos_res.into_array_unchecked(),
             &[
-                CheapResp3::new_integer(2),
-                CheapResp3::new_integer(3),
-                CheapResp3::new_integer(4)
+                Resp3::new_integer(4),
+                Resp3::new_integer(5),
+                Resp3::new_integer(6)
             ]
         );
 
-        let lpos = LPos::parse(
-            gen_cmdunparsed_test(["list", "2", "rank", "2", "count", "2"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = lpos.execute(&mut handler).await.unwrap().unwrap();
+        let lpos_res = LPos::test(&["list", "2", "rank", "2", "count", "2"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            res.into_array_unchecked(),
-            &[CheapResp3::new_integer(3), CheapResp3::new_integer(4)]
+            lpos_res.into_array_unchecked(),
+            &[Resp3::new_integer(5), Resp3::new_integer(6)]
         );
 
-        let lpos = LPos::parse(
-            gen_cmdunparsed_test(["list", "2", "rank", "-1", "count", "3", "maxlen", "6"].as_ref()),
-            &AccessControl::new_loose(),
+        let lpos_res = LPos::test(
+            &["list", "2", "rank", "-1", "count", "3", "maxlen", "6"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        let res = lpos.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(
-            res.into_array_unchecked(),
-            &[CheapResp3::new_integer(4), CheapResp3::new_integer(3)]
+            lpos_res.into_array_unchecked(),
+            &[Resp3::new_integer(5), Resp3::new_integer(6)]
         );
     }
 }

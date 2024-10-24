@@ -1,5 +1,3 @@
-mod enum_helper;
-
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -229,22 +227,3 @@ pub fn gen_flag(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
-
-// #[proc_macro_derive(EnumAs, attributes(ignore_enum_as))]
-// pub fn derive_enum_as(item: TokenStream) -> TokenStream {
-//     let item = parse_macro_input!(item as ItemEnum);
-//
-//     // 拿到各个variants的ident
-//     // fn as_??(&self) -> &T {
-//     //
-//     // }
-//     for v in item.variants {
-//         let fun_name = format_ident!("as_{}", v.ident);
-//         let return_type =
-//         match v.fields {
-//
-//         }
-//     }
-//
-//     todo!()
-// }

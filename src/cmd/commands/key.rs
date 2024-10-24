@@ -14,7 +14,7 @@ use crate::{
 };
 use bytes::BytesMut;
 use itertools::Itertools;
-use std::time::Duration;
+use std::{fmt::Debug, hash::Hash, time::Duration};
 use tokio::time::Instant;
 use tracing::instrument;
 
@@ -45,11 +45,15 @@ impl TryFrom<&[u8]> for Opt {
 ///
 /// **Integer reply:** the number of keys that were removed.
 #[derive(Debug)]
-pub struct Del {
-    pub keys: Vec<StaticBytes>,
+pub struct Del<A> {
+    pub keys: Vec<A>,
 }
 
-impl CmdExecutor for Del {
+impl<A> CmdExecutor<A> for Del<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -72,7 +76,7 @@ impl CmdExecutor for Del {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -96,11 +100,15 @@ impl CmdExecutor for Del {
 /// **Bulk string reply:** the serialized value of the key.
 /// **Null reply:** the key does not exist.
 #[derive(Debug)]
-pub struct Dump {
-    pub key: StaticBytes,
+pub struct Dump<A> {
+    pub key: A,
 }
 
-impl CmdExecutor for Dump {
+impl<A> CmdExecutor<A> for Dump<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -131,7 +139,7 @@ impl CmdExecutor for Dump {
         Ok(Some(Resp3::new_blob_string(buf.freeze())))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -150,11 +158,15 @@ impl CmdExecutor for Dump {
 ///
 /// **Integer reply:** the number of keys that exist from those specified as arguments.
 #[derive(Debug)]
-pub struct Exists {
-    pub keys: Vec<StaticBytes>,
+pub struct Exists<A> {
+    pub keys: Vec<A>,
 }
 
-impl CmdExecutor for Exists {
+impl<A> CmdExecutor<A> for Exists<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -174,7 +186,7 @@ impl CmdExecutor for Exists {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -198,13 +210,17 @@ impl CmdExecutor for Exists {
 /// **Integer reply:** 0 if the timeout was not set; for example, the key doesn't exist, or the operation was skipped because of the provided arguments.
 /// **Integer reply:** 1 if the timeout was set.
 #[derive(Debug)]
-pub struct Expire {
-    key: StaticBytes,
+pub struct Expire<A> {
+    key: A,
     seconds: Duration,
     opt: Option<Opt>,
 }
 
-impl CmdExecutor for Expire {
+impl<A> CmdExecutor<A> for Expire<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -259,7 +275,7 @@ impl CmdExecutor for Expire {
         Err(RutinError::from(0))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 && args.len() != 3 {
             return Err(RutinError::WrongArgNum);
         }
@@ -269,7 +285,7 @@ impl CmdExecutor for Expire {
             return Err(RutinError::NoPermission);
         }
 
-        let seconds = Duration::from_secs(atoi(&args.next().unwrap())?);
+        let seconds = Duration::from_secs(atoi(args.next().unwrap().as_ref())?);
         let opt = match args.next() {
             Some(b) => Some(Opt::try_from(b.as_ref())?),
             None => None,
@@ -284,13 +300,17 @@ impl CmdExecutor for Expire {
 /// **Integer reply:** 0 if the timeout was not set; for example, the key doesn't exist, or the operation was skipped because of the provided arguments.
 /// **Integer reply:** 1 if the timeout was set.
 #[derive(Debug)]
-pub struct ExpireAt {
-    key: StaticBytes,
+pub struct ExpireAt<A> {
+    key: A,
     timestamp: Instant,
     opt: Option<Opt>,
 }
 
-impl CmdExecutor for ExpireAt {
+impl<A> CmdExecutor<A> for ExpireAt<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -345,7 +365,7 @@ impl CmdExecutor for ExpireAt {
         Err(RutinError::from(0))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 && args.len() != 3 {
             return Err(RutinError::WrongArgNum);
         }
@@ -355,7 +375,7 @@ impl CmdExecutor for ExpireAt {
             return Err(RutinError::NoPermission);
         }
 
-        let timestamp = atoi::<u64>(&args.next().unwrap())?;
+        let timestamp = atoi::<u64>(args.next().unwrap().as_ref())?;
         let timestamp = *UNIX_EPOCH + Duration::from_secs(timestamp);
         if timestamp <= Instant::now() {
             return Err("ERR invalid timestamp".into());
@@ -380,11 +400,15 @@ impl CmdExecutor for ExpireAt {
 /// **Integer reply:** -1 if the key exists but has no associated expiration time.
 /// **Integer reply:** -2 if the key does not exist.
 #[derive(Debug)]
-pub struct ExpireTime {
-    pub key: StaticBytes,
+pub struct ExpireTime<A> {
+    pub key: A,
 }
 
-impl CmdExecutor for ExpireTime {
+impl<A> CmdExecutor<A> for ExpireTime<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -412,7 +436,7 @@ impl CmdExecutor for ExpireTime {
         }
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -430,11 +454,15 @@ impl CmdExecutor for ExpireTime {
 ///
 /// **Array reply:** a list of keys matching pattern.
 #[derive(Debug)]
-pub struct Keys {
-    pub pattern: StaticBytes,
+pub struct Keys<A> {
+    pub pattern: A,
 }
 
-impl CmdExecutor for Keys {
+impl<A> CmdExecutor<A> for Keys<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -447,7 +475,7 @@ impl CmdExecutor for Keys {
     ) -> RutinResult<Option<CheapResp3>> {
         let shared = handler.shared;
         let outbox = handler.context.mailbox.outbox.clone();
-        let re = regex::bytes::Regex::new(std::str::from_utf8(&self.pattern)?)?;
+        let re = regex::bytes::Regex::new(std::str::from_utf8(self.pattern.as_ref())?)?;
 
         // 避免阻塞woker thread
         tokio::task::spawn_blocking(move || {
@@ -457,7 +485,7 @@ impl CmdExecutor for Keys {
                 .iter()
                 .filter_map(|entry| {
                     re.is_match(entry.key())
-                        .then(|| CheapResp3::new_blob_string(entry.key().clone().into()))
+                        .then(|| CheapResp3::new_blob_string(entry.key().clone()))
                 })
                 .collect::<Vec<CheapResp3>>();
 
@@ -469,7 +497,7 @@ impl CmdExecutor for Keys {
         Ok(None)
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -489,10 +517,14 @@ impl CmdExecutor for Keys {
 /// **Integer reply:** 0 if key does not exist or does not have an associated timeout.
 /// **Integer reply:** 1 if the timeout has been removed.
 #[derive(Debug)]
-pub struct Persist {
-    pub key: StaticBytes,
+pub struct Persist<A> {
+    pub key: A,
 }
-impl CmdExecutor for Persist {
+impl<A> CmdExecutor<A> for Persist<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -515,7 +547,7 @@ impl CmdExecutor for Persist {
         Ok(Some(Resp3::new_integer(1)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -536,11 +568,15 @@ impl CmdExecutor for Persist {
 /// **Integer reply:** -1 if the key exists but has no associated expiration.
 /// **Integer reply:** -2 if the key does not exist.
 #[derive(Debug)]
-pub struct Pttl {
-    pub key: StaticBytes,
+pub struct Pttl<A> {
+    pub key: A,
 }
 
-impl CmdExecutor for Pttl {
+impl<A> CmdExecutor<A> for Pttl<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -566,7 +602,7 @@ impl CmdExecutor for Pttl {
         }
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -587,11 +623,15 @@ impl CmdExecutor for Pttl {
 /// **Integer reply:** -1 if the key exists but has no associated expiration.
 /// **Integer reply:** -2 if the key does not exist.
 #[derive(Debug)]
-pub struct Ttl {
-    pub key: StaticBytes,
+pub struct Ttl<A> {
+    pub key: A,
 }
 
-impl CmdExecutor for Ttl {
+impl<A> CmdExecutor<A> for Ttl<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -617,7 +657,7 @@ impl CmdExecutor for Ttl {
         }
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -636,11 +676,15 @@ impl CmdExecutor for Ttl {
 ///
 /// **Simple string reply:** the type of key, or none when key doesn't exist.
 #[derive(Debug)]
-pub struct Type {
-    pub key: StaticBytes,
+pub struct Type<A> {
+    pub key: A,
 }
 
-impl CmdExecutor for Type {
+impl<A> CmdExecutor<A> for Type<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -658,10 +702,10 @@ impl CmdExecutor for Type {
             .await?
             .type_str();
 
-        Ok(Some(Resp3::new_simple_string(typ.into())))
+        Ok(Some(Resp3::new_simple_string(typ)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -701,23 +745,19 @@ mod cmd_key_tests {
         assert!(db.contains_object("key1".as_bytes()).await);
 
         // case: 键存在
-        let del = Del::parse(
-            gen_cmdunparsed_test(["DEL", "key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = del.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let del_res = Del::test(&["DEL", "key1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(del_res.into_integer_unchecked(), 1);
         assert!(!handler.shared.db().contains_object("key1".as_bytes()).await);
 
         // case: 键不存在
-        let del = Del::parse(
-            gen_cmdunparsed_test(["DEL", "key_nil"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = del.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(0));
+        let del_res = Del::test(&["DEL", "key_nil"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(del_res.into_integer_unchecked(), 0);
     }
 
     #[tokio::test]
@@ -734,22 +774,18 @@ mod cmd_key_tests {
         assert!(db.contains_object("key1".as_bytes()).await);
 
         // case: 键存在
-        let exists = Exists::parse(
-            gen_cmdunparsed_test(["key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = exists.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let exists_res = Exists::test(&["key1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(exists_res.into_integer_unchecked(), 1);
 
         // case: 键不存在
-        let exists = Exists::parse(
-            gen_cmdunparsed_test(["key_nil"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = exists.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let exists_res = Exists::test(&["key_nil"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(exists_res.into_integer_unchecked(), 0);
     }
 
     #[tokio::test]
@@ -769,29 +805,25 @@ mod cmd_key_tests {
         );
 
         // case: 键存在，设置过期时间
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key1", "10"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_res = Expire::test(&["key1", "10"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 1);
         assert!(!handler
             .shared
             .db()
             .get_object("key1".as_bytes())
             .await
             .unwrap()
-            .is_never_expired(),);
+            .is_never_expired());
 
         // case: 键不存在
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_nil", "10"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let expire_res = Expire::test(&["key_nil", "10"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 0);
 
         let db = handler.shared.db();
 
@@ -810,22 +842,19 @@ mod cmd_key_tests {
         )
         .await
         .unwrap();
-        // case: with EX option
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_with_ex", "10", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
 
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_without_ex", "10", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        // case: with EX option
+        let expire_res = Expire::test(&["key_with_ex", "10", "NX"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 0);
+
+        let expire_res = Expire::test(&["key_without_ex", "10", "NX"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 1);
 
         let db = handler.shared.db();
 
@@ -846,21 +875,17 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with NX option
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_with_ex", "10", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let expire_res = Expire::test(&["key_with_ex", "10", "NX"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 0);
 
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_without_ex", "10", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_res = Expire::test(&["key_without_ex", "10", "NX"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 1);
 
         let db = handler.shared.db();
 
@@ -881,21 +906,17 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with GT option
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_with_ex", "5", "GT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let expire_res = Expire::test(&["key_with_ex", "5", "GT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 0);
 
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_with_ex", "20", "GT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_res = Expire::test(&["key_with_ex", "20", "GT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 1);
 
         let db = handler.shared.db();
 
@@ -916,21 +937,17 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with LT option
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_with_ex", "20", "LT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let expire_res = Expire::test(&["key_with_ex", "20", "LT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 0);
 
-        let expire = Expire::parse(
-            gen_cmdunparsed_test(["key_with_ex", "5", "LT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_res = Expire::test(&["key_with_ex", "5", "LT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_res.into_integer_unchecked(), 1);
     }
 
     #[tokio::test]
@@ -951,19 +968,11 @@ mod cmd_key_tests {
             .is_never_expired());
 
         // case: 键存在，设置过期时间
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(
-                [
-                    "key1",
-                    "1893427200", // 2030-01-01 00:00:00
-                ]
-                .as_ref(),
-            ),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_at_res = ExpireAt::test(&["key1", "1893427200"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 1);
         assert!(!handler
             .shared
             .db()
@@ -973,48 +982,11 @@ mod cmd_key_tests {
             .is_never_expired());
 
         // case: 键不存在
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_nil", "1893427200"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
-
-        let db = handler.shared.db();
-
-        db.insert_object(
-            "key_with_ex".as_bytes(),
-            Object::with_expire(
-                Str::from("value_with_ex"),
-                *UNIX_EPOCH + Duration::from_secs(1893427200),
-            ),
-        )
-        .await
-        .unwrap();
-        db.insert_object(
-            "key_without_ex".as_bytes(),
-            Object::with_expire(Str::from("value_without_ex"), *NEVER_EXPIRE),
-        )
-        .await
-        .unwrap();
-
-        // case: with EX option
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_with_ex", "1893427200", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
-
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_without_ex", "1893427200", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_at_res = ExpireAt::test(&["key_nil", "1893427200"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
 
         let db = handler.shared.db();
 
@@ -1035,21 +1007,17 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with NX option
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_with_ex", "1893427200", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427200", "NX"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
 
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_without_ex", "1893427200", "NX"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_at_res = ExpireAt::test(&["key_without_ex", "1893427200", "NX"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 1);
 
         let db = handler.shared.db();
 
@@ -1070,21 +1038,17 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with GT option
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_with_ex", "1893427000", "GT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427000", "GT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
 
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_with_ex", "1893427201", "GT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427201", "GT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 1);
 
         let db = handler.shared.db();
 
@@ -1105,21 +1069,17 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with LT option
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_with_ex", "1893427201", "LT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427201", "LT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
 
-        let expire_at = ExpireAt::parse(
-            gen_cmdunparsed_test(["key_with_ex", "1893427000", "LT"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_at.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427000", "LT"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_at_res.into_integer_unchecked(), 1);
     }
 
     #[tokio::test]
@@ -1147,33 +1107,27 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在，但没有过期时间
-        let expire_time = ExpireTime::parse(
-            gen_cmdunparsed_test(["key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_time.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == -1);
+        let expire_time_res = ExpireTime::test(&["key1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_time_res.into_integer_unchecked(), -1);
 
         // case: 键不存在
-        let expire_time = ExpireTime::parse(
-            gen_cmdunparsed_test(["key_nil"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_time.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == -2);
+        let expire_time_res = ExpireTime::test(&["key_nil"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(expire_time_res.into_integer_unchecked(), -2);
 
         // case: 键存在且有过期时间
-        let expire_time = ExpireTime::parse(
-            gen_cmdunparsed_test(["key_with_ex"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = expire_time.execute(&mut handler).await.unwrap().unwrap();
+        let expire_time_res = ExpireTime::test(&["key_with_ex"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            result,
-            Resp3::new_integer(expire.duration_since(*UNIX_EPOCH).as_secs() as Int)
+            expire_time_res.into_integer_unchecked(),
+            expire.duration_since(*UNIX_EPOCH).as_secs() as i128
         );
     }
 
@@ -1207,57 +1161,27 @@ mod cmd_key_tests {
         .await
         .unwrap();
 
-        let keys = Keys::parse(
-            gen_cmdunparsed_test([".*"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        keys.execute(&mut handler).await.unwrap();
-        let result = handler
-            .context
-            .mailbox
-            .recv()
-            .into_resp3_unchecked()
-            .into_array_unchecked();
+        let keys_res = Keys::test(&[".*"], &mut handler).await.unwrap().unwrap();
+        let result = keys_res.into_array_unchecked();
         assert!(
-            result.contains(&Resp3::new_blob_string("key1".into()))
-                && result.contains(&Resp3::new_blob_string("key2".into()))
-                && result.contains(&Resp3::new_blob_string("key3".into()))
-                && result.contains(&Resp3::new_blob_string("key4".into()))
+            result.contains(&Resp3::new_blob_string("key1"))
+                && result.contains(&Resp3::new_blob_string("key2"))
+                && result.contains(&Resp3::new_blob_string("key3"))
+                && result.contains(&Resp3::new_blob_string("key4"))
         );
 
-        let keys = Keys::parse(
-            gen_cmdunparsed_test(["key*"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        keys.execute(&mut handler).await.unwrap();
-        let result = handler
-            .context
-            .mailbox
-            .recv()
-            .into_resp3_unchecked()
-            .into_array_unchecked();
+        let keys_res = Keys::test(&["key*"], &mut handler).await.unwrap().unwrap();
+        let result = keys_res.into_array_unchecked();
         assert!(
-            result.contains(&Resp3::new_blob_string("key1".into()))
-                && result.contains(&Resp3::new_blob_string("key2".into()))
-                && result.contains(&Resp3::new_blob_string("key3".into()))
-                && result.contains(&Resp3::new_blob_string("key4".into()))
+            result.contains(&Resp3::new_blob_string("key1"))
+                && result.contains(&Resp3::new_blob_string("key2"))
+                && result.contains(&Resp3::new_blob_string("key3"))
+                && result.contains(&Resp3::new_blob_string("key4"))
         );
 
-        let keys = Keys::parse(
-            gen_cmdunparsed_test(["key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        keys.execute(&mut handler).await.unwrap();
-        let result = handler
-            .context
-            .mailbox
-            .recv()
-            .into_resp3_unchecked()
-            .into_array_unchecked();
-        assert!(result.contains(&Resp3::new_blob_string("key1".into())));
+        let keys_res = Keys::test(&["key1"], &mut handler).await.unwrap().unwrap();
+        let result = keys_res.into_array_unchecked();
+        assert!(result.contains(&Resp3::new_blob_string("key1")));
     }
 
     #[tokio::test]
@@ -1282,13 +1206,11 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在，有过期时间
-        let persist = Persist::parse(
-            gen_cmdunparsed_test(["key_with_ex"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = persist.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(result, Resp3::new_integer(1));
+        let persist_res = Persist::test(&["key_with_ex"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(persist_res.into_integer_unchecked(), 1);
         assert!(handler
             .shared
             .db()
@@ -1298,22 +1220,18 @@ mod cmd_key_tests {
             .is_never_expired());
 
         // case: 键存在，没有过期时间
-        let persist = Persist::parse(
-            gen_cmdunparsed_test(["key_without_ex"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = persist.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let persist_res = Persist::test(&["key_without_ex"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(persist_res.into_integer_unchecked(), 0);
 
         // case: 键不存在
-        let persist = Persist::parse(
-            gen_cmdunparsed_test(["key_nil"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = persist.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == 0);
+        let persist_res = Persist::test(&["key_nil"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(persist_res.into_integer_unchecked(), 0);
     }
 
     #[tokio::test]
@@ -1341,35 +1259,22 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在，但没有过期时间
-        let pttl = Pttl::parse(
-            gen_cmdunparsed_test(["key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = pttl.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == -1);
+        let pttl_res = Pttl::test(&["key1"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(pttl_res.into_integer_unchecked(), -1);
 
         // case: 键不存在
-        let pttl = Pttl::parse(
-            gen_cmdunparsed_test(["key_nil"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = pttl.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == -2);
-
-        // case: 键存在且有过期时间
-        let pttl = Pttl::parse(
-            gen_cmdunparsed_test(["key_with_ex"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = pttl
-            .execute(&mut handler)
+        let pttl_res = Pttl::test(&["key_nil"], &mut handler)
             .await
             .unwrap()
+            .unwrap();
+        assert_eq!(pttl_res.into_integer_unchecked(), -2);
+
+        // case: 键存在且有过期时间
+        let pttl_res = Pttl::test(&["key_with_ex"], &mut handler)
+            .await
             .unwrap()
-            .into_integer_unchecked() as u64;
+            .unwrap();
+        let result = pttl_res.into_integer_unchecked() as u64;
         assert!(dur.as_millis() as u64 - result < ALLOWED_DELTA);
     }
 
@@ -1398,35 +1303,22 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在，但没有过期时间
-        let ttl = Ttl::parse(
-            gen_cmdunparsed_test(["key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = ttl.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == -1);
+        let ttl_res = Ttl::test(&["key1"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(ttl_res.into_integer_unchecked(), -1);
 
         // case: 键不存在
-        let ttl = Ttl::parse(
-            gen_cmdunparsed_test(["key_nil"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = ttl.execute(&mut handler).await.unwrap_err();
-        matches!(result, RutinError::ErrCode { code } if code == -2);
-
-        // case: 键存在且有过期时间
-        let ttl = Ttl::parse(
-            gen_cmdunparsed_test(["key_with_ex"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = ttl
-            .execute(&mut handler)
+        let ttl_res = Ttl::test(&["key_nil"], &mut handler)
             .await
             .unwrap()
+            .unwrap();
+        assert_eq!(ttl_res.into_integer_unchecked(), -2);
+
+        // case: 键存在且有过期时间
+        let ttl_res = Ttl::test(&["key_with_ex"], &mut handler)
+            .await
             .unwrap()
-            .into_integer_unchecked() as u64;
+            .unwrap();
+        let result = ttl_res.into_integer_unchecked() as u64;
         assert!(dur.as_secs() - result < ALLOWED_DELTA);
     }
 
@@ -1467,74 +1359,19 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在
-        let typ = Type::parse(
-            gen_cmdunparsed_test(["key1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = typ
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
-            .into_simple_string_unchecked()
-            .to_string();
-        assert_eq!(result, "string");
+        let typ_res = Type::test(&["key1"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(typ_res.into_simple_string_unchecked(), "string");
 
-        let typ = Type::parse(
-            gen_cmdunparsed_test(["key2"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = typ
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
-            .into_simple_string_unchecked()
-            .to_string();
-        assert_eq!(result, "list");
+        let typ_res = Type::test(&["key2"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(typ_res.into_simple_string_unchecked(), "list");
 
-        let typ = Type::parse(
-            gen_cmdunparsed_test(["key3"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = typ
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
-            .into_simple_string_unchecked()
-            .to_string();
-        assert_eq!(result, "set");
+        let typ_res = Type::test(&["key3"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(typ_res.into_simple_string_unchecked(), "set");
 
-        let typ = Type::parse(
-            gen_cmdunparsed_test(["key4"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = typ
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
-            .into_simple_string_unchecked()
-            .to_string();
-        assert_eq!(result, "hash");
+        let typ_res = Type::test(&["key4"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(typ_res.into_simple_string_unchecked(), "hash");
 
-        let typ = Type::parse(
-            gen_cmdunparsed_test(["key5"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let result = typ
-            .execute(&mut handler)
-            .await
-            .unwrap()
-            .unwrap()
-            .into_simple_string_unchecked()
-            .to_string();
-        assert_eq!(result, "zset");
+        let typ_res = Type::test(&["key5"], &mut handler).await.unwrap().unwrap();
+        assert_eq!(typ_res.into_simple_string_unchecked(), "zset");
     }
 }

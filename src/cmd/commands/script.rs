@@ -1,22 +1,31 @@
+use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdUnparsed},
+    cmd::{CmdArg, CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
-    util::{atoi, StaticBytes},
+    shared::db::Key,
+    util::{atoi, IntoUppercase, StaticBytes},
 };
 use bytes::Bytes;
+use bytestring::ByteString;
+use equivalent::Equivalent;
+use std::{fmt::Debug, hash::Hash};
 use tracing::instrument;
 
 #[derive(Debug)]
-pub struct Eval {
-    script: StaticBytes,
-    keys: Vec<StaticBytes>,
-    args: Vec<StaticBytes>,
+pub struct Eval<A> {
+    script: A,
+    keys: Vec<A>,
+    args: Vec<A>,
 }
 
-impl CmdExecutor for Eval {
+impl<A> CmdExecutor<A> for Eval<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -31,13 +40,13 @@ impl CmdExecutor for Eval {
             .shared
             .script()
             .lua_script
-            .eval(handler, &self.script, self.keys, self.args)
+            .eval(handler, self.script.as_ref(), self.keys, self.args)
             .await?;
 
         Ok(Some(res))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -61,13 +70,17 @@ impl CmdExecutor for Eval {
 }
 
 #[derive(Debug)]
-pub struct EvalName {
-    name: StaticBytes,
-    keys: Vec<StaticBytes>,
-    args: Vec<StaticBytes>,
+pub struct EvalName<A> {
+    name: A,
+    keys: Vec<A>,
+    args: Vec<A>,
 }
 
-impl CmdExecutor for EvalName {
+impl<A> CmdExecutor<A> for EvalName<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -82,19 +95,19 @@ impl CmdExecutor for EvalName {
             .shared
             .script()
             .lua_script
-            .eval_name(handler, &self.name, self.keys, self.args)
+            .eval_name(handler, self.name.as_ref(), self.keys, self.args)
             .await?;
 
         Ok(Some(res))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
 
         let name = args.next().unwrap();
-        let numkeys = atoi::<usize>(&args.next().unwrap())?;
+        let numkeys = atoi::<usize>(args.next().unwrap().as_ref())?;
 
         if numkeys == 0 {
             return Ok(EvalName {
@@ -112,11 +125,15 @@ impl CmdExecutor for EvalName {
 }
 
 #[derive(Debug)]
-pub struct ScriptExists {
-    names: Vec<StaticBytes>,
+pub struct ScriptExists<A> {
+    names: Vec<A>,
 }
 
-impl CmdExecutor for ScriptExists {
+impl<A> CmdExecutor<A> for ScriptExists<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -132,14 +149,14 @@ impl CmdExecutor for ScriptExists {
             .iter()
             .map(|name| {
                 let res = handler.shared.script().lua_script.contain(name.as_ref());
-                Resp3::<Bytes, bytestring::ByteString>::new_boolean(res)
+                Resp3::new_boolean(res)
             })
             .collect();
 
         Ok(Some(Resp3::new_array(res)))
     }
 
-    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -151,9 +168,13 @@ impl CmdExecutor for ScriptExists {
 }
 
 #[derive(Debug)]
-pub struct ScriptFlush {}
+pub struct ScriptFlush;
 
-impl CmdExecutor for ScriptFlush {
+impl<A> CmdExecutor<A> for ScriptFlush
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -166,10 +187,10 @@ impl CmdExecutor for ScriptFlush {
     ) -> RutinResult<Option<CheapResp3>> {
         handler.shared.script().lua_script.flush();
 
-        Ok(Some(Resp3::new_simple_string("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK")))
     }
 
-    fn parse(args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -179,12 +200,16 @@ impl CmdExecutor for ScriptFlush {
 }
 
 #[derive(Debug)]
-pub struct ScriptRegister {
-    name: StaticBytes,
-    script: StaticBytes,
+pub struct ScriptRegister<A> {
+    name: A,
+    script: A,
 }
 
-impl CmdExecutor for ScriptRegister {
+impl<A> CmdExecutor<A> for ScriptRegister<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -199,12 +224,12 @@ impl CmdExecutor for ScriptRegister {
             .shared
             .script()
             .lua_script
-            .register_script(&self.name, &self.script)?;
+            .register_script(self.name, self.script)?;
 
-        Ok(Some(Resp3::new_simple_string("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK")))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -218,87 +243,87 @@ impl CmdExecutor for ScriptRegister {
 
 #[cfg(test)]
 mod cmd_script_tests {
-    use crate::{cmd::gen_cmdunparsed_test, util::gen_test_handler};
-
     use super::*;
+    use crate::util::gen_test_handler;
 
     #[tokio::test]
     async fn eval_test() {
         let mut handler = gen_test_handler();
 
-        let eval = Eval::parse(
-            gen_cmdunparsed_test(["return 1", "0"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = eval.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(res, Resp3::new_integer(1));
+        // 执行简单的返回值
+        let eval_res = Eval::test(&["return 1", "0"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(eval_res, Resp3::new_integer(1));
 
-        let eval = Eval::parse(
-            gen_cmdunparsed_test(
-                ["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"].as_ref(),
-            ),
-            &AccessControl::new_loose(),
+        // 执行 redis.call 设置值
+        let eval_res = Eval::test(
+            &["redis.call('set', KEYS[1], ARGV[1])", "1", "key", "value"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        let res = eval.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(res, Resp3::new_simple_string("OK".into()));
+        assert_eq!(eval_res, Resp3::new_simple_string("OK"));
 
-        let eval = Eval::parse(
-            gen_cmdunparsed_test(["return redis.call('get', KEYS[1])", "1", "key"].as_ref()),
-            &AccessControl::new_loose(),
+        // 执行 redis.call 获取值
+        let eval_res = Eval::test(
+            &["return redis.call('get', KEYS[1])", "1", "key"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        let res = eval.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(res, Resp3::new_blob_string("value".into()));
+        assert_eq!(eval_res, Resp3::new_blob_string("value"));
     }
 
     #[tokio::test]
     async fn script_test() {
         let mut handler = gen_test_handler();
 
-        let script_register = ScriptRegister::parse(
-            gen_cmdunparsed_test(["test", "redis.call('set', KEYS[1], ARGV[1])"].as_ref()),
-            &AccessControl::new_loose(),
+        // 注册脚本
+        let script_register_res = ScriptRegister::test(
+            &["test", "redis.call('set', KEYS[1], ARGV[1])"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        let res = script_register
-            .execute(&mut handler)
+        assert_eq!(script_register_res, Resp3::new_simple_string("OK"));
+
+        // 检查脚本是否存在
+        let script_exists_res = ScriptExists::test(&["test", "nothing"], &mut handler)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(res, Resp3::new_simple_string("OK".into()));
-
-        let script_exists = ScriptExists::parse(
-            gen_cmdunparsed_test(["test", "nothing"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = script_exists.execute(&mut handler).await.unwrap().unwrap();
         assert_eq!(
-            res,
+            script_exists_res,
             Resp3::new_array(vec![Resp3::new_boolean(true), Resp3::new_boolean(false)])
         );
 
-        let eval_name = EvalName::parse(
-            gen_cmdunparsed_test(["test", "1", "key", "value"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = eval_name.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(res, Resp3::new_simple_string("OK".into()));
+        // 通过脚本名执行脚本
+        let eval_name_res = EvalName::test(&["test", "1", "key", "value"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(eval_name_res, Resp3::new_simple_string("OK"));
 
-        let script_flush =
-            ScriptFlush::parse(Default::default(), &AccessControl::new_loose()).unwrap();
-        let res = script_flush.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(res, Resp3::new_simple_string("OK".into()));
+        // 刷新脚本缓存
+        let script_flush_res = ScriptFlush::test(Default::default(), &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(script_flush_res, Resp3::new_simple_string("OK"));
 
-        let script_exists = ScriptExists::parse(
-            gen_cmdunparsed_test(["test"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = script_exists.execute(&mut handler).await.unwrap().unwrap();
-        assert_eq!(res, Resp3::new_array(vec![Resp3::new_boolean(false)]));
+        // 再次检查脚本是否存在
+        let script_exists_res = ScriptExists::test(&["test"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            script_exists_res,
+            Resp3::new_array(vec![Resp3::new_boolean(false)])
+        );
     }
 }

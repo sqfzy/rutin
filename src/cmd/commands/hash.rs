@@ -5,18 +5,23 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::Resp3,
     server::{AsyncStream, Handler},
-    shared::db::{Hash, Str},
+    shared::db::{self, Str},
 };
+use std::{fmt::Debug, hash::Hash};
 use tracing::instrument;
 
 /// **Integer reply:** The number of fields that were removed from the hash, excluding any specified but non-existing fields.
 #[derive(Debug)]
-pub struct HDel {
-    pub key: StaticBytes,
-    pub fields: Vec<StaticBytes>,
+pub struct HDel<A = StaticBytes> {
+    pub key: A,
+    pub fields: Vec<A>,
 }
 
-impl CmdExecutor for HDel {
+impl<A> CmdExecutor<A> for HDel<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -35,7 +40,7 @@ impl CmdExecutor for HDel {
             .update_object(&self.key, |obj| {
                 let hash = obj.on_hash_mut()?;
                 for field in self.fields {
-                    if hash.remove(&field).is_some() {
+                    if hash.remove(field.as_ref()).is_some() {
                         count += 1;
                     }
                 }
@@ -47,7 +52,7 @@ impl CmdExecutor for HDel {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -67,12 +72,16 @@ impl CmdExecutor for HDel {
 /// **Integer reply:** 0 if the hash does not contain the field, or the key does not exist.
 /// **Integer reply:** 1 if the hash contains the field.
 #[derive(Debug)]
-pub struct HExists {
-    pub key: StaticBytes,
-    pub field: StaticBytes,
+pub struct HExists<A> {
+    pub key: A,
+    pub field: A,
 }
 
-impl CmdExecutor for HExists {
+impl<A> CmdExecutor<A> for HExists<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -90,7 +99,7 @@ impl CmdExecutor for HExists {
             .db()
             .visit_object(self.key.as_ref(), |obj| {
                 let hash = obj.on_hash()?;
-                exists = hash.contains_key(&self.field);
+                exists = hash.contains_key(self.field.as_ref());
 
                 Ok(())
             })
@@ -99,7 +108,7 @@ impl CmdExecutor for HExists {
         Ok(Some(Resp3::new_integer(if exists { 1 } else { 0 })))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -119,12 +128,16 @@ impl CmdExecutor for HExists {
 /// **Bulk string reply:** The value associated with the field.
 /// **Null reply:** If the field is not present in the hash or key does not exist.
 #[derive(Debug)]
-pub struct HGet {
-    pub key: StaticBytes,
-    pub field: StaticBytes,
+pub struct HGet<A> {
+    pub key: A,
+    pub field: A,
 }
 
-impl CmdExecutor for HGet {
+impl<A> CmdExecutor<A> for HGet<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -142,7 +155,7 @@ impl CmdExecutor for HGet {
             .db()
             .visit_object(self.key.as_ref(), |obj| {
                 let hash = obj.on_hash()?;
-                value.clone_from(&hash.get(&self.field));
+                value.clone_from(&hash.get(self.field.as_ref()));
 
                 Ok(())
             })
@@ -151,7 +164,7 @@ impl CmdExecutor for HGet {
         Ok(value.map(|b| Resp3::new_blob_string(b.to_bytes())))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -170,12 +183,16 @@ impl CmdExecutor for HGet {
 
 /// **Integer reply:** the number of fields that were added.
 #[derive(Debug)]
-pub struct HSet {
-    pub key: StaticBytes,
-    pub fields: Vec<(StaticBytes, Str)>,
+pub struct HSet<A> {
+    pub key: A,
+    pub fields: Vec<(A, Str)>,
 }
 
-impl CmdExecutor for HSet {
+impl<A> CmdExecutor<A> for HSet<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -193,7 +210,7 @@ impl CmdExecutor for HSet {
             .db()
             .object_entry(&self.key)
             .await?
-            .or_insert_with(|| Hash::default().into())
+            .or_insert_with(|| db::Hash::default().into())
             .update1(|obj| {
                 let hash = obj.on_hash_mut()?;
                 for (field, value) in self.fields {
@@ -207,7 +224,7 @@ impl CmdExecutor for HSet {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() < 3 || args.len() % 2 != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -238,36 +255,27 @@ mod cmd_hash_tests {
         test_init();
         let mut handler = gen_test_handler();
 
-        let hset = HSet::parse(
-            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
-            &AccessControl::new_loose(),
+        let hset_res = HSet::test(
+            &["key", "field1", "value1", "field2", "value2"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        assert_eq!(
-            hset.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(2)
-        );
+        assert_eq!(hset_res.into_integer_unchecked(), 2);
 
-        let hdel = HDel::parse(
-            gen_cmdunparsed_test(&["key", "field1", "field2"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
+        let hdel_res = HDel::test(&["key", "field1", "field2"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
 
-        assert_eq!(
-            hdel.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(2)
-        );
+        assert_eq!(hdel_res.into_integer_unchecked(), 2);
 
-        let hdel = HDel::parse(
-            gen_cmdunparsed_test(&["key", "field1", "field2"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            hdel.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(0)
-        );
+        let held_res = HDel::test(&["key", "field1", "field2"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(held_res.into_integer_unchecked(), 0);
     }
 
     #[tokio::test]
@@ -275,35 +283,26 @@ mod cmd_hash_tests {
         test_init();
         let mut handler = gen_test_handler();
 
-        let hset = HSet::parse(
-            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
-            &AccessControl::new_loose(),
+        let hset_res = HSet::test(
+            &["key", "field1", "value1", "field2", "value2"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        assert_eq!(
-            hset.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(2)
-        );
+        assert_eq!(hset_res.into_integer_unchecked(), 2);
 
-        let hexists = HExists::parse(
-            gen_cmdunparsed_test(&["key", "field1"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            hexists.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(1)
-        );
+        let hexists_res = HExists::test(&["key", "field1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(hexists_res.into_integer_unchecked(), 1);
 
-        let hexists = HExists::parse(
-            gen_cmdunparsed_test(&["key", "field3"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            hexists.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(0)
-        );
+        let hexists_res = HExists::test(&["key", "field3"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(hexists_res.into_integer_unchecked(), 0);
     }
 
     #[tokio::test]
@@ -311,32 +310,28 @@ mod cmd_hash_tests {
         test_init();
         let mut handler = gen_test_handler();
 
-        let hset = HSet::parse(
-            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
-            &AccessControl::new_loose(),
+        let hset_res = HSet::test(
+            &["key", "field1", "value1", "field2", "value2"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        assert_eq!(
-            hset.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(2)
-        );
+        assert_eq!(hset_res.into_integer_unchecked(), 2);
 
-        let hget = HGet::parse(
-            gen_cmdunparsed_test(&["key", "field1"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            hget.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_blob_string("value1".into())
-        );
+        // 测试存在的字段
+        let hget_res = HGet::test(&["key", "field1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(hget_res.into_blob_string_unchecked(), "value1");
 
-        let hget = HGet::parse(
-            gen_cmdunparsed_test(&["key", "field3"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert!(hget.execute(&mut handler).await.unwrap().is_none());
+        // 测试不存在的字段
+        let hget_res = HGet::test(&["key", "field3"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(hget_res.is_null());
     }
 
     #[tokio::test]
@@ -344,34 +339,28 @@ mod cmd_hash_tests {
         test_init();
         let mut handler = gen_test_handler();
 
-        let hset = HSet::parse(
-            gen_cmdunparsed_test(&["key", "field1", "value1", "field2", "value2"]),
-            &AccessControl::new_loose(),
+        // 设置字段并测试返回结果
+        let hset_res = HSet::test(
+            &["key", "field1", "value1", "field2", "value2"],
+            &mut handler,
         )
+        .await
+        .unwrap()
         .unwrap();
-        assert_eq!(
-            hset.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_integer(2)
-        );
+        assert_eq!(hset_res.into_integer_unchecked(), 2);
 
-        let hget = HGet::parse(
-            gen_cmdunparsed_test(&["key", "field1"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            hget.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_blob_string("value1".into())
-        );
+        // 测试存在的字段 "field1"
+        let hget_res = HGet::test(&["key", "field1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(hget_res.into_blob_string_unchecked(), "value1");
 
-        let hget = HGet::parse(
-            gen_cmdunparsed_test(&["key", "field2"]),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        assert_eq!(
-            hget.execute(&mut handler).await.unwrap().unwrap(),
-            Resp3::new_blob_string("value2".into())
-        );
+        // 测试存在的字段 "field2"
+        let hget_res = HGet::test(&["key", "field2"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(hget_res.into_blob_string_unchecked(), "value2");
     }
 }

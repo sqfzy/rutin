@@ -87,7 +87,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
     let ping_replica_period = Duration::from_secs(master_conf.ping_replica_period);
     let mut ping_interval = tokio::time::interval(ping_replica_period);
     let ping_frame = Resp3::<&[u8; 4], String>::new_array(vec![Resp3::new_blob_string(b"PING")]);
-    let ping_frame_encoded = ping_frame.encode();
+    let ping_frame_encoded: BytesMut = ping_frame.encode();
 
     let timeout = Duration::from_secs(master_conf.timeout);
 
@@ -127,7 +127,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
                         if conf.security.requirepass.is_some() {
                             let mut auth = handle_replica.conn.read_frame().await?.ok_or(RutinError::from("ERR require auth"))?;
-                            if let Some(resp) = handle_replica.dispatch(&mut auth).await? {
+                            if let Some(resp) = handle_replica.dispatch(auth).await? {
                                 handle_replica.conn.write_frame(&resp).await?;
 
                                 if resp.is_simple_error() {
@@ -179,7 +179,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                             // 返回"+CONTINUE"
                             handle_replica
                                 .conn
-                                .write_frame(&Resp3::<&[u8], _>::new_simple_string("CONTINUE"))
+                                .write_frame(&Resp3::<&[u8], String>::new_simple_string("CONTINUE"))
                                 .await?;
 
                             handle_replica.conn.write_all(gap_data).await?;
@@ -199,7 +199,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
                             // 返回"+FULLRESYNC <run_id> <master_offset>"
                             handle_replica
                                 .conn
-                                .write_frame(&Resp3::<&[u8], _>::new_simple_string(format!(
+                                .write_frame(&Resp3::<&[u8], String>::new_simple_string(format!(
                                     "FULLRESYNC {:?} {}",
                                     conf.server.run_id, master_offset
                                 )))
@@ -236,7 +236,7 @@ pub async fn set_server_to_master(shared: Shared, master_conf: MasterConf) -> Ru
 
                         handler.context.back_log = Some(back_log); // set back_log
 
-                        if let Some(resp) = handler.dispatch(&mut frame).await? {
+                        if let Some(resp) = handler.dispatch(frame).await? {
                             handler.conn.write_frame(&resp).await?;
                         }
 

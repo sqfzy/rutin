@@ -94,17 +94,17 @@ pub async fn debug_client() {
     }
 }
 
-pub fn atoi<I: FromRadix10SignedChecked>(text: &[u8]) -> RutinResult<I> {
-    atoi::atoi(text).with_context(|| A2IParseSnafu {
-        invalid: Bytes::copy_from_slice(text),
+pub fn atoi<I: FromRadix10SignedChecked>(text: impl AsRef<[u8]>) -> RutinResult<I> {
+    atoi::atoi(text.as_ref()).with_context(|| A2IParseSnafu {
+        invalid: Bytes::copy_from_slice(text.as_ref()),
     })
 }
 
-pub fn atof(text: &[u8]) -> RutinResult<f64> {
-    std::str::from_utf8(text)?
+pub fn atof(text: impl AsRef<[u8]>) -> RutinResult<f64> {
+    std::str::from_utf8(text.as_ref())?
         .parse()
         .map_err(|_| RutinError::A2IParse {
-            invalid: Bytes::copy_from_slice(text),
+            invalid: Bytes::copy_from_slice(text.as_ref()),
         })
 }
 

@@ -20,7 +20,7 @@ use crate::{
         Shared, CTRL_C_ID, EXPIRATION_EVICT_ID, MAIN_ID, UPDATE_LRU_CLOCK_ID,
         UPDATE_USED_MEMORY_ID,
     },
-    util::{set_server_to_master, set_server_to_replica, UnsafeLazy},
+    util::{_set_server_to_replica, set_server_to_master, UnsafeLazy},
     Id,
 };
 use std::{
@@ -331,7 +331,7 @@ pub async fn init_server(server: &mut Listener) -> anyhow::Result<()> {
         /**********************/
 
         shared.pool().spawn_pinned(move || async move {
-            set_server_to_replica(shared, master_info).await.ok();
+            _set_server_to_replica(shared, master_info).await.ok();
         });
     } else if let Some(master_conf) = conf.master.clone() {
         /**********************/

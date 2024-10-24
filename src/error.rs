@@ -1,8 +1,6 @@
-use crate::{
-    frame::{CheapResp3, Resp3},
-    Int,
-};
+use crate::{frame::CheapResp3, Int};
 use bytes::Bytes;
+use rutin_resp3::error::Resp3Error;
 use snafu::Snafu;
 use std::borrow::Cow;
 use tracing::error;
@@ -14,14 +12,6 @@ pub type RutinResult<T> = Result<T, RutinError>;
 pub enum RutinError {
     #[snafu(display("{msg}"))]
     ServerErr {
-        msg: Cow<'static, str>,
-    },
-
-    #[snafu(display("incomplete frame"))]
-    Incomplete,
-
-    #[snafu(display("invalid frame format '{msg}'"))]
-    InvalidFormat {
         msg: Cow<'static, str>,
     },
 
@@ -151,18 +141,26 @@ impl From<String> for RutinError {
     }
 }
 
-impl TryInto<CheapResp3> for RutinError {
+impl From<Resp3Error> for RutinError {
+    fn from(value: Resp3Error) -> Self {
+        Self::ServerErr {
+            msg: value.to_string().into(),
+        }
+    }
+}
+
+impl TryFrom<RutinError> for CheapResp3 {
     type Error = RutinError;
 
-    fn try_into(self) -> Result<CheapResp3, Self::Error> {
-        let frame = match self {
-            RutinError::ServerErr { .. } => return Err(self),
+    fn try_from(value: RutinError) -> Result<CheapResp3, Self::Error> {
+        let frame = match value {
+            RutinError::ServerErr { .. } => return Err(value),
             // 命令执行失败，向客户端返回错误码
-            RutinError::ErrCode { code } => Resp3::new_integer(code),
+            RutinError::ErrCode { code } => CheapResp3::new_integer(code),
             // 命令执行失败，向客户端返回空值
-            RutinError::Null => Resp3::Null,
+            RutinError::Null => CheapResp3::Null,
             // 命令执行失败，向客户端返回错误信息
-            e => Resp3::new_simple_error(e.to_string().into()),
+            e => CheapResp3::new_simple_error(e.to_string()),
         };
 
         Ok(frame)

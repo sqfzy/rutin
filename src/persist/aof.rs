@@ -1,13 +1,14 @@
 use crate::{
     cmd::dispatch,
     conf::AofConf,
-    frame::Resp3Decoder,
     persist::rdb::{decode_rdb, encode_rdb},
     server::Handler,
     shared::{Letter, Shared, AOF_ID, SET_MASTER_ID},
+    util::{StaticBytes, StaticStr},
 };
 use bytes::BytesMut;
 use event_listener::{listener, IntoNotification};
+use rutin_resp3::codec::decode::Resp3Decoder;
 use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, time::Duration};
 use tokio::{
@@ -202,9 +203,9 @@ pub async fn load_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
     }
 
     let (mut handler, _) = Handler::new_fake_with(shared, None, None);
-    let mut decoder = Resp3Decoder::default();
-    while let Some(mut cmd_frame) = decoder.decode(&mut buf)? {
-        dispatch(&mut cmd_frame, &mut handler).await?;
+    let mut decoder = Resp3Decoder::<StaticBytes, StaticStr>::default();
+    while let Some(cmd_frame) = decoder.decode(&mut buf)? {
+        dispatch(cmd_frame, &mut handler).await?;
     }
 
     info!("load aof elapsed={:?}", now.elapsed());
@@ -309,26 +310,26 @@ async fn aof_test() {
     file.set_len(0).await.unwrap(); // 清空AOF文件
     drop(file);
 
-    let mut frames = vec![
+    let frames = vec![
         StaticResp3::new_array(vec![
-            StaticResp3::new_blob_string("SET".as_bytes().into()),
-            StaticResp3::new_blob_string("key:000000000015".as_bytes().into()),
-            StaticResp3::new_blob_string("VXK".as_bytes().into()),
+            StaticResp3::new_blob_string("SET".as_bytes()),
+            StaticResp3::new_blob_string("key:000000000015".as_bytes()),
+            StaticResp3::new_blob_string("VXK".as_bytes()),
         ]),
         StaticResp3::new_array(vec![
-            StaticResp3::new_blob_string("SET".as_bytes().into()),
-            StaticResp3::new_blob_string("key:000000000003".as_bytes().into()),
-            StaticResp3::new_blob_string("VXK".as_bytes().into()),
+            StaticResp3::new_blob_string("SET".as_bytes()),
+            StaticResp3::new_blob_string("key:000000000003".as_bytes()),
+            StaticResp3::new_blob_string("VXK".as_bytes()),
         ]),
         StaticResp3::new_array(vec![
-            StaticResp3::new_blob_string("SET".as_bytes().into()),
-            StaticResp3::new_blob_string("key:000000000025".as_bytes().into()),
-            StaticResp3::new_blob_string("VXK".as_bytes().into()),
+            StaticResp3::new_blob_string("SET".as_bytes()),
+            StaticResp3::new_blob_string("key:000000000025".as_bytes()),
+            StaticResp3::new_blob_string("VXK".as_bytes()),
         ]),
     ];
 
     // 执行SET命令, handler会将命令写入AOF文件
-    for f in &mut frames {
+    for f in frames {
         dispatch(f, &mut handler).await.unwrap();
     }
 

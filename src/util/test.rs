@@ -44,7 +44,7 @@ pub fn gen_test_config() -> Conf {
 
     let acl = Acl::new();
     acl.insert(
-        TEST_AC_USERNAME.into(),
+        TEST_AC_USERNAME,
         AccessControl {
             password: TEST_AC_PASSWORD.into(),
             cmds_flag: TEST_AC_CMDS_FLAG,

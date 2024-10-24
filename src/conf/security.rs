@@ -1,6 +1,7 @@
 use crate::{
     cmd::commands::*,
     error::{RutinError, RutinResult},
+    shared::db::Key,
 };
 use arc_swap::ArcSwap;
 use bytes::{Bytes, BytesMut};
@@ -34,14 +35,14 @@ impl Clone for SecurityConf {
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Deserialize, Default)]
-pub struct Acl(DashMap<Bytes, AccessControl>);
+pub struct Acl(DashMap<Key, AccessControl>);
 
 impl Acl {
     pub fn new() -> Self {
         Self(DashMap::new())
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<Ref<'_, Bytes, AccessControl>> {
+    pub fn get(&self, key: &[u8]) -> Option<Ref<'_, Key, AccessControl>> {
         if let Some(ac) = self.0.get(key) {
             if ac.enable {
                 return Some(ac);
@@ -51,7 +52,7 @@ impl Acl {
         None
     }
 
-    pub fn get_mut(&self, key: &[u8]) -> Option<RefMut<'_, Bytes, AccessControl>> {
+    pub fn get_mut(&self, key: &[u8]) -> Option<RefMut<'_, Key, AccessControl>> {
         if let Some(ac) = self.0.get_mut(key) {
             if ac.enable {
                 return Some(ac);
@@ -61,11 +62,11 @@ impl Acl {
         None
     }
 
-    pub fn insert(&self, key: Bytes, value: AccessControl) {
-        self.0.insert(key, value);
+    pub fn insert(&self, key: impl Into<Key>, value: AccessControl) {
+        self.0.insert(key.into(), value);
     }
 
-    pub fn remove(&self, key: &[u8]) -> Option<(Bytes, AccessControl)> {
+    pub fn remove(&self, key: &[u8]) -> Option<(Key, AccessControl)> {
         self.0.remove(key)
     }
 
@@ -89,11 +90,11 @@ impl Acl {
         }
     }
 
-    pub fn iter(&self) -> Iter<'_, Bytes, AccessControl> {
+    pub fn iter(&self) -> Iter<'_, Key, AccessControl> {
         self.0.iter()
     }
 
-    pub fn iter_mut(&self) -> IterMut<'_, Bytes, AccessControl> {
+    pub fn iter_mut(&self) -> IterMut<'_, Key, AccessControl> {
         self.0.iter_mut()
     }
 
@@ -164,44 +165,43 @@ impl AccessControl {
             }
         }
 
-        if let Some(mut allow_categories) = other.allow_categories {
-            for category_name in &mut allow_categories {
-                category_name.make_ascii_uppercase();
-                let flag = cat_name_to_cmds_flag(category_name.as_mut())?;
+        if let Some(allow_categories) = other.allow_categories {
+            for category_name in allow_categories {
+                let flag = cat_name_to_cmds_flag(category_name)?;
 
                 self.cmds_flag |= flag; // 允许某类命令执行
             }
         }
 
-        if let Some(mut allow_cmds) = other.allow_commands {
-            for cmd_name in &mut allow_cmds {
+        if let Some(allow_cmds) = other.allow_commands {
+            for cmd_name in allow_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
                     self.cmds_flag = ALL_CMDS_FLAG; // 允许所有命令执行，后面的命令无效
                     break;
                 }
-                let flag = cmd_name_to_flag(cmd_name.as_mut())?;
+                let flag = cmd_name_to_flag(cmd_name)?;
                 self.cmds_flag |= flag; // 允许命令执行
             }
         }
 
         // 禁止的优先级高于允许的
 
-        if let Some(mut deny_categories) = other.deny_categories {
-            for category_name in &mut deny_categories {
-                let flag = cat_name_to_cmds_flag(category_name.as_mut())?;
+        if let Some(deny_categories) = other.deny_categories {
+            for category_name in deny_categories {
+                let flag = cat_name_to_cmds_flag(category_name)?;
 
                 self.cmds_flag &= !flag; // 禁止某类命令执行
             }
         }
 
-        if let Some(mut deny_cmds) = other.deny_commands {
-            for cmd_name in &mut deny_cmds {
+        if let Some(deny_cmds) = other.deny_commands {
+            for cmd_name in deny_cmds {
                 if cmd_name.eq_ignore_ascii_case(b"ALL") {
                     self.cmds_flag = NO_CMDS_FLAG; // 禁止所有命令执行，后面的命令无效
                     break;
                 }
 
-                let flag = cmd_name_to_flag(cmd_name.as_mut())?;
+                let flag = cmd_name_to_flag(cmd_name)?;
                 self.cmds_flag &= !flag; // 禁止命令执行
             }
         }

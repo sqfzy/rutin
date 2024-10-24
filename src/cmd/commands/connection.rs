@@ -1,14 +1,18 @@
+use super::*;
 use crate::{
     cmd::{CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, ClientTrack, Handler},
-    util::{self, StaticBytes},
+    shared::db::Key,
+    util::{self, IntoUppercase},
     Id,
 };
 use bytes::Bytes;
 use bytestring::ByteString;
+use equivalent::Equivalent;
+use std::{borrow::Cow, fmt::Debug, hash::Hash};
 use tracing::instrument;
 
 /// # Reply:
@@ -17,7 +21,11 @@ use tracing::instrument;
 // #[derive(Debug)]
 // pub struct _Command;
 //
-// impl CmdExecutor for _Command {
+// impl<A, > CmdExecutor<A, Bytes,ByteString> for _Command
+// where
+//
+// A:CmdArg
+// {
 //     const CMD_TYPE: CmdType = CmdType::Other;
 //
 //     // TODO: 返回命令字典，以便支持客户端的命令补全
@@ -37,11 +45,15 @@ use tracing::instrument;
 /// **Simple string reply**: PONG when no argument is provided.
 /// **Bulk string reply**: the provided argument.
 #[derive(Debug)]
-pub struct Ping {
-    msg: Option<StaticBytes>,
+pub struct Ping<A> {
+    msg: Option<A>,
 }
 
-impl CmdExecutor for Ping {
+impl<A> CmdExecutor<A> for Ping<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(_handler),
@@ -52,19 +64,15 @@ impl CmdExecutor for Ping {
         self,
         _handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let res =
-            match self.msg {
-                // Safety: 底层数据在write_frame之后才会被clear，因此ByteString将其视为static也是安全的
-                Some(msg) => Resp3::new_simple_string(ByteString::from_static(
-                    std::str::from_utf8(unsafe { msg.into_inner() })?,
-                )),
-                None => Resp3::new_simple_string("PONG".into()),
-            };
+        let res = match self.msg {
+            Some(msg) => Resp3::new_blob_string(msg.into_bytes()),
+            None => Resp3::new_simple_string(ByteString::from_static("PONG")),
+        };
 
         Ok(Some(res))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if !args.is_empty() && args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -77,11 +85,15 @@ impl CmdExecutor for Ping {
 ///
 /// **Bulk string reply**: the given string.
 #[derive(Debug)]
-pub struct Echo {
-    msg: StaticBytes,
+pub struct Echo<A> {
+    msg: A,
 }
 
-impl CmdExecutor for Echo {
+impl<A> CmdExecutor<A> for Echo<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(_handler),
@@ -92,12 +104,10 @@ impl CmdExecutor for Echo {
         self,
         _handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        Ok(Some(Resp3::new_blob_string(Bytes::from_static(unsafe {
-            self.msg.into_inner()
-        }))))
+        Ok(Some(Resp3::new_blob_string(self.msg.into_bytes())))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 {
             return Err(RutinError::WrongArgNum);
         }
@@ -109,12 +119,16 @@ impl CmdExecutor for Echo {
 }
 
 #[derive(Debug)]
-pub struct Auth {
-    pub username: StaticBytes,
-    pub password: Option<StaticBytes>,
+pub struct Auth<A> {
+    pub username: A,
+    pub password: Option<A>,
 }
 
-impl CmdExecutor for Auth {
+impl<A> CmdExecutor<A> for Auth<A>
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -126,25 +140,25 @@ impl CmdExecutor for Auth {
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
         if let Some(acl) = handler.shared.conf().security.acl.as_ref() {
-            if let Some(ac) = acl.get(&self.username) {
+            if let Some(ac) = acl.get(self.username.as_ref()) {
                 // if !ac.is_pwd_correct(&self.password) {
-                if self.password.is_none() || !ac.check_pwd(&self.password.unwrap()) {
+                if self.password.is_none() || !ac.check_pwd(self.password.unwrap().as_ref()) {
                     Err("ERR invalid password".into())
                 } else {
                     // 设置客户端的权限
                     handler.context.ac = std::sync::Arc::new(ac.clone());
-                    Ok(Some(Resp3::new_simple_string("OK".into())))
+                    Ok(Some(Resp3::new_simple_string("OK")))
                 }
             } else {
                 Err("ERR invalid username".into())
             }
         } else {
             // 没有设置ACL
-            Ok(Some(Resp3::new_simple_string("OK".into())))
+            Ok(Some(Resp3::new_simple_string("OK")))
         }
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 1 && args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -176,7 +190,11 @@ pub struct ClientTracking {
     redirect: Option<Id>,
 }
 
-impl CmdExecutor for ClientTracking {
+impl<A> CmdExecutor<A> for ClientTracking
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -190,7 +208,7 @@ impl CmdExecutor for ClientTracking {
         if !self.switch_on {
             // 关闭追踪后并不意味着之前的追踪事件会被删除，只是不再添加新的追踪事件
             handler.context.client_track = None;
-            return Ok(Some(Resp3::new_simple_string("OK".into())));
+            return Ok(Some(Resp3::new_simple_string("OK")));
         }
 
         if let Some(redirect) = self.redirect {
@@ -207,17 +225,17 @@ impl CmdExecutor for ClientTracking {
                 Some(ClientTrack::new(handler.context.mailbox.outbox.clone()));
         }
 
-        Ok(Some(Resp3::new_simple_string("OK".into())))
+        Ok(Some(Resp3::new_simple_string("OK")))
     }
 
-    fn parse(mut args: CmdUnparsed, _ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, _ac: &AccessControl) -> RutinResult<Self> {
         if args.len() > 2 {
             return Err(RutinError::WrongArgNum);
         }
 
         let mut switch = [0; 3];
         let bulk = args.next().unwrap();
-        let len = bulk.len();
+        let len = bulk.as_ref().len();
         switch[..len].clone_from_slice(bulk.as_ref());
         switch[..len].make_ascii_uppercase();
 
@@ -244,7 +262,7 @@ impl CmdExecutor for ClientTracking {
 mod cmd_other_tests {
     use super::*;
     use crate::{
-        cmd::{gen_cmdunparsed_test, Get, Set},
+        cmd::{Get, Set},
         conf::AccessControl,
         util::{
             gen_test_handler, gen_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD,
@@ -259,28 +277,23 @@ mod cmd_other_tests {
         let shared = gen_test_shared();
         let (mut handler, _) = Handler::new_fake_with(shared, None, None);
 
-        let auth = Auth::parse(
-            gen_cmdunparsed_test([TEST_AC_USERNAME, "1234567"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = auth.execute(&mut handler).await;
-        assert_eq!(res.unwrap_err().to_string(), "ERR invalid password");
+        // Case: 错误的密码
+        let auth_res = Auth::test(&[TEST_AC_USERNAME, "1234567"], &mut handler)
+            .await
+            .unwrap_err();
+        assert_eq!(auth_res.to_string(), "ERR invalid password");
 
-        let auth = Auth::parse(
-            gen_cmdunparsed_test(["admin1", TEST_AC_PASSWORD].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = auth.execute(&mut handler).await;
-        assert_eq!(res.unwrap_err().to_string(), "ERR invalid username");
+        // Case: 错误的用户名
+        let auth_res = Auth::test(&["admin1", TEST_AC_PASSWORD], &mut handler)
+            .await
+            .unwrap_err();
+        assert_eq!(auth_res.to_string(), "ERR invalid username");
 
-        let auth = Auth::parse(
-            gen_cmdunparsed_test([TEST_AC_USERNAME, TEST_AC_PASSWORD].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        auth.execute(&mut handler).await.unwrap();
+        // Case: 正确的用户名和密码
+        let auth_res = Auth::test(&[TEST_AC_USERNAME, TEST_AC_PASSWORD], &mut handler)
+            .await
+            .unwrap();
+        auth_res.unwrap();
         assert_eq!(handler.context.ac.cmd_flag(), TEST_AC_CMDS_FLAG);
     }
 
@@ -290,48 +303,38 @@ mod cmd_other_tests {
 
         let mut handler = gen_test_handler();
 
-        let tracking = ClientTracking::parse(
-            gen_cmdunparsed_test(["ON"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        tracking.execute(&mut handler).await.unwrap();
+        // Case: 开启客户端追踪
+        let tracking_res = ClientTracking::test(&["ON"], &mut handler).await.unwrap();
+        tracking_res.unwrap();
         assert!(handler.context.client_track.is_some());
 
-        let set = Set::parse(
-            gen_cmdunparsed_test(["track_key", "foo"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        set.execute(&mut handler).await.unwrap();
-
-        // 追踪track_key
-        Get::apply(gen_cmdunparsed_test(["track_key"].as_ref()), &mut handler)
+        // Case: 设置跟踪的键
+        let set_res = Set::test(&["track_key", "foo"], &mut handler)
             .await
             .unwrap();
+        set_res.unwrap();
+
+        // 追踪track_key
+        Get::test(&["track_key"], &mut handler).await.unwrap();
 
         // 修改track_key
-        let set = Set::parse(
-            gen_cmdunparsed_test(["track_key", "bar"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        set.execute(&mut handler).await.unwrap();
+        let set_res = Set::test(&["track_key", "bar"], &mut handler)
+            .await
+            .unwrap();
+        set_res.unwrap();
 
+        // 验证是否发送了无效ation通知
         assert_eq!(
             handler.context.mailbox.recv().into_resp3_unchecked(),
             CheapResp3::new_array(vec![
-                CheapResp3::new_blob_string("INVALIDATE".into()),
-                CheapResp3::new_blob_string("track_key".into()),
+                CheapResp3::new_blob_string("INVALIDATE"),
+                CheapResp3::new_blob_string("track_key"),
             ])
         );
 
-        let tracking = ClientTracking::parse(
-            gen_cmdunparsed_test(["OFF"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        tracking.execute(&mut handler).await.unwrap();
+        // Case: 关闭客户端追踪
+        let tracking_res = ClientTracking::test(&["OFF"], &mut handler).await.unwrap();
+        tracking_res.unwrap();
         assert!(handler.context.client_track.is_none());
     }
 }

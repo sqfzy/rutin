@@ -168,6 +168,16 @@ impl From<Bytes> for Str {
     }
 }
 
+impl From<BytesMut> for Str {
+    fn from(mut b: BytesMut) -> Self {
+        if let Some(i) = atoi(&b) {
+            return Str::Int(i);
+        }
+
+        Self::Raw(b.freeze())
+    }
+}
+
 impl From<&'static str> for Str {
     fn from(s: &'static str) -> Self {
         if let Some(i) = atoi(s.as_bytes()) {

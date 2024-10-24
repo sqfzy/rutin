@@ -36,74 +36,74 @@ gen_flag!(
     /*********/
     /* admin */
     /*********/
-    AclCat(admin, dangerous),
-    AclDelUser(admin, dangerous),
-    AclSetUser(admin, dangerous),
+    AclCat<A>(admin, dangerous),
+    AclDelUser<A>(admin, dangerous),
+    AclSetUser<A>(admin, dangerous),
     AclUsers(admin, dangerous),
     AclWhoAmI(admin, dangerous),
     // AppendOnly(admin, dangerous),
     BgSave(admin, dangerous),
-    PSync(admin, dangerous),
+    PSync<A>(admin, dangerous),
     ReplConf(admin, dangerous),
     ReplicaOf(admin, dangerous),
     Save(admin, dangerous),
     /**************/
     /* connection */
     /**************/
-    Auth(connection),
+    Auth<A>(connection),
     ClientTracking(connection),
-    Echo(connection),
-    Ping(connection),
+    Echo<A>(connection),
+    Ping<A>(connection),
     /************/
     /* keyspace */
     /************/
-    Del(keyspace, write),
-    Dump(keyspace, read),
-    Exists(keyspace, read),
-    Expire(keyspace, write),
-    ExpireAt(keyspace, write),
-    ExpireTime(keyspace, read),
-    Keys(keyspace, read),
+    Del<A>(keyspace, write),
+    Dump<A>(keyspace, read),
+    Exists<A>(keyspace, read),
+    Expire<A>(keyspace, write),
+    ExpireAt<A>(keyspace, write),
+    ExpireTime<A>(keyspace, read),
+    Keys<A>(keyspace, read),
     // NBKeys(keyspace, read),
-    Persist(keyspace, write),
-    Pttl(keyspace, read),
-    Ttl(keyspace, read),
-    Type(keyspace, read),
+    Persist<A>(keyspace, write),
+    Pttl<A>(keyspace, read),
+    Ttl<A>(keyspace, read),
+    Type<A>(keyspace, read),
     /**********/
     /* string */
     /**********/
-    Append(string, write),
-    Decr(string, write),
-    DecrBy(string, write),
-    Get(string, read),
-    GetRange(string, read),
-    GetSet(string, write),
-    Incr(string, write),
-    IncrBy(string, write),
-    MGet(string, read),
-    MSet(string, write),
-    MSetNx(string, write),
-    Set(string, write),
-    SetEx(string, write),
-    SetNx(string, write),
-    StrLen(string, read),
+    Append<A>(string, write),
+    Decr<A>(string, write),
+    DecrBy<A>(string, write),
+    Get<A>(string, read),
+    GetRange<A>(string, read),
+    GetSet<A>(string, write),
+    Incr<A>(string, write),
+    IncrBy<A>(string, write),
+    MGet<A>(string, read),
+    MSet<A>(string, write),
+    MSetNx<A>(string, write),
+    Set<A>(string, write),
+    SetEx<A>(string, write),
+    SetNx<A>(string, write),
+    StrLen<A>(string, read),
     /********/
     /* list */
     /********/
-    BLMove(list, write),
-    BLPop(list, write),
-    LLen(list, read),
-    LPop(list, write),
-    LPos(list, read),
-    LPush(list, write),
+    BLMove<A>(list, write),
+    BLPop<A>(list, write),
+    LLen<A>(list, read),
+    LPop<A>(list, write),
+    LPos<A>(list, read),
+    LPush<A>(list, write),
     // NBLPop(list, write),
     /********/
     /* hash */
     /********/
-    HDel(hash, write),
-    HExists(hash, read),
-    HGet(hash, read),
-    HSet(hash, write),
+    HDel<A>(hash, write),
+    HExists<A>(hash, read),
+    HGet<A>(hash, read),
+    HSet<A>(hash, write),
     /**********/
     /* pubsub */
     /**********/
@@ -113,19 +113,19 @@ gen_flag!(
     /*************/
     /* scripting */
     /*************/
-    Eval(scripting),
-    EvalName(scripting),
-    ScriptExists(scripting),
+    Eval<A>(scripting),
+    EvalName<A>(scripting),
+    ScriptExists<A>(scripting),
     ScriptFlush(scripting),
-    ScriptRegister(scripting)
+    ScriptRegister<A>(scripting)
 );
 
 /// 调用前应将name转为大写
 pub fn cmd_name_to_flag<U>(name: U) -> RutinResult<CmdFlag>
 where
-    for<'a> Uppercase<32, &'a mut [u8]>: From<U>,
+    U: IntoUppercase,
 {
-    let name = Uppercase::<32, &mut [u8]>::from(name);
+    let name: Uppercase<32, U::Mut> = name.into_uppercase();
     _cmd_name_to_flag(name.as_ref()).ok_or(RutinError::UnknownCmd)
 }
 
@@ -152,9 +152,9 @@ pub fn cat_names() -> [&'static str; 11] {
 /// 调用前应将cat_name转为大写
 pub fn cat_name_to_cmds_flag<U>(cat_name: U) -> RutinResult<CmdFlag>
 where
-    for<'a> Uppercase<16, &'a mut [u8]>: From<U>,
+    U: IntoUppercase,
 {
-    let cat_name = Uppercase::<16, &mut [u8]>::from(cat_name);
+    let cat_name = cat_name.into_uppercase::<16>();
     let cat_name = cat_name.as_ref();
     Ok(match cat_name {
         b"ADMIN" => ADMIN_CMDS_FLAG,
@@ -187,7 +187,7 @@ where
 //         STRING_CMDS_FLAG => "string",
 //         LIST_CMDS_FLAG => "list",
 //         HASH_CMDS_FLAG => "hash",
-//         PUBSUB_CMDS_FLAG => "pubsub",
+//         A => "pubsub",
 //         SCRIPTING_CMDS_FLAG => "scripting",
 //         DANGEROUS_CMDS_FLAG => "dangerous",
 //         _ => panic!("Unknown ACL category flag: {}", cat_flag),

@@ -1,14 +1,19 @@
+use super::*;
 use crate::{
-    cmd::{CmdExecutor, CmdUnparsed},
+    cmd::{CmdArg, CmdExecutor, CmdUnparsed},
     conf::AccessControl,
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
     shared::{db::Key, Letter},
+    util::IntoUppercase,
     Int,
 };
 use bytes::Bytes;
+use bytestring::ByteString;
+use equivalent::Equivalent;
 use itertools::Itertools;
+use std::{fmt::Debug, hash::Hash};
 use tracing::instrument;
 
 /// # Reply:
@@ -22,7 +27,11 @@ pub struct Publish {
     msg: Bytes,
 }
 
-impl CmdExecutor for Publish {
+impl<A> CmdExecutor<A> for Publish
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -45,8 +54,8 @@ impl CmdExecutor for Publish {
         for listener in listeners {
             let res = listener
                 .send_async(Letter::Resp3(CheapResp3::new_array(vec![
-                    Resp3::new_blob_string("message".into()),
-                    Resp3::new_blob_string(self.topic.clone().into()),
+                    Resp3::new_blob_string("message"),
+                    Resp3::new_blob_string(self.topic.clone()),
                     Resp3::new_blob_string(self.msg.clone()),
                 ])))
                 .await;
@@ -62,7 +71,7 @@ impl CmdExecutor for Publish {
         Ok(Some(Resp3::new_integer(count)))
     }
 
-    fn parse(mut args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.len() != 2 {
             return Err(RutinError::WrongArgNum);
         }
@@ -74,7 +83,7 @@ impl CmdExecutor for Publish {
 
         Ok(Publish {
             topic: topic.into(),
-            msg: args.next().unwrap().into(),
+            msg: args.next().unwrap().into_bytes(),
         })
     }
 }
@@ -84,7 +93,11 @@ pub struct Subscribe {
     topics: Vec<Key>,
 }
 
-impl CmdExecutor for Subscribe {
+impl<A> CmdExecutor<A> for Subscribe
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -113,9 +126,9 @@ impl CmdExecutor for Subscribe {
                     .add_channel_listener(topic.clone(), context.mailbox.outbox.clone());
             }
 
-            conn.write_frames(&CheapResp3::new_array(vec![
-                Resp3::new_blob_string("subscribe".into()),
-                Resp3::new_blob_string(topic.into()),
+            conn.write_frame(&CheapResp3::new_array(vec![
+                Resp3::new_blob_string("subscribe"),
+                Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int), // 当前客户端订阅的频道数
             ]))
             .await?;
@@ -124,7 +137,7 @@ impl CmdExecutor for Subscribe {
         Ok(None)
     }
 
-    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -152,7 +165,11 @@ pub struct Unsubscribe {
     topics: Vec<Key>,
 }
 
-impl CmdExecutor for Unsubscribe {
+impl<A> CmdExecutor<A> for Unsubscribe
+where
+    A: CmdArg,
+    Key: for<'a> From<&'a A>,
+{
     #[instrument(
         level = "debug",
         skip(handler),
@@ -181,9 +198,9 @@ impl CmdExecutor for Unsubscribe {
                     .remove_channel_listener(topic.as_ref(), &context.mailbox.outbox);
             }
 
-            conn.write_frames(&CheapResp3::new_array(vec![
-                Resp3::new_blob_string("unsubscribe".into()),
-                Resp3::new_blob_string(topic.into()),
+            conn.write_frame(&CheapResp3::new_array(vec![
+                Resp3::new_blob_string("unsubscribe"),
+                Resp3::new_blob_string(topic),
                 Resp3::new_integer(subscribed_channels.len() as Int),
             ]))
             .await?;
@@ -192,7 +209,7 @@ impl CmdExecutor for Unsubscribe {
         Ok(None)
     }
 
-    fn parse(args: CmdUnparsed, ac: &AccessControl) -> RutinResult<Self> {
+    fn parse(args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
         if args.is_empty() {
             return Err(RutinError::WrongArgNum);
         }
@@ -213,7 +230,7 @@ impl CmdExecutor for Unsubscribe {
 #[cfg(test)]
 mod cmd_pub_sub_tests {
     use super::*;
-    use crate::{cmd::gen_cmdunparsed_test, util::test_init};
+    use crate::util::test_init;
 
     #[tokio::test]
     async fn sub_pub_unsub_test() {
@@ -221,13 +238,11 @@ mod cmd_pub_sub_tests {
 
         let (mut handler, _) = Handler::new_fake();
 
-        // 订阅channel1和channel2
-        let subscribe = Subscribe::parse(
-            gen_cmdunparsed_test(["channel1", "channel2"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        subscribe.execute(&mut handler).await.unwrap();
+        // 订阅 channel1 和 channel2
+        let subscribe_res = Subscribe::test(&["channel1", "channel2"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
 
         assert!(handler
             .shared
@@ -242,13 +257,11 @@ mod cmd_pub_sub_tests {
 
         assert_eq!(2, handler.context.subscribed_channels.len());
 
-        // 订阅channel3
-        let subscribe = Subscribe::parse(
-            gen_cmdunparsed_test(["channel3"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        subscribe.execute(&mut handler).await.unwrap();
+        // 订阅 channel3
+        let subscribe_res = Subscribe::test(&["channel3"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
 
         assert!(handler
             .shared
@@ -258,70 +271,53 @@ mod cmd_pub_sub_tests {
 
         assert_eq!(3, handler.context.subscribed_channels.len());
 
-        // 向channel1发布消息
-        let publish = Publish::parse(
-            gen_cmdunparsed_test(["channel1", "hello"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = publish
-            .execute(&mut handler)
+        // 向 channel1 发布消息
+        let publish_res = Publish::test(&["channel1", "hello"], &mut handler)
             .await
             .unwrap()
-            .unwrap()
-            .into_integer_unchecked();
+            .unwrap();
+        let res = publish_res.into_integer_unchecked();
         assert_eq!(res, 1);
 
         let msg = handler.context.mailbox.recv_async().await;
         assert_eq!(
             msg.into_resp3_unchecked().into_array_unchecked(),
             &[
-                Resp3::new_blob_string("message".into()),
-                Resp3::new_blob_string("channel1".into()),
-                Resp3::new_blob_string("hello".into())
+                Resp3::new_blob_string("message"),
+                Resp3::new_blob_string("channel1"),
+                Resp3::new_blob_string("hello")
             ]
         );
 
-        // 向channel2发布消息
-        let publish = Publish::parse(
-            gen_cmdunparsed_test(["channel2", "world"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = publish
-            .execute(&mut handler)
+        // 向 channel2 发布消息
+        let publish_res = Publish::test(&["channel2", "world"], &mut handler)
             .await
             .unwrap()
-            .unwrap()
-            .into_integer_unchecked();
+            .unwrap();
+        let res = publish_res.into_integer_unchecked();
         assert_eq!(res, 1);
 
         let msg = handler.context.mailbox.recv_async().await;
         assert_eq!(
             msg.into_resp3_unchecked().into_array_unchecked(),
             &[
-                Resp3::new_blob_string("message".into()),
-                Resp3::new_blob_string("channel2".into()),
-                Resp3::new_blob_string("world".into())
+                Resp3::new_blob_string("message"),
+                Resp3::new_blob_string("channel2"),
+                Resp3::new_blob_string("world")
             ]
         );
 
         // 尝试向未订阅的频道发布消息
-        let publish = Publish::parse(
-            gen_cmdunparsed_test(["channel_not_exist", "hello"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        let res = publish.execute(&mut handler).await.unwrap_err();
-        matches!(res, RutinError::ErrCode { code } if code == 0);
+        let publish_res = Publish::test(&["channel_not_exist", "hello"], &mut handler)
+            .await
+            .unwrap_err();
+        matches!(publish_res, RutinError::ErrCode { code } if code == 0);
 
-        // 取消订阅channel1
-        let unsubscribe = Unsubscribe::parse(
-            gen_cmdunparsed_test(["channel1"].as_ref()),
-            &AccessControl::new_loose(),
-        )
-        .unwrap();
-        unsubscribe.execute(&mut handler).await.unwrap();
+        // 取消订阅 channel1
+        let unsubscribe_res = Unsubscribe::test(&["channel1"], &mut handler)
+            .await
+            .unwrap()
+            .unwrap();
 
         assert!(handler
             .shared

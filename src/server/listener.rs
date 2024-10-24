@@ -45,16 +45,17 @@ impl Listener {
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
+        let shared = self.shared;
         tracing::info!(
             "server is running on {}:{}...",
-            &self.shared.conf().server.host,
-            self.shared.conf().server.port
+            &shared.conf().server.host,
+            shared.conf().server.port
         );
 
         #[cfg(feature = "debug")]
         println!("debug mode is enabled.\n{:?}", self.shared.conf());
 
-        let post_office = self.shared.post_office();
+        let post_office = shared.post_office();
         loop {
             #[cfg(not(feature = "debug"))]
             let permit = self.limit_connections.clone().acquire_owned().await?;
@@ -66,12 +67,12 @@ impl Listener {
             let (id, mailbox) = post_office.register_handler_mailbox(self.next_client_id);
             self.next_client_id = id + 1;
 
-            let context = HandlerContext::new(self.shared, id, mailbox);
+            let context = HandlerContext::new(shared, id, mailbox);
             match &self.tls_acceptor {
                 None => {
-                    let handler = Handler::new(self.shared, stream, context);
+                    shared.pool().spawn_pinned(move || async move {
+                        let handler = Handler::new(shared, stream, context);
 
-                    self.shared.pool().spawn_pinned(|| async move {
                         // 开始处理连接
                         handler.run().await.ok();
 
@@ -81,10 +82,10 @@ impl Listener {
                 }
                 // 如果开启了TLS，则使用TlsStream
                 Some(tls_acceptor) => {
-                    let handler =
-                        Handler::new(self.shared, tls_acceptor.accept(stream).await?, context);
+                    let stream = tls_acceptor.accept(stream).await?;
+                    shared.pool().spawn_pinned(move || async move {
+                        let handler = Handler::new(shared, stream, context);
 
-                    self.shared.pool().spawn_pinned(|| async move {
                         // 开始处理连接
                         handler.run().await.ok();
 

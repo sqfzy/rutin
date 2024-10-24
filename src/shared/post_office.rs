@@ -326,7 +326,6 @@ pub enum Letter {
     Resp3(CheapResp3),
 
     Wcmd(BytesMut),
-
     Psync {
         handle_replica: Handler<TcpStream>,
         repl_id: Bytes,

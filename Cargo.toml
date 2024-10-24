@@ -16,6 +16,7 @@ categories = ["database"]
 members = ["rutin_proc", "rutin_dashmap"]
 
 [dependencies]
+rutin_resp3 = { path = "../rutin_resp3", features = ["mlua", "ahash"] }
 rutin_proc = { path = "rutin_proc" }
 anyhow = "1.0.59"
 bytes = { version = "1", features = ["serde"] }
@@ -39,7 +40,7 @@ serde = { version = "1.0", features = ["derive"] }
 # crossbeam = { version = "0.8.4", features = ["crossbeam-queue", "nightly"] }
 itoa = "1.0.11"
 ryu = "1.0.17"
-tokio-util = { version = "0.7.11", features = ["full"] }
+tokio-util = { version = "0.7.12", features = ["full"] }
 atoi = "2.0.0"
 # async-shutdown = "0.2.2"
 flume = { version = "0.11.0", features = ["async", "spin"] }
@@ -68,7 +69,7 @@ pin-project = "1.1.5"
 # yoke = { version = "0.7.4", features = ["derive"] }
 # owning_ref = "0.4.1"
 # polonius-the-crab = "0.4.1"
-num-bigint = "0.4.5"
+num-bigint = "0.4.6"
 memchr = "2.7.2"
 smallvec = { version = "1.13.2", features = ["const_new", "union"] }
 mimalloc = { version = "0.1" }
@@ -94,6 +95,8 @@ zeroize = { version = "1", optional = true }
 # redis-protocol = "5.0.1"
 equivalent = "1.0.1"
 tracing-appender = "0.2.3"
+derive_more = { version = "1.0.0", features = ["debug"] }
+ouroboros = "0.18.4"
 # futures-util = "0.3.30"
 # lru = "0.12.3"
 # neat-date-time = "0.2.0"

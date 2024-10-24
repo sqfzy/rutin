@@ -1,6 +1,6 @@
 use super::ID;
 use crate::{
-    cmd::{dispatch, CmdUnparsed},
+    cmd::{dispatch, CmdArg, CmdUnparsed},
     conf::{AccessControl, DEFAULT_USER},
     error::RutinResult,
     frame::{CheapResp3, Resp3, StaticResp3},
@@ -12,7 +12,7 @@ use crate::{
 use bytes::{Buf, BytesMut};
 use event_listener::{listener, Event, EventListener, IntoNotification};
 use futures::pin_mut;
-use std::{sync::Arc, time::Duration};
+use std::{fmt::Debug, sync::Arc, time::Duration};
 use tracing::{debug, instrument};
 
 pub struct Handler<S: AsyncStream> {
@@ -41,12 +41,10 @@ impl<S: AsyncStream> Handler<S> {
         debug!("client connected");
 
         let res = ID.scope(self.context.id, async {
-
             let inbox = self.context.mailbox.inbox.clone();
             let inbox_fut = inbox.recv_async();
             pin_mut!(inbox_fut);
 
-            let mut frames_buf = Vec::with_capacity(16);
             loop {
                 tokio::select! {
                     biased; // 有序轮询
@@ -69,36 +67,20 @@ impl<S: AsyncStream> Handler<S> {
                             Letter::Wcmd(_) | Letter::Psync {..} | Letter::ModifyShared(..) => inbox_fut.set(inbox.recv_async()),
                         }
 
-                        inbox_fut .set(inbox.recv_async());
+                        inbox_fut.set(inbox.recv_async());
                     }
                     // 等待客户端请求
-                    res = self.conn.read_frames_buf(&mut frames_buf) => {
-                        debug_assert!(!self.conn.reader_buf.has_remaining());
-
-                        let n = res?;
-                        if n == 0 {
+                    res = self.conn.read_frame() => {
+                        if let Some(f) = res? && let Some(res) = dispatch(f, &mut self).await? {
+                            self.conn.write_frame(&res).await?;
+                        } else {
                             return Ok(());
-                        }
-
-                        for f in &mut frames_buf[..n] {
-                            if let Some(resp) = dispatch(f, &mut self).await? {
-                                self.conn.write_frames(&resp).await?;
-                            }
                         }
 
                         // 清空读缓冲区，所有RefMutResp3失效
                         self.conn.finish_read();
                     }
                 };
-
-
-                // let bg_tasks = &mut self.context.background_tasks;
-                // if !bg_tasks.is_empty() {
-                //     // 移除已经完成的后台任务
-                //     bg_tasks.retain(|task| {
-                //         !task.is_finished()
-                //     });
-                // }
             }
         })
         .await;
@@ -123,9 +105,9 @@ impl<S: AsyncStream> Handler<S> {
 
             let mut buf = itoa::Buffer::new();
             let mut resp3: Resp3<BytesMut, String> = Resp3::new_array(vec![
-                Resp3::new_blob_string("REPLCONF".into()),
-                Resp3::new_blob_string("ACK".into()),
-                Resp3::new_blob_string(buf.format(*offset).into()),
+                Resp3::new_blob_string("REPLCONF"),
+                Resp3::new_blob_string("ACK"),
+                Resp3::new_blob_string(buf.format(*offset)),
             ]);
 
             let inbox = self.context.mailbox.inbox.clone();
@@ -157,28 +139,23 @@ impl<S: AsyncStream> Handler<S> {
                         inbox_fut.set(inbox.recv_async());
                     }
                     // 等待master请求(一般为master传播的写命令)
-                    res = self.conn.read_frames() => {
-                        if let Some(mut frames) = res? {
-                            for f in frames.iter_mut() {
-                                // 如果从节点返回响应的话，主节点为了区分响应和请求
-                                // 就需要同步等待响应，为了避免等待，从节点只发送请
-                                // 求，不会发送响应(除了REPLCONF GETACK命令)
-                                let size = f.size() as u64;
-                                dispatch(f, &mut self).await?;
-                                *offset += size;
-                            }
-
-                            // 清空读缓冲区，所有RefMutResp3失效
-                            self.conn.finish_read();
+                    res = self.conn.read_frame() => {
+                        if let Some(f) = res? {
+                            let size = f.size() as u64;
+                            dispatch(f, &mut self).await?;
+                            *offset += size;
                         } else {
                             return Ok(());
                         }
+
+                        // 清空读缓冲区，所有RefMutResp3失效
+                        self.conn.finish_read();
                     }
                     // 每秒向master发送REPLCONF ACK <offset>命令，以便master知道当前
                     // 同步进度。
                     _ = interval.tick() => {
                         // 更新offset frame
-                        resp3.as_array_mut().unwrap()[2] = Resp3::new_blob_string(buf.format(*offset).into());
+                        resp3.as_array_mut().unwrap()[2] = Resp3::new_blob_string(buf.format(*offset));
 
                         self.conn.write_frame(&resp3).await?;
                         // 等待master响应"+OK\r\n"
@@ -198,32 +175,18 @@ impl<S: AsyncStream> Handler<S> {
     }
 
     #[inline]
-    pub async fn dispatch(
+    pub async fn dispatch<B, St>(
         &mut self,
-        cmd_frame: &mut StaticResp3,
-    ) -> RutinResult<Option<CheapResp3>> {
+        cmd_frame: Resp3<B, St>,
+    ) -> RutinResult<Option<CheapResp3>>
+    where
+        B: Debug + CmdArg,
+        Key: for<'a> From<&'a B>,
+        St: Debug,
+    {
         ID.scope(self.context.id, dispatch(cmd_frame, self)).await
     }
 }
-
-// impl<S: AsyncStream> Drop for Handler<S> {
-//     fn drop(&mut self) {
-//         let Handler {
-//             shared,
-//             context:
-//                 HandlerContext {
-//                     id, /* background_tasks: background_task , */
-//                     ..
-//                 },
-//             ..
-//         } = self;
-//
-//         // // 中断后台任务
-//         // for task in background_task {
-//         //     task.abort();
-//         // }
-//     }
-// }
 
 #[derive(Debug)]
 pub struct HandlerContext {
@@ -238,9 +201,6 @@ pub struct HandlerContext {
 
     // 是否开启缓存追踪
     pub client_track: Option<ClientTrack>,
-
-    // // 后台任务
-    // pub background_tasks: Vec<tokio::task::AbortHandle>,
 
     // 用于缓存需要传播的写命令
     pub wcmd_buf: WcmdBuf,
@@ -294,21 +254,11 @@ pub struct WcmdBuf {
 
 impl WcmdBuf {
     #[inline]
-    pub fn buffer_wcmd(&mut self, cmd_name: &'static str, cmd: &CmdUnparsed) {
-        use crate::frame::{ARRAY_PREFIX, CRLF};
-        use bytes::BufMut;
+    pub fn buffer_wcmd<A: CmdArg>(&mut self, cmd: CmdUnparsed<A>) -> CmdUnparsed<A> {
+        let frame = Resp3::<A, String>::from(cmd);
+        frame.encode_buf(&mut self.buf);
 
-        let buf = &mut self.buf;
-        buf.put_u8(ARRAY_PREFIX);
-        buf.put_slice(itoa::Buffer::new().format(cmd.len() + 1).as_bytes());
-        buf.put_slice(CRLF);
-
-        let cmd_name_frame: Resp3<&[u8], String> = Resp3::new_blob_string(cmd_name.as_bytes());
-        cmd_name_frame.encode_buf(buf);
-
-        for frame in cmd.inner.iter() {
-            frame.encode_buf(buf);
-        }
+        frame.try_into().unwrap()
     }
 
     pub fn rollback(&mut self) {
@@ -381,8 +331,8 @@ impl<S: AsyncStream> Handler<S> {
 
             if let Ok(obj) = db.object_entry(&key).await {
                 let invalidation = CheapResp3::new_array(VecDeque::from([
-                    Resp3::new_blob_string("INVALIDATE".into()),
-                    Resp3::new_blob_string(key.clone().into()),
+                    Resp3::new_blob_string("INVALIDATE"),
+                    Resp3::new_blob_string(key.clone()),
                 ]));
 
                 let callback = move |_obj: &mut ObjectValue, _ex: Instant| {

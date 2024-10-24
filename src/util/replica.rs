@@ -9,6 +9,7 @@ use crate::{
     util,
 };
 use bytes::Buf;
+use rutin_resp3::codec::decode::need_bytes_async;
 use std::{sync::Arc, time::Duration};
 use tokio::{net::TcpStream, sync::Mutex};
 use tokio_util::time::FutureExt as _;
@@ -27,7 +28,7 @@ use tracing::instrument;
 // 该函数只会在服务初始化时调用
 #[allow(clippy::manual_async_fn)]
 #[instrument(level = "debug", skip(shared), err)]
-pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> RutinResult<()> {
+pub async fn _set_server_to_replica(shared: Shared, master_info: MasterInfo) -> RutinResult<()> {
     static OFFSET: Mutex<u64> = Mutex::const_new(0);
 
     let conf = shared.conf();
@@ -62,7 +63,7 @@ pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> R
     // 发送PING测试主节点是否可达
     handle_master
         .conn
-        .write_frame(&Resp3::<_, String>::new_array(vec![
+        .write_frame(&Resp3::<&'static [u8; 4], String>::new_array(vec![
             Resp3::new_blob_string(b"PING"),
         ]))
         .await?;
@@ -81,7 +82,7 @@ pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> R
     if let Some(password) = conf.replica.master_auth.as_ref() {
         handle_master
             .conn
-            .write_frame(&Resp3::<_, String>::new_array(vec![
+            .write_frame(&Resp3::<Vec<u8>, String>::new_array(vec![
                 Resp3::new_blob_string(b"AUTH".to_vec()),
                 Resp3::new_blob_string(password.clone().into_bytes()),
             ]))
@@ -100,7 +101,7 @@ pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> R
     // 发送端口信息
     handle_master
         .conn
-        .write_frame(&Resp3::<_, String>::new_array(vec![
+        .write_frame(&Resp3::<Vec<u8>, String>::new_array(vec![
             Resp3::new_blob_string(b"REPLCONF".to_vec()),
             Resp3::new_blob_string(b"listening-port".to_vec()),
             Resp3::new_blob_string(conf.server.port.to_string().into_bytes()),
@@ -125,7 +126,7 @@ pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> R
         // PSYNC ? -1
         handle_master
             .conn
-            .write_frame(&Resp3::<_, String>::new_array(vec![
+            .write_frame(&Resp3::<&'static [u8], String>::new_array(vec![
                 Resp3::new_blob_string(b"PSYNC".as_ref()),
                 Resp3::new_blob_string(b"?".as_ref()),
                 Resp3::new_blob_string(b"-1".as_ref()),
@@ -134,13 +135,13 @@ pub async fn set_server_to_replica(shared: Shared, master_info: MasterInfo) -> R
     } else {
         // PSYNC <run_id> <offset>
         let array = vec![
-            Resp3::new_blob_string("PSYNC".into()),
+            Resp3::new_blob_string("PSYNC"),
             Resp3::new_blob_string(run_id.clone()),
-            Resp3::new_blob_string(offset.to_string().into()),
+            Resp3::new_blob_string(offset.to_string()),
         ];
         handle_master
             .conn
-            .write_frame(&Resp3::<_, String>::new_array(array))
+            .write_frame(&Resp3::<Vec<u8>, String>::new_array(array))
             .await?;
     }
 
@@ -215,7 +216,7 @@ async fn full_sync(handler: &mut Handler<TcpStream>) -> RutinResult<()> {
     // 忽略'$'
     let len: usize = util::atoi::<i128>(&len[1..])? as usize;
 
-    Resp3::need_bytes_async(&mut conn.stream, &mut conn.reader_buf, len).await?;
+    need_bytes_async(&mut conn.stream, &mut conn.reader_buf, len).await?;
 
     let pos = conn.reader_buf.position();
     conn.reader_buf.get_mut().advance(pos as usize);

@@ -49,7 +49,7 @@ impl Shared {
     }
 
     #[inline]
-    pub fn pool(&self) -> &LocalPoolHandle {
+    pub fn pool(&self) -> &'static LocalPoolHandle {
         &self.inner().pool
     }
 
