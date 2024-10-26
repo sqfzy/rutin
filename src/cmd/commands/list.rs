@@ -37,7 +37,6 @@ pub struct BLMove<A> {
 impl<A> CmdExecutor<A> for BLMove<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -141,7 +140,7 @@ where
 
         let shutdown = context.shutdown.listen();
         let outbox = context.mailbox.outbox.clone();
-        let dst = self.destination;
+        let dst = self.destination.into_bytes();
         let shared = *shared;
 
         shared.pool().spawn_pinned(move || async move {
@@ -159,7 +158,7 @@ where
                         return;
                     };
 
-                    let res = shared.db().update_object_force(&dst,|| List::default().into(), |obj| {
+                    let res = shared.db().update_object_force::<Bytes>(&dst,|| List::default().into(), |obj| {
                         let list = obj.on_list_mut()?;
                         match self.whereto {
                             Where::Left => list.push_front(elem.clone()),
@@ -220,7 +219,6 @@ pub struct BLPop<A> {
 impl<A> CmdExecutor<A> for BLPop<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -368,7 +366,6 @@ pub struct LPos<A> {
 impl<A> CmdExecutor<A> for LPos<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -503,7 +500,6 @@ pub struct LLen<A> {
 impl<A> CmdExecutor<A> for LLen<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -559,7 +555,6 @@ pub struct LPop<A> {
 impl<A> CmdExecutor<A> for LPop<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -640,7 +635,6 @@ pub struct LPush<A> {
 impl<A> CmdExecutor<A> for LPush<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

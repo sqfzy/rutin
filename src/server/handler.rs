@@ -4,9 +4,9 @@ use crate::{
     conf::{AccessControl, ReplicaConf, DEFAULT_USER},
     error::RutinResult,
     frame::{CheapResp3, Resp3},
-    server::{AsyncStream, Connection, FakeStream, SHARED},
+    server::{AsyncStream, Connection, FakeStream },
     shared::{db::Key, Letter, MailboxGuard, Outbox, Shared, NULL_ID},
-    util::BackLog,
+    util::{gen_test_shared, BackLog},
     Id,
 };
 use bytes::BytesMut;
@@ -374,11 +374,11 @@ pub type FakeHandler = Handler<FakeStream>;
 
 impl Handler<FakeStream> {
     pub fn new_fake() -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(*SHARED, None, None)
+        Self::new_fake_with(gen_test_shared(), None, None)
     }
 
     pub fn with_capacity(capacity: usize) -> (Self, Connection<FakeStream>) {
-        Self::new_fake_with(*SHARED, None, Some(capacity))
+        Self::new_fake_with(gen_test_shared(), None, Some(capacity))
     }
 
     pub fn with_shared(shared: Shared) -> (Self, Connection<FakeStream>) {

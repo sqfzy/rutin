@@ -148,20 +148,20 @@ impl Display for StaticBytes {
     }
 }
 
-impl mlua::FromLua<'_> for StaticBytes {
-    fn from_lua(value: mlua::Value<'_>, _lua: &'_ mlua::Lua) -> mlua::Result<Self> {
-        match value {
-            mlua::Value::String(s) => Ok(unsafe { leak_bytes(s.as_bytes()) }),
-            _ => Err(mlua::Error::FromLuaConversionError {
-                from: value.type_name(),
-                to: "StaticBytes",
-                message: None,
-            }),
-        }
-    }
-}
+// impl mlua::FromLua for StaticBytes {
+//     fn from_lua(value: mlua::Value, _lua: &'_ mlua::Lua) -> mlua::Result<Self> {
+//         match value {
+//             mlua::Value::String(s) => Ok(unsafe { leak_bytes(s.as_bytes()) }),
+//             _ => Err(mlua::Error::FromLuaConversionError {
+//                 from: value.type_name(),
+//                 to: "StaticBytes".to_string(),
+//                 message: None,
+//             }),
+//         }
+//     }
+// }
 
-impl mlua::IntoLua<'_> for StaticBytes {
+impl mlua::IntoLua for StaticBytes {
     fn into_lua(self, lua: &mlua::Lua) -> mlua::Result<mlua::Value> {
         lua.create_string(self.as_ref()).map(mlua::Value::String)
     }

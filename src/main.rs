@@ -16,7 +16,7 @@ async fn main() {
 
     preface();
 
-    let shared = *SHARED;
+    let shared = rutin::shared::Shared::new();
 
     init_server(shared).await.unwrap();
 

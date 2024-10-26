@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use crate::{
     conf::RdbConf,
+    error::{RutinError, RutinResult},
     server::{NEVER_EXPIRE, UNIX_EPOCH},
     shared::{
         db::{Db, Hash, Key, List, Object, ObjectValue, Set, Str, ZSet},
@@ -8,7 +9,6 @@ use crate::{
     },
 };
 use ahash::{AHashMap, AHashSet};
-use anyhow::bail;
 use bytes::{Buf, BufMut, BytesMut};
 use skiplist::OrderedSkipList;
 use std::collections::VecDeque;
@@ -62,7 +62,7 @@ const RDB_ENC_LZF: u8 = 3;
 static CRITICAL: Mutex<()> = Mutex::const_new(());
 
 #[instrument(level = "info", skip(shared), err)]
-pub async fn save_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> {
+pub async fn save_rdb(shared: Shared, rdb_conf: &RdbConf) -> RutinResult<()> {
     let _guard = CRITICAL.lock().await;
 
     let now = tokio::time::Instant::now();
@@ -93,7 +93,7 @@ pub async fn save_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> 
 }
 
 #[instrument(level = "info", skip(shared), err)]
-pub async fn load_rdb(shared: Shared, rdb_conf: &RdbConf) -> anyhow::Result<()> {
+pub async fn load_rdb(shared: Shared, rdb_conf: &RdbConf) -> RutinResult<()> {
     let _guard = CRITICAL.lock().await;
 
     let now = tokio::time::Instant::now();
@@ -296,7 +296,7 @@ pub async fn decode_rdb(
     rdb_data: &mut BytesMut,
     db: &Db,
     enable_checksum: bool,
-) -> anyhow::Result<()> {
+) -> RutinResult<()> {
     if enable_checksum {
         let mut buf = [0; 8];
         buf.copy_from_slice(&rdb_data[rdb_data.len() - 8..]);
@@ -306,17 +306,18 @@ pub async fn decode_rdb(
         let checksum = crc.checksum(&rdb_data[..rdb_data.len() - 8]);
 
         if expected_checksum != checksum {
-            anyhow::bail!(
+            RutinError::from(format!(
                 "checksum failed, expected: {:?}, got: {:?}",
-                expected_checksum,
-                checksum
-            );
+                expected_checksum, checksum
+            ));
         }
     }
 
     let magic = rdb_data.split_to(5);
     if magic != b"REDIS"[..] {
-        anyhow::bail!("magic string should be REDIS, but got {magic:?}");
+        return Err(RutinError::from(
+            "magic string should be REDIS, but got {magic:?}",
+        ));
     }
     let _rdb_version = rdb_data.get_u32();
 
@@ -412,29 +413,36 @@ pub async fn decode_rdb(
                     .await?;
                 expire = *NEVER_EXPIRE;
             }
-            invalid_ctrl => bail!("invalid RDB control byte: {:?}", invalid_ctrl),
+            invalid_ctrl => {
+                return Err(RutinError::from(format!(
+                    "invalid RDB control byte: {:?}",
+                    invalid_ctrl
+                )))
+            }
         }
     }
 
     Ok(())
 }
 
-pub fn decode_zset_value(bytes: &mut BytesMut) -> anyhow::Result<ZSet> {
+pub fn decode_zset_value(bytes: &mut BytesMut) -> RutinResult<ZSet> {
     if let Length::Len(zset_size) = decode_length(bytes)? {
         let mut zset = OrderedSkipList::new();
         for _ in 0..zset_size {
             let member = decode_str_value(bytes)?.to_bytes();
-            let score = std::str::from_utf8(&decode_str_value(bytes)?.to_bytes())?.parse()?;
+            let score = std::str::from_utf8(&decode_str_value(bytes)?.to_bytes())?
+                .parse()
+                .map_err(|_| RutinError::from("invalid zset score"))?;
 
             zset.insert((score, member).into());
         }
         Ok(ZSet::SkipList(Box::new(zset)))
     } else {
-        bail!("invalid zset length")
+        Err(RutinError::from("invalid zset length"))
     }
 }
 
-pub fn decode_set_value(bytes: &mut BytesMut) -> anyhow::Result<Set> {
+pub fn decode_set_value(bytes: &mut BytesMut) -> RutinResult<Set> {
     if let Length::Len(set_size) = decode_length(bytes)? {
         let mut set = AHashSet::with_capacity(set_size);
         for _ in 0..set_size {
@@ -444,11 +452,11 @@ pub fn decode_set_value(bytes: &mut BytesMut) -> anyhow::Result<Set> {
 
         Ok(Set::HashSet(Box::new(set)))
     } else {
-        bail!("invalid set length")
+        return Err(RutinError::from("invalid set length"));
     }
 }
 
-pub fn decode_hash_value(bytes: &mut BytesMut) -> anyhow::Result<Hash> {
+pub fn decode_hash_value(bytes: &mut BytesMut) -> RutinResult<Hash> {
     if let Length::Len(hash_size) = decode_length(bytes)? {
         let mut hash = AHashMap::with_capacity(hash_size);
         for _ in 0..hash_size {
@@ -459,11 +467,11 @@ pub fn decode_hash_value(bytes: &mut BytesMut) -> anyhow::Result<Hash> {
 
         Ok(Hash::HashMap(Box::new(hash)))
     } else {
-        bail!("invalid hash length")
+        return Err(RutinError::from("invalid hash length"));
     }
 }
 
-pub fn decode_list_kv(bytes: &mut BytesMut) -> anyhow::Result<List> {
+pub fn decode_list_kv(bytes: &mut BytesMut) -> RutinResult<List> {
     if let Length::Len(list_size) = decode_length(bytes)? {
         let mut list = VecDeque::with_capacity(list_size);
         for _ in 0..list_size {
@@ -473,11 +481,11 @@ pub fn decode_list_kv(bytes: &mut BytesMut) -> anyhow::Result<List> {
 
         Ok(List::LinkedList(list))
     } else {
-        bail!("invalid list length")
+        Err(RutinError::from("invalid list length"))
     }
 }
 
-pub fn decode_str_value(bytes: &mut BytesMut) -> anyhow::Result<Str> {
+pub fn decode_str_value(bytes: &mut BytesMut) -> RutinResult<Str> {
     let str = match decode_length(bytes)? {
         Length::Len(len) => Str::Raw(bytes.split_to(len).freeze()),
         Length::Int8 => Str::from(bytes.get_i8() as i128),
@@ -490,7 +498,7 @@ pub fn decode_str_value(bytes: &mut BytesMut) -> anyhow::Result<Str> {
                 let raw = lzf::lzf_decompress(&bytes.split_to(compressed_len));
                 Str::Raw(raw)
             } else {
-                bail!("invalid LZF length")
+                return Err(RutinError::from("invalid LZF length"));
             }
         }
     };
@@ -498,11 +506,11 @@ pub fn decode_str_value(bytes: &mut BytesMut) -> anyhow::Result<Str> {
     Ok(str)
 }
 
-pub fn decode_key(bytes: &mut BytesMut) -> anyhow::Result<Key> {
+pub fn decode_key(bytes: &mut BytesMut) -> RutinResult<Key> {
     if let Length::Len(len) = decode_length(bytes)? {
         Ok(bytes.split_to(len).freeze().into())
     } else {
-        bail!("invalid key length")
+        return Err(RutinError::from("invalid key length"));
     }
 }
 
@@ -515,7 +523,7 @@ pub enum Length {
     Lzf,
 }
 
-pub fn decode_length(bytes: &mut BytesMut) -> anyhow::Result<Length> {
+pub fn decode_length(bytes: &mut BytesMut) -> RutinResult<Length> {
     let ctrl = bytes.get_u8();
     let len = match ctrl >> 6 {
         // 00
@@ -540,9 +548,9 @@ pub fn decode_length(bytes: &mut BytesMut) -> anyhow::Result<Length> {
             1 => Length::Int16,
             2 => Length::Int32,
             3 => Length::Lzf,
-            _ => bail!("invalid length encoding"),
+            _ => return Err(RutinError::from("invalid length encoding")),
         },
-        _ => bail!("invalid length encoding"),
+        _ => return Err(RutinError::from("invalid length encoding")),
     };
 
     Ok(len)

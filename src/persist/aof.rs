@@ -1,6 +1,7 @@
 use crate::{
     cmd::dispatch,
     conf::{AofConf, AppendFSync},
+    error::RutinResult,
     persist::rdb::{decode_rdb, encode_rdb},
     server::Handler,
     shared::{Letter, Shared, AOF_ID, SET_MASTER_ID},
@@ -182,7 +183,7 @@ pub fn spawn_save_aof(shared: Shared, aof_conf: Arc<AofConf>) {
 }
 
 #[instrument(level = "info", skip(shared), err)]
-pub async fn load_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> {
+pub async fn load_aof(shared: Shared, aof_conf: &AofConf) -> RutinResult<()> {
     // 暂停AOF写入
     let _guard = shared.post_office().send_block(AOF_ID).await;
 

@@ -20,7 +20,6 @@ pub struct HDel<A = StaticBytes> {
 impl<A> CmdExecutor<A> for HDel<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -80,7 +79,6 @@ pub struct HExists<A> {
 impl<A> CmdExecutor<A> for HExists<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -136,7 +134,6 @@ pub struct HGet<A> {
 impl<A> CmdExecutor<A> for HGet<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -194,7 +191,6 @@ pub struct HSet<A> {
 impl<A> CmdExecutor<A> for HSet<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

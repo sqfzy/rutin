@@ -36,9 +36,8 @@ where
         + Debug
         + AsRef<[u8]>
         + Into<Str>
-        + Into<Key>
-        + Send
-        + 'static,
+        + Into<Key>,
+    for<'a> Self: Into<Key>,
 {
     fn into_bytes(self) -> Bytes {
         let k: Key = self.into();
@@ -46,7 +45,8 @@ where
     }
 }
 
-impl<T> CmdArg for T where
+impl<T> CmdArg for T
+where
     T: IntoUppercase
         + IntoUppercase<Mut: AsRef<[u8]>>
         + Equivalent<Key>
@@ -54,16 +54,21 @@ impl<T> CmdArg for T where
         + Debug
         + AsRef<[u8]>
         + Into<Str>
-        + Into<Key>
-        + Send
-        + 'static
+        + Into<Key>, // + Send
+    // + 'static
+    for<'a> Self: Into<Key>,
 {
+}
+
+impl<A: CmdArg> From<&A> for Key {
+    fn from(value: &A) -> Self {
+        value.as_ref().into()
+    }
 }
 
 trait CmdExecutor<A>: CommandFlag + Sized + std::fmt::Debug
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[inline]
     async fn apply(

@@ -28,7 +28,6 @@ pub struct Append<A> {
 impl<A> CmdExecutor<A> for Append<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -90,7 +89,6 @@ pub struct Decr<A> {
 impl<A> CmdExecutor<A> for Decr<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -143,7 +141,6 @@ pub struct DecrBy<A> {
 impl<A> CmdExecutor<A> for DecrBy<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -199,7 +196,6 @@ pub struct Get<A> {
 impl<A> CmdExecutor<A> for Get<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[inline]
     #[instrument(
@@ -265,7 +261,6 @@ pub struct GetRange<A> {
 impl<A> CmdExecutor<A> for GetRange<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -339,7 +334,6 @@ pub struct GetSet<A> {
 impl<A> CmdExecutor<A> for GetSet<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -395,7 +389,6 @@ pub struct Incr<A> {
 impl<A> CmdExecutor<A> for Incr<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -449,7 +442,6 @@ pub struct IncrBy<A> {
 impl<A> CmdExecutor<A> for IncrBy<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -505,7 +497,6 @@ pub struct MGet<A> {
 impl<A> CmdExecutor<A> for MGet<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -578,7 +569,6 @@ pub struct MSet<A> {
 impl<A> CmdExecutor<A> for MSet<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -631,7 +621,6 @@ pub struct MSetNx<A> {
 impl<A> CmdExecutor<A> for MSetNx<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -704,7 +693,6 @@ enum SetOpt {
 impl<A> CmdExecutor<A> for Set<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[inline]
     #[instrument(
@@ -910,7 +898,6 @@ pub struct SetEx<A> {
 impl<A> CmdExecutor<A> for SetEx<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -965,7 +952,6 @@ pub struct SetNx<A> {
 impl<A> CmdExecutor<A> for SetNx<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -1024,7 +1010,6 @@ pub struct StrLen<A> {
 impl<A> CmdExecutor<A> for StrLen<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

@@ -2,31 +2,31 @@ use crate::{
     cmd::CmdArg,
     conf::{AccessControl, DEFAULT_USER},
     error::{RutinError, RutinResult},
-    frame::{CheapResp3, ExpensiveResp3, Resp3},
-    server::{AsyncStream, FakeHandler, Handler, HandlerContext, SHARED},
-    shared::{db::Key, NULL_ID},
+    frame::{BorrowedBytesWrapper, CheapResp3, ExpensiveResp3, Resp3},
+    server::{AsyncStream, FakeHandler, Handler, HandlerContext},
+    shared::{db::Key, Shared, NULL_ID},
 };
 use ahash::RandomState;
 use bytes::Bytes;
 use dashmap::{DashMap, Entry};
 use futures_intrusive::sync::LocalMutex;
+use itertools::Itertools;
 use mlua::{prelude::*, StdLib};
-use std::{cell::LazyCell, collections::VecDeque, rc::Rc, sync::Arc};
+use std::{cell::OnceCell, collections::VecDeque, rc::Rc, sync::Arc};
 use tracing::debug;
 
 thread_local! {
-    // PERF:
     // 由于client handler执行脚本过程中需要修改并保持Lua环境直到脚本执行完毕，
     // 而同一线程的多个client handler会共享一个Lua环境，因此同一时刻本线程的
     // Lua环境只能被一个client handler使用。使用LocalMutex可以保证线程内的task
     // 互斥。
-    static LUA: LazyCell<Rc<LocalMutex<Lua>>> = LazyCell::new(|| Rc::new(LocalMutex::new(create_lua(), false)));
-    static FAKE_HANDLER: Rc<LocalMutex<FakeHandler>> = Rc::new(LocalMutex::new(create_fake_handler(), false));
+    static LUA: OnceCell<Rc<LocalMutex<Lua>>> = const { OnceCell::new() };
+    static FAKE_HANDLER: OnceCell<Rc<LocalMutex<FakeHandler>>> = const { OnceCell::new() };
+    // static LUA: OnceCell<Rc<LocalMutex<Lua>>> = OnceCell::new(|| Rc::new(LocalMutex::new(create_lua(), false)));
+    // static FAKE_HANDLER: OnecCell<Rc<LocalMutex<FakeHandler>>> = OnceCell::new()Rc::new(LocalMutex::new(create_fake_handler(), false));
 }
 
-fn create_fake_handler() -> FakeHandler {
-    let shared = *SHARED;
-
+fn create_fake_handler(shared: Shared) -> FakeHandler {
     let mailbox = shared.post_office().register_mailbox(NULL_ID);
     let context = HandlerContext::with_ac(
         NULL_ID,
@@ -43,8 +43,8 @@ fn create_fake_handler() -> FakeHandler {
 /// 全局的ARGV table: 用于存储Redis的参数
 /// 全局的redis table: 包含了redis.call, redis.pcall, redis.status_reply, redis.error_reply, redis.log等方法
 /// fake handler: 用于执行Redis命令。fake handler的执行权限应当与客户端的权限保持一致
-fn create_lua() -> Lua {
-    fn _create_lua() -> anyhow::Result<Lua> {
+fn create_lua(shared: Shared) -> Lua {
+    fn _create_lua(shared: Shared) -> LuaResult<Lua> {
         let libs = StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::COROUTINE;
         let lua = Lua::new_with(libs, LuaOptions::default()).unwrap();
 
@@ -72,28 +72,35 @@ fn create_lua() -> Lua {
             // 执行脚本，当发生运行时错误时，中断脚本
             let call = lua.create_async_function(move |lua, cmd: LuaMultiValue| async move {
                 let mut cmd_frame = VecDeque::new();
-                for v in cmd {
-                    match v {
-                        LuaValue::String(s) => {
-                            cmd_frame.push_back(ExpensiveResp3::new_blob_string(s.as_bytes()));
-                        }
-                        _ => {
-                            return Err(LuaError::external(format!(
-                                "redis.call only accept 'string' arguments, but got {:?}",
-                                v.type_name()
-                            )));
-                        }
-                    }
+
+                let lua_strings: Vec<mlua::String> = cmd
+                    .into_iter()
+                    .map(|v| match v {
+                        LuaValue::String(s) => Ok(s),
+                        _ => Err(LuaError::external(format!(
+                            "redis.call only accept 'string' arguments, but got {:?}",
+                            v.type_name()
+                        ))),
+                    })
+                    .try_collect()?;
+
+                for s in &lua_strings {
+                    cmd_frame.push_back(Resp3::<BorrowedBytesWrapper, String>::new_blob_string(
+                        s.as_bytes(),
+                    ));
                 }
 
                 let cmd_frame = Resp3::new_array(cmd_frame);
 
-                let handler = FAKE_HANDLER.with(|h| h.clone());
+                let handler = FAKE_HANDLER.with(|h| {
+                    h.get_or_init(|| Rc::new(LocalMutex::new(create_fake_handler(shared), false)))
+                        .clone()
+                });
                 let mut handler = handler.lock().await;
                 match handler.dispatch(cmd_frame).await {
                     Ok(frame) => match frame {
-                        Some(res) => Ok(res.into_lua(lua)),
-                        None => Ok(CheapResp3::Null.into_lua(lua)),
+                        Some(res) => Ok(res.into_lua(&lua)),
+                        None => Ok(CheapResp3::Null.into_lua(&lua)),
                     },
                     // 中断脚本，返回运行时错误
                     Err(e) => Err(LuaError::external(format!("ERR {}", e))),
@@ -105,32 +112,38 @@ fn create_lua() -> Lua {
             // 执行脚本，当发生运行时错误时，返回一张表，{ err: Lua String }，不会中断脚本
             let pcall = lua.create_async_function(move |lua, cmd: LuaMultiValue| async move {
                 let mut cmd_frame = VecDeque::with_capacity(cmd.len());
-                for v in cmd {
-                    match v {
-                        LuaValue::String(s) => {
-                            cmd_frame.push_back(ExpensiveResp3::new_blob_string(s.as_bytes()));
-                        }
-                        _ => {
-                            return Ok(CheapResp3::new_simple_error(format!(
-                                "redis.call only accept 'string' arguments, but got {:?}",
-                                v.type_name()
-                            ))
-                            .into_lua(lua));
-                        }
-                    }
+
+                let lua_strings: Vec<mlua::String> = cmd
+                    .into_iter()
+                    .map(|v| match v {
+                        LuaValue::String(s) => Ok(s),
+                        _ => Err(LuaError::external(format!(
+                            "redis.pcall only accept 'string' arguments, but got {:?}",
+                            v.type_name()
+                        ))),
+                    })
+                    .try_collect()?;
+
+                for s in &lua_strings {
+                    cmd_frame.push_back(Resp3::<BorrowedBytesWrapper, String>::new_blob_string(
+                        s.as_bytes(),
+                    ));
                 }
 
                 let cmd_frame = Resp3::new_array(cmd_frame);
 
-                let handler = FAKE_HANDLER.with(|h| h.clone());
+                let handler = FAKE_HANDLER.with(|h| {
+                    h.get_or_init(|| Rc::new(LocalMutex::new(create_fake_handler(shared), false)))
+                        .clone()
+                });
                 let mut handler = handler.lock().await;
                 match handler.dispatch(cmd_frame).await {
                     Ok(frame) => match frame {
-                        Some(res) => Ok(res.into_lua(lua)),
-                        None => Ok(CheapResp3::Null.into_lua(lua)),
+                        Some(res) => Ok(res.into_lua(&lua)),
+                        None => Ok(CheapResp3::Null.into_lua(&lua)),
                     },
                     // 不返回运行时错误，而是返回一个表 { err: Lua String }，让用户自行处理
-                    Err(e) => Ok(CheapResp3::new_simple_error(e.to_string()).into_lua(lua)),
+                    Err(e) => Ok(CheapResp3::new_simple_error(e.to_string()).into_lua(&lua)),
                 }
             })?;
             redis.set("pcall", pcall)?;
@@ -187,7 +200,7 @@ fn create_lua() -> Lua {
         Ok(lua)
     }
 
-    _create_lua().unwrap()
+    _create_lua(shared).unwrap()
 }
 
 // TODO: 新增排序辅助函数
@@ -221,8 +234,14 @@ impl LuaScript {
         let db = shared.db();
 
         async {
-            let lua = LUA.with(|lua| (*lua).clone());
-            let fake_handler = FAKE_HANDLER.with(|h| h.clone());
+            let lua = LUA.with(|lua| {
+                lua.get_or_init(|| Rc::new(LocalMutex::new(create_lua(shared), false)))
+                    .clone()
+            });
+            let fake_handler = FAKE_HANDLER.with(|h| {
+                h.get_or_init(|| Rc::new(LocalMutex::new(create_fake_handler(shared), false)))
+                    .clone()
+            });
 
             // 加锁，确保该async block只能有一个task，即一个client handler在执行
             let lua = lua.lock().await;
@@ -245,13 +264,13 @@ impl LuaScript {
             let global = lua.globals();
 
             // 传入KEYS和ARGV
-            let lua_keys = global.get::<_, LuaTable>("KEYS")?;
+            let lua_keys = global.get::<LuaTable>("KEYS")?;
             for (i, key) in keys.into_iter().enumerate() {
                 // TODO: 支持二进制安全
                 lua_keys.set(i + 1, std::str::from_utf8(key.as_ref())?.into_lua(&lua)?)?;
             }
 
-            let lua_argv = global.get::<_, LuaTable>("ARGV")?;
+            let lua_argv = global.get::<LuaTable>("ARGV")?;
             for (i, arg) in argv.into_iter().enumerate() {
                 // TODO: 支持二进制安全
                 lua_argv.set(i + 1, std::str::from_utf8(arg.as_ref())?.into_lua(&lua)?)?;
@@ -269,7 +288,7 @@ impl LuaScript {
             let mut fake_handler = fake_handler.lock().await;
             std::mem::swap(&mut fake_handler.context, &mut handler.context);
 
-            Ok::<CheapResp3, anyhow::Error>(res)
+            Ok::<CheapResp3, RutinError>(res)
         }
         .await
         .map_err(|e| RutinError::from(e.to_string()))

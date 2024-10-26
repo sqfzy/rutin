@@ -20,9 +20,6 @@ pub const TEST_AC_PASSWORD: &str = "test_pwd";
 pub const TEST_AC_CMDS_FLAG: CmdFlag = EXISTS_CMD_FLAG;
 
 pub fn test_init() {
-    #[cfg(not(feature = "test_util"))]
-    panic!("need to enable test_util feature");
-
     static INIT: Once = Once::new();
 
     INIT.call_once(|| {

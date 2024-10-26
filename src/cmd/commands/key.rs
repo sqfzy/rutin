@@ -52,7 +52,6 @@ pub struct Del<A> {
 impl<A> CmdExecutor<A> for Del<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -107,7 +106,6 @@ pub struct Dump<A> {
 impl<A> CmdExecutor<A> for Dump<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -165,7 +163,6 @@ pub struct Exists<A> {
 impl<A> CmdExecutor<A> for Exists<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -219,7 +216,6 @@ pub struct Expire<A> {
 impl<A> CmdExecutor<A> for Expire<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -309,7 +305,6 @@ pub struct ExpireAt<A> {
 impl<A> CmdExecutor<A> for ExpireAt<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -407,7 +402,6 @@ pub struct ExpireTime<A> {
 impl<A> CmdExecutor<A> for ExpireTime<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -461,7 +455,6 @@ pub struct Keys<A> {
 impl<A> CmdExecutor<A> for Keys<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -523,7 +516,6 @@ pub struct Persist<A> {
 impl<A> CmdExecutor<A> for Persist<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -575,7 +567,6 @@ pub struct Pttl<A> {
 impl<A> CmdExecutor<A> for Pttl<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -630,7 +621,6 @@ pub struct Ttl<A> {
 impl<A> CmdExecutor<A> for Ttl<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -683,7 +673,6 @@ pub struct Type<A> {
 impl<A> CmdExecutor<A> for Type<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

@@ -27,7 +27,6 @@ pub struct Publish {
 impl<A> CmdExecutor<A> for Publish
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -93,7 +92,6 @@ pub struct Subscribe {
 impl<A> CmdExecutor<A> for Subscribe
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -165,7 +163,6 @@ pub struct Unsubscribe {
 impl<A> CmdExecutor<A> for Unsubscribe
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

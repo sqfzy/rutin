@@ -26,18 +26,12 @@ use std::{
     str::FromStr,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
-        Arc, LazyLock,
+        Arc,
     },
     time::{Duration, SystemTime},
 };
 use tokio::{task_local, time::Instant};
 use tracing::{error, info, level_filters::LevelFilter};
-
-#[cfg(not(feature = "test_util"))]
-pub static SHARED: LazyLock<Shared> = LazyLock::new(Shared::new);
-// TODO: remove
-#[cfg(feature = "test_util")]
-pub static SHARED: LazyLock<Shared> = LazyLock::new(crate::util::gen_test_shared);
 
 // 程序运行前或测试前需要进行初始化
 pub fn preface() {

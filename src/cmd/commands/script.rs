@@ -21,7 +21,6 @@ pub struct Eval<A> {
 impl<A> CmdExecutor<A> for Eval<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -76,7 +75,6 @@ pub struct EvalName<A> {
 impl<A> CmdExecutor<A> for EvalName<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -129,7 +127,6 @@ pub struct ScriptExists<A> {
 impl<A> CmdExecutor<A> for ScriptExists<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -170,7 +167,6 @@ pub struct ScriptFlush;
 impl<A> CmdExecutor<A> for ScriptFlush
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -205,7 +201,6 @@ pub struct ScriptRegister<A> {
 impl<A> CmdExecutor<A> for ScriptRegister<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

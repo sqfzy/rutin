@@ -50,7 +50,6 @@ pub struct Ping<A> {
 impl<A> CmdExecutor<A> for Ping<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -90,7 +89,6 @@ pub struct Echo<A> {
 impl<A> CmdExecutor<A> for Echo<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -125,7 +123,6 @@ pub struct Auth<A> {
 impl<A> CmdExecutor<A> for Auth<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -191,7 +188,6 @@ pub struct ClientTracking {
 impl<A> CmdExecutor<A> for ClientTracking
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

@@ -28,7 +28,6 @@ pub struct AclCat<A> {
 impl<A> CmdExecutor<A> for AclCat<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -83,7 +82,6 @@ pub struct AclDelUser<A> {
 impl<A> CmdExecutor<A> for AclDelUser<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -141,7 +139,6 @@ pub struct AclSetUser<A> {
 impl<A> CmdExecutor<A> for AclSetUser<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -319,7 +316,6 @@ pub struct AclUsers;
 impl<A> CmdExecutor<A> for AclUsers
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -353,7 +349,6 @@ pub struct AclWhoAmI;
 impl<A> CmdExecutor<A> for AclWhoAmI
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -430,7 +425,6 @@ pub struct BgSave;
 impl<A> CmdExecutor<A> for BgSave
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -477,7 +471,6 @@ pub struct PSync<A> {
 impl<A> CmdExecutor<A> for PSync<A>
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     async fn execute(
         self,
@@ -554,7 +547,6 @@ pub struct ReplConf {
 impl<A> CmdExecutor<A> for ReplConf
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[allow(unused_variables)]
     async fn execute(
@@ -644,7 +636,6 @@ pub struct ReplicaOf {
 impl<A> CmdExecutor<A> for ReplicaOf
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",
@@ -715,7 +706,6 @@ pub struct Save;
 impl<A> CmdExecutor<A> for Save
 where
     A: CmdArg,
-    Key: for<'a> From<&'a A>,
 {
     #[instrument(
         level = "debug",

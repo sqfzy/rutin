@@ -84,6 +84,11 @@ pub enum RutinError {
         source: std::str::Utf8Error,
     },
 
+    #[snafu(transparent)]
+    LuaError {
+        source: mlua::Error,
+    },
+
     #[snafu(display("{msg}"))]
     Other {
         msg: Cow<'static, str>,

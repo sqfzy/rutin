@@ -63,7 +63,7 @@ tokio-rustls = "0.26.0"
 # tokio-rustls-acme = "0.3.0"
 rustls-pemfile = "2.1.2"
 rustls = "0.23.7"
-mlua = { version = "0.9.8", features = ["async", "lua54", "vendored"] }
+mlua = { version = "0.10", features = ["async", "lua54", "vendored"] }
 either = "1.12.0"
 pin-project = "1.1.5"
 # yoke = { version = "0.7.4", features = ["derive"] }
@@ -147,4 +147,3 @@ debug_client = []
 debug_server = []
 redis = []
 secure = ["mimalloc/secure", "zeroize"]
-test_util = []
