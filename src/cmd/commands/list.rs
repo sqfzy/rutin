@@ -725,9 +725,8 @@ mod cmd_list_tests {
         test_init();
         let mut handler = gen_test_handler();
 
-        // Case: 空列表
-        let llen_res = LLen::test(&["list"], &mut handler).await.unwrap().unwrap();
-        assert_eq!(llen_res.into_integer_unchecked(), 0);
+        // Case: 列表不存在
+        let _llen_res = LLen::test(&["list"], &mut handler).await.unwrap_err();
 
         // Case: 插入一个元素
         let lpush_res = LPush::test(&["list", "key1"], &mut handler)
@@ -836,7 +835,7 @@ mod cmd_list_tests {
 
         // 阻塞测试 (无超时)
         let (mut handler, _) = Handler::new_fake();
-        let blpop = BLPop::test(&["l3", "0"], &mut handler).await.unwrap();
+        let _blpop = BLPop::test(&["l3", "0"], &mut handler).await.unwrap();
 
         let inbox = handler.context.mailbox.inbox.clone();
         let handle = handler.shared.pool().spawn_pinned(move || async move {
@@ -859,7 +858,7 @@ mod cmd_list_tests {
 
         // 阻塞测试 (有超时)
         let (mut handler, _) = Handler::new_fake();
-        let blpop = BLPop::test(&["l4", "2"], &mut handler).await.unwrap();
+        let _blpop = BLPop::test(&["l4", "2"], &mut handler).await.unwrap();
 
         let inbox = handler.context.mailbox.inbox.clone();
         let handle = handler.shared.pool().spawn_pinned(move || async move {
@@ -887,7 +886,7 @@ mod cmd_list_tests {
         test_init();
 
         let mut handler = gen_test_handler();
-        let lpush_res = LPush::test(
+        let _lpush_res = LPush::test(
             &["list", "8", "7", "6", "5", "2", "2", "2", "1", "0"],
             &mut handler,
         )
@@ -908,9 +907,9 @@ mod cmd_list_tests {
         assert_eq!(
             lpos_res.into_array_unchecked(),
             &[
-                Resp3::new_integer(4),
-                Resp3::new_integer(5),
-                Resp3::new_integer(6)
+                Resp3::new_integer(2),
+                Resp3::new_integer(3),
+                Resp3::new_integer(4)
             ]
         );
 
@@ -920,7 +919,7 @@ mod cmd_list_tests {
             .unwrap();
         assert_eq!(
             lpos_res.into_array_unchecked(),
-            &[Resp3::new_integer(5), Resp3::new_integer(6)]
+            &[Resp3::new_integer(3), Resp3::new_integer(4)]
         );
 
         let lpos_res = LPos::test(
@@ -932,7 +931,7 @@ mod cmd_list_tests {
         .unwrap();
         assert_eq!(
             lpos_res.into_array_unchecked(),
-            &[Resp3::new_integer(5), Resp3::new_integer(6)]
+            &[Resp3::new_integer(4), Resp3::new_integer(3)]
         );
     }
 }

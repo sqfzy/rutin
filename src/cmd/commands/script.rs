@@ -6,12 +6,9 @@ use crate::{
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
     shared::db::Key,
-    util::{atoi, IntoUppercase, StaticBytes},
+    util::atoi,
 };
-use bytes::Bytes;
-use bytestring::ByteString;
-use equivalent::Equivalent;
-use std::{fmt::Debug, hash::Hash};
+use std::fmt::Debug;
 use tracing::instrument;
 
 #[derive(Debug)]

@@ -1,9 +1,9 @@
+use super::*;
 use crate::{
     cmd::commands::*,
+    conf::db::Key,
     error::{RutinError, RutinResult},
-    shared::db::Key,
 };
-use arc_swap::ArcSwap;
 use bytes::{Bytes, BytesMut};
 use dashmap::{
     iter::Iter,
@@ -16,24 +16,24 @@ use serde::Deserialize;
 
 pub const DEFAULT_USER: Bytes = Bytes::from_static(b"default_ac");
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct SecurityConf {
     pub requirepass: Option<String>, // 访问密码
-    pub default_ac: ArcSwap<AccessControl>,
+    pub default_ac: Arc<AccessControl>,
+    #[serde(flatten)]
     pub acl: Option<Acl>, // None代表禁用ACL
 }
 
-impl Clone for SecurityConf {
-    fn clone(&self) -> Self {
+impl Default for SecurityConf {
+    fn default() -> Self {
         Self {
-            requirepass: self.requirepass.clone(),
-            default_ac: ArcSwap::new(self.default_ac.load_full()),
-            acl: self.acl.clone(),
+            requirepass: None,
+            default_ac: Arc::new(AccessControl::new_loose()),
+            acl: None,
         }
     }
 }
 
-#[repr(transparent)]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Acl(DashMap<Key, AccessControl>);
 

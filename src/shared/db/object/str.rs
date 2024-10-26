@@ -169,7 +169,7 @@ impl From<Bytes> for Str {
 }
 
 impl From<BytesMut> for Str {
-    fn from(mut b: BytesMut) -> Self {
+    fn from(b: BytesMut) -> Self {
         if let Some(i) = atoi(&b) {
             return Str::Int(i);
         }
@@ -225,7 +225,7 @@ impl From<Str> for Bytes {
 
 impl Default for Str {
     fn default() -> Self {
-        Str::Raw("".into())
+        Str::Int(0)
     }
 }
 

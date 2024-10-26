@@ -1,7 +1,11 @@
-use crate::persist::aof::AppendFSync;
+use crate::{
+    conf::{Shared, AOF_ID},
+    persist::aof::spawn_save_aof,
+};
 use serde::{Deserialize, Deserializer};
+use std::sync::Arc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone, Deserialize)]
 pub struct AofConf {
     pub use_rdb_preamble: bool,
     pub file_path: String,
@@ -20,26 +24,40 @@ impl Default for AofConf {
     }
 }
 
-impl<'de> Deserialize<'de> for AofConf {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct TempAofConf {
-            pub use_rdb_preamble: bool,
-            pub file_path: String,
-            pub append_fsync: AppendFSync,
-            pub auto_aof_rewrite_min_size: u64,
+impl AofConf {
+    pub fn may_update_server_state(
+        new: Option<&Arc<Self>>,
+        old: Option<&Arc<Self>>,
+        shared: Shared,
+    ) {
+        if let Some(new) = new {
+            if let Some(old) = old
+                && new == old
+            {
+                return;
+            }
+
+            shared.post_office().send_shutdown(AOF_ID);
+            spawn_save_aof(shared, new.clone());
+        } else {
+            shared.post_office().send_shutdown(AOF_ID);
         }
-
-        let temp = TempAofConf::deserialize(deserializer)?;
-
-        Ok(AofConf {
-            use_rdb_preamble: temp.use_rdb_preamble,
-            file_path: temp.file_path,
-            append_fsync: temp.append_fsync,
-            auto_aof_rewrite_min_size: (temp.auto_aof_rewrite_min_size as u128) << 20,
-        })
     }
+
+    pub fn update_server_state(new: Option<&Arc<Self>>, shared: Shared) {
+        shared.post_office().send_shutdown(AOF_ID);
+
+        if let Some(new) = new {
+            spawn_save_aof(shared, new.clone());
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase", rename = "append_fsync")]
+pub enum AppendFSync {
+    Always,
+    #[default]
+    EverySec,
+    No,
 }

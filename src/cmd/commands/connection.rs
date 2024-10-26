@@ -6,18 +6,16 @@ use crate::{
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, ClientTrack, Handler},
     shared::db::Key,
-    util::{self, IntoUppercase},
+    util::{self},
     Id,
 };
-use bytes::Bytes;
 use bytestring::ByteString;
-use equivalent::Equivalent;
-use std::{borrow::Cow, fmt::Debug, hash::Hash};
+use std::fmt::Debug;
 use tracing::instrument;
 
-/// # Reply:
-///
-/// **Array reply**: a nested list of command details. The order of the commands in the array is random.
+// # Reply:
+//
+// **Array reply**: a nested list of command details. The order of the commands in the array is random.
 // #[derive(Debug)]
 // pub struct _Command;
 //
@@ -139,7 +137,7 @@ where
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        if let Some(acl) = handler.shared.conf().security.acl.as_ref() {
+        if let Some(acl) = handler.shared.conf().security_conf().acl.as_ref() {
             if let Some(ac) = acl.get(self.username.as_ref()) {
                 // if !ac.is_pwd_correct(&self.password) {
                 if self.password.is_none() || !ac.check_pwd(self.password.unwrap().as_ref()) {
@@ -263,7 +261,6 @@ mod cmd_other_tests {
     use super::*;
     use crate::{
         cmd::{Get, Set},
-        conf::AccessControl,
         util::{
             gen_test_handler, gen_test_shared, test_init, TEST_AC_CMDS_FLAG, TEST_AC_PASSWORD,
             TEST_AC_USERNAME,

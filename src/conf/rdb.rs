@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RdbConf {

@@ -4,7 +4,7 @@ port = 6379        # 服务器端口
 # expire_check_interval_secs = 10 # 检查过期键的频率，单位为秒
 log_level = "info"    # 日志级别
 max_connections = 256 # 最大连接数
-max_batch = 2         # 最大批量操作数
+max_batch = 512       # 最大批量操作数
 
 [security]
 # 默认ACL，必须设置。设置后，所有连接初始化时都会使用该ACL。default_ac不设置密码

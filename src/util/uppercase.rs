@@ -7,6 +7,8 @@ pub trait IntoUppercase: Sized {
     type Mut: AsRef<[u8]> = &'static [u8];
 
     fn into_uppercase<const L: usize>(self) -> Uppercase<L, Self::Mut>;
+
+    fn to_uppercase<const L: usize>(&mut self) -> Uppercase<L, &mut [u8]>;
 }
 
 // impl<B: AsMut<[u8]>> IntoUppercase for B {
@@ -21,12 +23,23 @@ impl IntoUppercase for Bytes {
     fn into_uppercase<const L: usize>(self) -> Uppercase<L, Self::Mut> {
         Uppercase::from_const(self.as_ref())
     }
+
+    fn to_uppercase<const L: usize>(&mut self) -> Uppercase<L, &mut [u8]> {
+        Uppercase::from_const(self.as_ref())
+    }
 }
 
 impl IntoUppercase for StaticBytes {
     type Mut = &'static mut [u8];
 
     fn into_uppercase<const L: usize>(self) -> Uppercase<L, &'static mut [u8]> {
+        match self {
+            StaticBytes::Const(s) => Uppercase::from_const(s),
+            StaticBytes::Mut(s) => Uppercase::from_mut(s),
+        }
+    }
+
+    fn to_uppercase<const L: usize>(&mut self) -> Uppercase<L, &mut [u8]> {
         match self {
             StaticBytes::Const(s) => Uppercase::from_const(s),
             StaticBytes::Mut(s) => Uppercase::from_mut(s),
@@ -39,6 +52,10 @@ impl IntoUppercase for BytesMut {
 
     fn into_uppercase<const L: usize>(self) -> Uppercase<L, BytesMut> {
         Uppercase::from_mut(self)
+    }
+
+    fn to_uppercase<const L: usize>(&mut self) -> Uppercase<L, &mut [u8]> {
+        Uppercase::from_mut(self.as_mut())
     }
 }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     cmd::CmdExecutor,
-    conf::{AccessControl, AccessControlIntermedium, MasterInfo, DEFAULT_USER},
+    conf::{AccessControl, AccessControlIntermedium, ReplicaConf, DEFAULT_USER},
     error::{RutinError, RutinResult},
     frame::Resp3,
     persist::rdb::save_rdb,
@@ -9,10 +9,10 @@ use crate::{
     shared::{db::Key, Letter, SharedInner, NULL_ID, SET_MASTER_ID},
     util,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use bytestring::ByteString;
 use itertools::Itertools;
-use std::{any::Any, fmt::Debug, hash::Hash, sync::Arc};
+use std::{any::Any, fmt::Debug, sync::Arc};
 use tokio::net::TcpStream;
 use tracing::instrument;
 
@@ -97,7 +97,7 @@ where
     ) -> RutinResult<Option<CheapResp3>> {
         let mut count = 0;
 
-        if let Some(acl) = &handler.shared.conf().security.acl {
+        if let Some(acl) = &handler.shared.conf().security_conf().acl {
             for user in self.users {
                 if acl.remove(user.as_ref()).is_some() {
                     count += 1;
@@ -153,16 +153,25 @@ where
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let security = &handler.shared.conf().security;
+        let shared = handler.shared;
+        let conf = shared.conf();
+        let security_conf = conf.security_conf();
+
         if self.name.as_ref() == DEFAULT_USER {
             // 如果是default_ac则clone后合并，再放回
-            let default_ac = security.default_ac.load();
+            let default_ac = security_conf.default_ac.clone();
             let mut default_ac = AccessControl::clone(&default_ac);
 
             default_ac.merge(self.aci)?;
 
-            security.default_ac.store(Arc::new(default_ac));
-        } else if let Some(acl) = &handler.shared.conf().security.acl {
+            conf.update_security_conf(
+                &mut |mut security_conf| {
+                    security_conf.default_ac = Arc::new(default_ac.clone());
+                    security_conf
+                },
+                shared,
+            );
+        } else if let Some(acl) = &security_conf.acl {
             if let Some(mut ac) = acl.get_mut(self.name.as_ref()) {
                 // 如果存在则合并
                 ac.merge(self.aci)?;
@@ -323,7 +332,7 @@ where
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
         let mut users = vec![Resp3::new_blob_string(DEFAULT_USER)];
-        if let Some(acl) = &handler.shared.conf().security.acl {
+        if let Some(acl) = &handler.shared.conf().security_conf().acl {
             users.extend(acl.iter().map(|e| Resp3::new_blob_string(e.key().clone())));
         }
 
@@ -436,9 +445,12 @@ where
         let shared = handler.shared;
 
         handler.shared.pool().spawn_pinned(move || async move {
-            save_rdb(shared, &shared.conf().rdb.clone().unwrap_or_default())
-                .await
-                .ok();
+            save_rdb(
+                shared,
+                &shared.conf().rdb_conf().clone().unwrap_or_default(),
+            )
+            .await
+            .ok();
         });
 
         Ok(Some(Resp3::new_simple_string("Background saving started")))
@@ -479,11 +491,12 @@ where
             let conf = handler.shared.conf();
 
             let whatever_handler = {
-                let stream = TcpStream::connect((conf.server.host.to_string(), conf.server.port))
-                    .await
-                    .map_err(|e| RutinError::from(e.to_string()))?;
+                let stream =
+                    TcpStream::connect((conf.server_conf().host.as_ref(), conf.server_conf().port))
+                        .await
+                        .map_err(|e| RutinError::from(e.to_string()))?;
 
-                let mailbox = post_office.register_special_mailbox(NULL_ID);
+                let mailbox = post_office.register_mailbox(NULL_ID);
                 // 用于通知关闭whatever_handler
                 outbox.send(Letter::Shutdown).ok();
 
@@ -499,7 +512,12 @@ where
             outbox
                 .send_async(Letter::Psync {
                     handle_replica,
-                    repl_id: self.repl_id.into_bytes(),
+                    repl_id: self
+                        .repl_id
+                        .as_ref()
+                        .to_vec()
+                        .try_into()
+                        .map_err(|_| RutinError::from("ERR invalid replication id"))?,
                     repl_offset: self.repl_offset,
                 })
                 .await
@@ -565,7 +583,7 @@ where
 
         let sub_cmd = match sub_cmd.as_ref() {
             b"LISTENING-PORT" => ReplConfSubCmd::ListeningPort {
-                port: util::atoi(&args.next().unwrap().as_ref())?,
+                port: util::atoi(args.next().unwrap().as_ref())?,
             },
             b"ACK" => ReplConfSubCmd::Ack {
                 offset: util::atoi(args.next().unwrap().as_ref())?,
@@ -618,7 +636,7 @@ pub enum ReplConfSubCmd {
 /// WARN: 官网上说响应OK但实际上没有返回响应
 #[derive(Debug)]
 pub struct ReplicaOf {
-    should_set_to_master: bool,
+    replica_no_one: bool,
     master_host: ByteString,
     master_port: u16,
 }
@@ -641,25 +659,28 @@ where
         let shared = handler.shared;
         let conf = shared.conf();
 
-        if self.should_set_to_master {
-            let f = |shared: &mut SharedInner| {
-                let mut conf = conf.clone();
-                *conf.replica.master_info.get_mut().unwrap() = None;
-                conf.master = None;
-                *shared = SharedInner::with_conf(conf);
-            };
-
-            shared.post_office().send_reset_server(Box::new(f)).await;
+        if self.replica_no_one {
+            conf.update_replica_conf(
+                &mut |mut replica_conf| {
+                    replica_conf = None;
+                    replica_conf
+                },
+                shared,
+            );
         } else {
-            let f = move |shared: &mut SharedInner| {
-                let mut conf = conf.clone();
-                *conf.replica.master_info.get_mut().unwrap() =
-                    Some(MasterInfo::new(self.master_host, self.master_port));
-                conf.master = None;
-                *shared = SharedInner::with_conf(conf);
-            };
-
-            shared.post_office().send_reset_server(Box::new(f)).await;
+            conf.update_replica_conf(
+                &mut |mut replica_conf| {
+                    if let Some(r) = &mut replica_conf {
+                        r.master_host = self.master_host.clone();
+                        r.master_port = self.master_port;
+                    } else {
+                        replica_conf =
+                            Some(ReplicaConf::new(self.master_host.clone(), self.master_port));
+                    }
+                    replica_conf
+                },
+                shared,
+            );
         }
 
         Ok(None)
@@ -675,14 +696,14 @@ where
 
         if arg1.as_ref() == b"NO" && arg2.as_ref() == b"ONE" {
             return Ok(ReplicaOf {
-                should_set_to_master: true,
+                replica_no_one: true,
                 master_host: Default::default(),
                 master_port: 0,
             });
         }
 
         Ok(ReplicaOf {
-            should_set_to_master: false,
+            replica_no_one: false,
             master_host: arg1
                 .as_ref()
                 .try_into()
@@ -713,9 +734,12 @@ where
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
         let shared = handler.shared;
-        if save_rdb(shared, &shared.conf().rdb.clone().unwrap_or_default())
-            .await
-            .is_ok()
+        if save_rdb(
+            shared,
+            &shared.conf().rdb_conf().clone().unwrap_or_default(),
+        )
+        .await
+        .is_ok()
         {
             Ok(Some(Resp3::new_simple_string("OK")))
         } else {
@@ -800,16 +824,12 @@ async fn cmd_acl_tests() {
     assert_eq!(res.into_simple_string_unchecked(), "OK");
 
     {
-        let default_ac = handler.shared.conf().security.default_ac.load();
-        let user_ac = handler
-            .shared
-            .conf()
-            .security
-            .acl
-            .as_ref()
-            .unwrap()
-            .get("user".as_bytes())
-            .unwrap();
+        let default_ac = handler.shared.conf().security_conf().default_ac.clone();
+
+        let security_conf = handler.shared.conf().security_conf();
+        let acl = security_conf.acl.as_ref().unwrap();
+        let user = acl.get("user".as_bytes()).unwrap();
+        let user_ac = user.value();
 
         assert_eq!(default_ac.enable, user_ac.enable);
         assert_eq!(default_ac.password, user_ac.password);
@@ -840,32 +860,26 @@ async fn cmd_acl_tests() {
     }
 
     {
-        let user = handler
-            .shared
-            .conf()
-            .security
-            .acl
-            .as_ref()
-            .unwrap()
-            .get("user".as_bytes())
-            .unwrap();
-        let ac = user.value();
+        let security_conf = handler.shared.conf().security_conf();
+        let acl = security_conf.acl.as_ref().unwrap();
+        let user = acl.get("user".as_bytes()).unwrap();
+        let user_ac = user.value();
 
-        assert!(ac.enable);
-        assert_eq!(ac.password.as_ref(), b"password");
+        assert!(user_ac.enable);
+        assert_eq!(user_ac.password.as_ref(), b"password");
 
-        assert!(!ac.is_forbidden_cmd(GET_CMD_FLAG));
-        assert!(ac.is_forbidden_cmd(SET_CMD_FLAG));
-        assert!(ac.is_forbidden_cmd(HDEL_CMD_FLAG));
-        assert!(!ac.is_forbidden_cmd(MSET_CMD_FLAG));
+        assert!(!user_ac.is_forbidden_cmd(GET_CMD_FLAG));
+        assert!(user_ac.is_forbidden_cmd(SET_CMD_FLAG));
+        assert!(user_ac.is_forbidden_cmd(HDEL_CMD_FLAG));
+        assert!(!user_ac.is_forbidden_cmd(MSET_CMD_FLAG));
 
-        assert!(ac.deny_reading_or_writing_key(b"foo1", READ_CAT_FLAG));
-        assert!(!ac.deny_reading_or_writing_key(b"foo", READ_CAT_FLAG));
-        assert!(ac.deny_reading_or_writing_key(b"bar1", WRITE_CAT_FLAG));
-        assert!(!ac.deny_reading_or_writing_key(b"bar", WRITE_CAT_FLAG));
+        assert!(user_ac.deny_reading_or_writing_key(b"foo1", READ_CAT_FLAG));
+        assert!(!user_ac.deny_reading_or_writing_key(b"foo", READ_CAT_FLAG));
+        assert!(user_ac.deny_reading_or_writing_key(b"bar1", WRITE_CAT_FLAG));
+        assert!(!user_ac.deny_reading_or_writing_key(b"bar", WRITE_CAT_FLAG));
 
-        assert!(ac.is_forbidden_channel(b"channel"));
-        assert!(!ac.is_forbidden_channel(b"chan"));
+        assert!(user_ac.is_forbidden_channel(b"channel"));
+        assert!(!user_ac.is_forbidden_channel(b"chan"));
     }
 
     let res = AclUsers::test(Default::default(), &mut handler)

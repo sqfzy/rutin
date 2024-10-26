@@ -2,6 +2,7 @@ mod key;
 mod object;
 mod object_entry;
 
+use arc_swap::ArcSwapOption;
 pub use key::*;
 pub use object::*;
 pub use object_entry::ObjectEntry;
@@ -20,7 +21,7 @@ use dashmap::{
     DashMap, DashSet, Map,
 };
 use equivalent::Equivalent;
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 use tokio::time::Instant;
 use tracing::instrument;
 
@@ -40,15 +41,11 @@ pub struct Db {
     // 的客户端
     pub_sub: DashMap<Key, Vec<Outbox>, RandomState>,
 
-    // // 记录已经连接的客户端，并且映射到该连接的`BgTaskSender`，使用该sender可以向该连接
-    // // 的客户端发送消息。利用client_records，一个连接可以代表另一个连接向其客户端发送
-    // // 消息
-    // client_records: DashMap<Id, BgTaskSender, nohash::BuildNoHashHasher<u64>>,
-    oom_conf: Option<OomConf>,
+    pub oom_conf: ArcSwapOption<OomConf>,
 }
 
 impl Db {
-    pub fn new(mem_conf: Option<OomConf>) -> Self {
+    pub fn new(oom_conf: Option<OomConf>) -> Self {
         let num_cpus = num_cpus::get();
 
         Self {
@@ -59,7 +56,7 @@ impl Db {
             ),
             entry_expire_records: DashSet::with_capacity_and_hasher(512, RandomState::new()),
             pub_sub: DashMap::with_capacity_and_hasher(8, RandomState::new()),
-            oom_conf: mem_conf,
+            oom_conf: ArcSwapOption::from_pointee(oom_conf),
         }
     }
 
@@ -83,7 +80,7 @@ impl Db {
 
     #[inline]
     pub async fn try_evict(&self) -> RutinResult<()> {
-        if let Some(mem_conf) = &self.oom_conf {
+        if let Some(mem_conf) = self.oom_conf.load().as_ref() {
             mem_conf.try_evict(self).await
         } else {
             Ok(())

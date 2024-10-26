@@ -1,5 +1,6 @@
 use super::Handler;
 use crate::{
+    conf::{ServerConf, TlsConf},
     persist::rdb::save_rdb,
     server::HandlerContext,
     shared::{Shared, SPECIAL_ID_RANGE},
@@ -11,6 +12,7 @@ use tokio_rustls::TlsAcceptor;
 
 pub struct Listener {
     pub shared: Shared,
+    pub server_conf: Arc<ServerConf>,
     pub listener: TcpListener,
     pub tls_acceptor: Option<TlsAcceptor>,
     pub limit_connections: Arc<Semaphore>,
@@ -18,38 +20,64 @@ pub struct Listener {
 }
 
 impl Listener {
-    pub async fn new(shared: Shared) -> Self {
+    pub async fn new(
+        server_conf: Arc<ServerConf>,
+        tls_conf: Option<Arc<TlsConf>>,
+        shared: Shared,
+    ) -> Self {
+        use std::{fs::File, io::BufReader};
+        use tokio_rustls::rustls;
+
         let conf = shared.conf();
 
         // 开始监听
         let listener =
-            tokio::net::TcpListener::bind(format!("{}:{}", conf.server.host, conf.server.port))
+            tokio::net::TcpListener::bind(format!("{}:{}", server_conf.host, server_conf.port))
                 .await
                 .unwrap();
 
         // 如果配置文件中开启了TLS，则创建TlsAcceptor
-        let tls_acceptor = if let Some(tls_conf) = conf.get_tls_config() {
-            let tls_acceptor = TlsAcceptor::from(Arc::new(tls_conf));
-            Some(tls_acceptor)
+        let tls_acceptor = if let Some(tls_conf) = conf.tls_conf().clone() {
+            let cert = rustls_pemfile::certs(&mut BufReader::new(
+                File::open(&tls_conf.cert_file).unwrap(),
+            ))
+            .map(|cert| cert.unwrap())
+            .collect();
+
+            let key = rustls_pemfile::pkcs8_private_keys(&mut BufReader::new(
+                File::open(&tls_conf.key_file).unwrap(),
+            ))
+            .next()
+            .unwrap()
+            .unwrap();
+
+            let config = rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(cert, rustls::pki_types::PrivateKeyDer::Pkcs8(key))
+                .unwrap();
+
+            Some(TlsAcceptor::from(Arc::new(config)))
         } else {
             None
         };
 
         Listener {
             shared,
+            limit_connections: Arc::new(Semaphore::new(server_conf.max_connections)),
+            server_conf,
             listener,
             tls_acceptor,
-            limit_connections: Arc::new(Semaphore::new(conf.server.max_connections)),
             next_client_id: SPECIAL_ID_RANGE.end,
         }
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
         let shared = self.shared;
+        let server_conf = &self.server_conf;
         tracing::info!(
             "server is running on {}:{}...",
-            &shared.conf().server.host,
-            shared.conf().server.port
+            server_conf.host,
+            server_conf.port
         );
 
         #[cfg(feature = "debug")]
@@ -64,10 +92,17 @@ impl Listener {
                 .retry(backon::ExponentialBuilder::default())
                 .await?;
 
-            let (id, mailbox) = post_office.register_handler_mailbox(self.next_client_id);
+            // 如果next_client_id在特殊范围内，则跳过
+            if SPECIAL_ID_RANGE.contains(&self.next_client_id) {
+                self.next_client_id = SPECIAL_ID_RANGE.end;
+            }
+
+            let mut id = self.next_client_id;
             self.next_client_id = id + 1;
+            let mailbox = post_office.register_mailbox(&mut id);
 
             let context = HandlerContext::new(shared, id, mailbox);
+
             match &self.tls_acceptor {
                 None => {
                     shared.pool().spawn_pinned(move || async move {
@@ -103,11 +138,11 @@ impl Drop for Listener {
         let shared = self.shared;
         let conf = shared.conf();
 
-        if let Some(rdb_conf) = conf.rdb.as_ref() {
+        if let Some(rdb_conf) = conf.rdb_conf().clone() {
             let handle = tokio::runtime::Handle::current();
             let handle = std::thread::spawn(move || {
                 handle.block_on(async {
-                    save_rdb(shared, rdb_conf).await.ok();
+                    save_rdb(shared, &rdb_conf).await.ok();
                 });
             });
             handle.join().ok();

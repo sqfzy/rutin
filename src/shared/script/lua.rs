@@ -2,16 +2,14 @@ use crate::{
     cmd::CmdArg,
     conf::{AccessControl, DEFAULT_USER},
     error::{RutinError, RutinResult},
-    frame::{CheapResp3, ExpensiveResp3, Resp3, StaticResp3},
+    frame::{CheapResp3, ExpensiveResp3, Resp3},
     server::{AsyncStream, FakeHandler, Handler, HandlerContext, SHARED},
     shared::{db::Key, NULL_ID},
-    util::StaticBytes,
 };
 use ahash::RandomState;
 use bytes::{BufMut, Bytes, BytesMut};
-use dashmap::{mapref::entry_ref::EntryRef, DashMap, Entry};
+use dashmap::{DashMap, Entry};
 use futures_intrusive::sync::LocalMutex;
-use itertools::Itertools;
 use mlua::{prelude::*, StdLib};
 use std::{cell::LazyCell, collections::VecDeque, rc::Rc, sync::Arc};
 use tracing::debug;
@@ -29,7 +27,7 @@ thread_local! {
 fn create_fake_handler() -> FakeHandler {
     let shared = *SHARED;
 
-    let mailbox = shared.post_office().register_special_mailbox(NULL_ID);
+    let mailbox = shared.post_office().register_mailbox(NULL_ID);
     let context = HandlerContext::with_ac(
         NULL_ID,
         mailbox,
@@ -76,19 +74,14 @@ fn create_lua() -> Lua {
                 let mut cmd_frame = VecDeque::new();
                 for v in cmd {
                     match v {
-                        // TODO:
-                        LuaValue::Table(table) => {
-                            let mut frame = BytesMut::new();
-                            for p in table.pairs::<LuaInteger, LuaInteger>() {
-                                let (_, b) = p?;
-                                frame.put_u8(b as u8);
-                            }
-                            cmd_frame.push_back(ExpensiveResp3::new_blob_string(frame));
+                        LuaValue::String(s) => {
+                            cmd_frame.push_back(ExpensiveResp3::new_blob_string(s.as_bytes()));
                         }
                         _ => {
-                            return Err(LuaError::external(
-                                "redis.call only accept string arguments",
-                            ));
+                            return Err(LuaError::external(format!(
+                                "redis.call only accept 'string' arguments, but got {:?}",
+                                v.type_name()
+                            )));
                         }
                     }
                 }
@@ -114,19 +107,14 @@ fn create_lua() -> Lua {
                 let mut cmd_frame = VecDeque::with_capacity(cmd.len());
                 for v in cmd {
                     match v {
-                        // TODO:
-                        LuaValue::Table(table) => {
-                            let mut frame = BytesMut::new();
-                            for p in table.pairs::<LuaInteger, LuaInteger>() {
-                                let (_, b) = p?;
-                                frame.put_u8(b as u8);
-                            }
-                            cmd_frame.push_back(ExpensiveResp3::new_blob_string(frame));
+                        LuaValue::String(s) => {
+                            cmd_frame.push_back(ExpensiveResp3::new_blob_string(s.as_bytes()));
                         }
                         _ => {
-                            return Ok(CheapResp3::new_simple_error(
-                                "redis.pcall only accept string arguments",
-                            )
+                            return Ok(CheapResp3::new_simple_error(format!(
+                                "redis.call only accept 'string' arguments, but got {:?}",
+                                v.type_name()
+                            ))
                             .into_lua(lua));
                         }
                     }
@@ -259,12 +247,14 @@ impl LuaScript {
             // 传入KEYS和ARGV
             let lua_keys = global.get::<_, LuaTable>("KEYS")?;
             for (i, key) in keys.into_iter().enumerate() {
-                lua_keys.set(i + 1, key.as_ref().into_lua(&lua)?)?;
+                // TODO: 支持二进制安全
+                lua_keys.set(i + 1, std::str::from_utf8(key.as_ref())?.into_lua(&lua)?)?;
             }
 
             let lua_argv = global.get::<_, LuaTable>("ARGV")?;
             for (i, arg) in argv.into_iter().enumerate() {
-                lua_argv.set(i + 1, arg.as_ref().into_lua(&lua)?)?;
+                // TODO: 支持二进制安全
+                lua_argv.set(i + 1, std::str::from_utf8(arg.as_ref())?.into_lua(&lua)?)?;
             }
 
             // 执行脚本

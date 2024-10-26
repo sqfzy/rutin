@@ -2,17 +2,13 @@
 
 use crate::{
     cmd::commands::{CmdFlag, EXISTS_CMD_FLAG},
-    conf::{
-        gen_run_id, AccessControl, Acl, AofConf, Conf, ExpirationEvict, MasterConf, MemoryConf,
-        OomConf, RdbConf, ReplicaConf, SecurityConf, ServerConf,
-    },
-    persist::aof::AppendFSync,
+    conf::*,
     server::{preface, FakeHandler},
     shared::Shared,
 };
-use arc_swap::ArcSwap;
-use std::sync::Mutex;
-use std::sync::Once;
+use arc_swap::{ArcSwap, ArcSwapOption};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Once};
 use tracing::Level;
 
 pub fn bytes_to_string(bytes: &[u8]) -> String {
@@ -53,50 +49,53 @@ pub fn gen_test_config() -> Conf {
     );
 
     Conf {
-        server: ServerConf {
+        server: ArcSwap::from_pointee(ServerConf {
             host: "127.0.0.1".into(),
             port: 6379,
             run_id: gen_run_id(),
             log_level: "info".into(),
             max_connections: 1024,
             max_batch: 1024,
-        },
-        security: SecurityConf {
+        }),
+        security: ArcSwap::from_pointee(SecurityConf {
             requirepass: None,
-            default_ac: ArcSwap::from_pointee(AccessControl::new_loose()),
+            default_ac: Arc::new(AccessControl::new_loose()),
             acl: Some(acl),
-        },
-        master: Some(MasterConf {
+        }),
+        master: ArcSwapOption::from_pointee(Some(MasterConf {
             max_replica: 6,
             backlog_size: 1 << 10,
-            ping_replica_period: 10,
-            timeout: 60,
-        }),
-        replica: ReplicaConf {
-            master_info: Mutex::new(None),
+            ping_replica_period_ms: 10,
+            timeout_ms: 60,
+        })),
+        replica: ArcSwapOption::from_pointee(ReplicaConf {
             master_auth: None,
             read_only: true,
-        },
-        rdb: Some(RdbConf {
+            master_host: "127.0.0.1".into(),
+            master_port: 6400,
+            offset: AtomicU64::new(0),
+            master_run_id: "test".into(),
+        }),
+        rdb: ArcSwapOption::from_pointee(Some(RdbConf {
             file_path: "dump.rdb".to_string(),
             save: None,
             enable_checksum: true,
-        }),
-        aof: Some(AofConf {
+        })),
+        aof: ArcSwapOption::from_pointee(Some(AofConf {
             use_rdb_preamble: true,
             file_path: "tests/appendonly/test.aof".to_string(),
             append_fsync: AppendFSync::EverySec,
             auto_aof_rewrite_min_size: 128,
-        }),
-        memory: MemoryConf {
+        })),
+        memory: ArcSwap::from_pointee(MemoryConf {
             oom: Some(OomConf {
                 maxmemory: u64::MAX,
                 maxmemory_policy: Default::default(),
                 maxmemory_samples_count: 5,
             }),
             expiration_evict: ExpirationEvict { samples_count: 800 },
-        },
-        tls: None,
+        }),
+        tls: ArcSwapOption::from_pointee(None),
     }
 }
 

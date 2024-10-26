@@ -6,14 +6,11 @@ use crate::{
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
     shared::{db::Key, Letter},
-    util::IntoUppercase,
     Int,
 };
 use bytes::Bytes;
-use bytestring::ByteString;
-use equivalent::Equivalent;
 use itertools::Itertools;
-use std::{fmt::Debug, hash::Hash};
+use std::fmt::Debug;
 use tracing::instrument;
 
 /// # Reply:
@@ -239,9 +236,8 @@ mod cmd_pub_sub_tests {
         let (mut handler, _) = Handler::new_fake();
 
         // 订阅 channel1 和 channel2
-        let subscribe_res = Subscribe::test(&["channel1", "channel2"], &mut handler)
+        let _subscribe_res = Subscribe::test(&["channel1", "channel2"], &mut handler)
             .await
-            .unwrap()
             .unwrap();
 
         assert!(handler
@@ -258,10 +254,7 @@ mod cmd_pub_sub_tests {
         assert_eq!(2, handler.context.subscribed_channels.len());
 
         // 订阅 channel3
-        let subscribe_res = Subscribe::test(&["channel3"], &mut handler)
-            .await
-            .unwrap()
-            .unwrap();
+        let _subscribe_res = Subscribe::test(&["channel3"], &mut handler).await.unwrap();
 
         assert!(handler
             .shared
@@ -314,9 +307,8 @@ mod cmd_pub_sub_tests {
         matches!(publish_res, RutinError::ErrCode { code } if code == 0);
 
         // 取消订阅 channel1
-        let unsubscribe_res = Unsubscribe::test(&["channel1"], &mut handler)
+        let _unsubscribe_res = Unsubscribe::test(&["channel1"], &mut handler)
             .await
-            .unwrap()
             .unwrap();
 
         assert!(handler

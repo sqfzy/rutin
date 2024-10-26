@@ -6,12 +6,12 @@ use crate::{
     frame::Resp3,
     server::{AsyncStream, Handler, NEVER_EXPIRE, UNIX_EPOCH},
     shared::db::{Object, Str},
-    util::{atoi, IntoUppercase},
+    util::atoi,
     Int,
 };
 use bytes::Bytes;
 use itertools::Itertools;
-use std::{fmt::Debug, hash::Hash, time::Duration};
+use std::{fmt::Debug, time::Duration};
 use tokio::time::Instant;
 use tracing::instrument;
 

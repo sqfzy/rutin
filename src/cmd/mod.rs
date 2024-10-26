@@ -3,26 +3,22 @@ pub mod commands;
 use crate::{
     conf::AccessControl,
     error::{RutinError, RutinResult},
-    frame::{CheapResp3, ExpensiveResp3, Resp3, StaticResp3},
+    frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
     shared::db::{Key, Str},
-    util::{IntoUppercase, StaticBytes, StaticStr, Uppercase},
+    util::{IntoUppercase, StaticBytes, Uppercase},
 };
-use bytes::{Bytes, BytesMut};
-use bytestring::ByteString;
+use bytes::Bytes;
 use commands::*;
 use equivalent::Equivalent;
 use itertools::Itertools;
 use std::{
     collections::VecDeque,
     fmt::Debug,
-    future::Future,
     hash::Hash,
     intrinsics::{likely, unlikely},
     iter::Iterator,
-    ops::AsyncFnOnce,
 };
-use tokio::net::TcpStream;
 use tracing::instrument;
 
 pub trait CommandFlag {
@@ -64,8 +60,7 @@ impl<T> CmdArg for T where
 {
 }
 
-#[allow(async_fn_in_trait)]
-pub trait CmdExecutor<A>: CommandFlag + Sized + std::fmt::Debug
+trait CmdExecutor<A>: CommandFlag + Sized + std::fmt::Debug
 where
     A: CmdArg,
     Key: for<'a> From<&'a A>,
@@ -82,15 +77,14 @@ where
 
         let mut should_track_key = false;
 
-        let should_handle_wcmd = {
-            let should_handle_wcmd = cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG)
-                && handler.shared.post_office().need_send_wcmd();
+        let wcmd_sender = if cats_contains_cat(Self::CATS_FLAG, WRITE_CAT_FLAG)
+            && let Some(sender) = handler.shared.post_office().need_send_wcmd()
+        {
+            cmd = handler.context.wcmd_buf.buffer_wcmd(cmd);
 
-            if should_handle_wcmd {
-                cmd = handler.context.wcmd_buf.buffer_wcmd(cmd);
-            }
-
-            should_handle_wcmd
+            Some(sender)
+        } else {
+            None
         };
 
         let res: RutinResult<Option<CheapResp3>> = try {
@@ -103,8 +97,8 @@ where
         };
 
         if likely(res.is_ok()) {
-            if should_handle_wcmd {
-                handler.may_send_wmcd_buf().await;
+            if let Some(wcmd_sender) = wcmd_sender {
+                handler.may_send_wmcd_buf(wcmd_sender);
             } else {
                 handler.context.wcmd_buf.rollback();
             }
@@ -158,7 +152,7 @@ where
 {
     let dispatch = async {
         let mut cmd = CmdUnparsed::try_from(cmd_frame)?;
-        let cmd_name = cmd.next_uppercase::<16>().ok_or(RutinError::Syntax)?;
+        let cmd_name = cmd.cmd_name_uppercase();
         let cmd_name = if let Ok(s) = std::str::from_utf8(cmd_name.as_ref()) {
             s
         } else {
@@ -272,7 +266,7 @@ where
         Ok(res) => Ok(res.map(Into::into)),
         Err(e) => {
             let frame = CheapResp3::try_from(e)?; // 尝试将错误转换为RESP3
-            Ok(Some(frame.into()))
+            Ok(Some(frame))
         }
     }
 }
@@ -293,6 +287,13 @@ impl<B> CmdUnparsed<B> {
         self.inner.is_empty()
     }
 
+    pub fn cmd_name_uppercase(&mut self) -> Uppercase<16, &mut [u8]>
+    where
+        B: IntoUppercase,
+    {
+        self.cmd_name.to_uppercase::<16>()
+    }
+
     #[inline]
     pub fn next_uppercase<const L: usize>(&mut self) -> Option<Uppercase<L, B::Mut>>
     where
@@ -307,10 +308,7 @@ impl<B> Iterator for CmdUnparsed<B> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        match self.inner.pop_front() {
-            Some(b) => Some(b),
-            _ => None,
-        }
+        self.inner.pop_front()
     }
 
     #[inline]
@@ -327,16 +325,13 @@ impl<B> Iterator for CmdUnparsed<B> {
 impl<B> DoubleEndedIterator for CmdUnparsed<B> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        match self.inner.pop_back() {
-            Some(b) => Some(b),
-            _ => None,
-        }
+        self.inner.pop_back()
     }
 }
 
 impl<B> ExactSizeIterator for CmdUnparsed<B> {}
 
-impl<B, S> TryFrom<Resp3<B, S>> for CmdUnparsed<B> {
+impl<B: IntoUppercase, S> TryFrom<Resp3<B, S>> for CmdUnparsed<B> {
     type Error = RutinError;
 
     #[inline]
@@ -391,6 +386,7 @@ impl Default for CmdUnparsed<StaticBytes> {
     }
 }
 
+#[allow(dead_code)]
 trait CmdTest: CmdExecutor<StaticBytes> {
     async fn test(
         args: &[&str],

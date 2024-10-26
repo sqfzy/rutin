@@ -1,15 +1,14 @@
-// 目前Inbox存在与三种类型的任务中：Server, Wcmd Propagate, Handler，
-//
-// Server需要处理ShutdownServer和BlockAllClients消息，
-// Wcmd Propagate需要处理Wcmd，AddReplica和RemoveReplica消息，
-// Handler需要处理ShutdownServer和BlockAllClients消息。
-
 use core::panic;
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, RwLock},
+};
 
-use crate::{conf::Conf, frame::CheapResp3, server::Handler, shared::SharedInner, Id};
+use crate::{frame::CheapResp3, server::Handler, shared::SharedInner, Id};
 use bytes::{Bytes, BytesMut};
-use dashmap::{mapref::one::Ref, DashMap, Entry};
+use bytestring::ByteString;
+use dashmap::{DashMap, Entry};
 use event_listener::{listener, Event};
 use flume::{Receiver, Sender};
 use tokio::{net::TcpStream, time::Duration};
@@ -28,8 +27,34 @@ pub const AOF_ID: Id = 3;
 pub const SET_MASTER_ID: Id = 4;
 pub const SET_REPLICA_ID: Id = 5;
 pub const EXPIRATION_EVICT_ID: Id = 6;
-pub const UPDATE_USED_MEMORY_ID: Id = 7;
-pub const UPDATE_LRU_CLOCK_ID: Id = 8;
+
+pub trait MailboxId {
+    fn get_id(&self) -> Id;
+
+    fn set_id(&mut self, id: Id);
+}
+
+// Implement the trait for Id (u64)
+impl MailboxId for Id {
+    fn get_id(&self) -> Id {
+        *self
+    }
+
+    fn set_id(&mut self, id: Id) {
+        *self = id;
+    }
+}
+
+// Implement the trait for &mut Id
+impl MailboxId for &mut Id {
+    fn get_id(&self) -> Id {
+        **self
+    }
+
+    fn set_id(&mut self, id: Id) {
+        **self = id;
+    }
+}
 
 // PostOffice负责任务之间的相互通信
 //
@@ -44,114 +69,77 @@ pub const UPDATE_LRU_CLOCK_ID: Id = 8;
 // 创建特殊任务时，直接注册一个特殊ID。特殊任务是唯一的
 #[derive(Debug)]
 pub struct PostOffice {
-    pub(super) inner: DashMap<Id, (Outbox, Inbox), nohash::BuildNoHashHasher<u64>>,
-    // 传播写命令到aof或replica。由于需要频繁使用其OutBox，因此直接保存在字段中。
-    // 由于传播写命令是耗时操作，因此需要尽可能减少传播次数。
-    //
-    // 只会在服务初始时设置一次
-    aof_mailbox: Option<(Outbox, Inbox)>,
-
-    // 配置了MasterConf后，会在inner中插入SET_MASTER_ID对应的mailbox，但是暂时不
-    // 会设置set_master_outbox，因为一旦设置了set_master_outbox，就会传播wcmd，而
-    // 一开始SET MASTER任务并不存在replica，不需要传播wcmd。只有在设置了replica后，
-    // 才会通过BlockAll阻止其它任务访问set_master_outbox，然后设置set_master_outbox
-    //
-    // 只会在服务初始时设置一次
-    set_master_mailbox: Option<(Outbox, Inbox)>,
+    pub(super) normal_mailboxs: DashMap<Id, (Outbox, Inbox), nohash::BuildNoHashHasher<u64>>,
+    pub(super) special_mailboxs:
+        RwLock<HashMap<Id, (Outbox, Inbox), nohash::BuildNoHashHasher<u64>>>,
 }
 
 impl PostOffice {
-    pub fn new(conf: &Conf) -> Self {
+    pub fn new() -> Self {
         Self {
-            inner: DashMap::with_hasher(nohash::BuildNoHashHasher::default()),
-            aof_mailbox: if conf.aof.is_some() {
-                Some(flume::unbounded())
-            } else {
-                None
-            },
-            set_master_mailbox: if conf.master.is_some() {
-                Some(flume::unbounded())
-            } else {
-                None
-            },
+            normal_mailboxs: DashMap::with_hasher(nohash::BuildNoHashHasher::default()),
+            special_mailboxs: RwLock::new(HashMap::with_hasher(
+                nohash::BuildNoHashHasher::default(),
+            )),
         }
     }
 
     pub fn contains(&self, id: Id) -> bool {
-        self.inner.contains_key(&id)
+        if SPECIAL_ID_RANGE.contains(&id) {
+            self.special_mailboxs.read().unwrap().contains_key(&id)
+        } else {
+            self.normal_mailboxs.contains_key(&id)
+        }
     }
 
     // 从提供的id开始寻找一个未使用的ID，然后注册一个mailbox
-    pub fn register_handler_mailbox(&'static self, mut id: Id) -> (Id, MailboxGuard) {
+    pub fn register_mailbox(&'static self, mut id: impl MailboxId) -> MailboxGuard {
+        let mut id_temp = id.get_id();
+
         let (outbox, inbox) = flume::unbounded();
 
-        // 跳过特殊ID
-        if SPECIAL_ID_RANGE.contains(&id) {
-            id = SPECIAL_ID_RANGE.end;
-        }
+        if SPECIAL_ID_RANGE.contains(&id_temp) {
+            let mut special_mailboxs = self.special_mailboxs.write().unwrap();
 
-        // 找到一个未使用的ID
-        loop {
-            match self.inner.entry(id) {
-                Entry::Vacant(entry) => {
-                    entry.insert((outbox.clone(), inbox.clone()));
-                    break;
-                }
-                Entry::Occupied(_) => {
-                    id += 1;
-                }
+            if id_temp != NULL_ID {
+                special_mailboxs.insert(id_temp, (outbox.clone(), inbox.clone()));
             }
-        }
 
-        (
-            id,
             MailboxGuard {
                 post_office: self,
-                id,
+                id: id_temp,
                 outbox,
                 inbox,
-            },
-        )
-    }
+            }
+        } else {
+            // 找到一个未使用的ID
+            loop {
+                match self.normal_mailboxs.entry(id_temp) {
+                    Entry::Vacant(entry) => {
+                        entry.insert((outbox.clone(), inbox.clone()));
+                        break;
+                    }
+                    Entry::Occupied(_) => {
+                        id_temp += 1;
+                    }
+                }
+            }
 
-    // 注册一个特殊的mailbox，该mailbox是唯一的
-    #[instrument(level = "debug", skip(self))]
-    pub fn register_special_mailbox(&'static self, id: Id) -> MailboxGuard {
-        assert!(SPECIAL_ID_RANGE.contains(&id));
-        // 特殊任务只能注册一次，如果希望重新注册，可以Reset服务
-        assert!(!self.inner.contains_key(&id), "id={} already exists", id);
+            id.set_id(id_temp);
 
-        let (outbox, inbox) = match id {
-            AOF_ID => self.aof_mailbox.clone().unwrap(),
-            SET_MASTER_ID => self.set_master_mailbox.clone().unwrap(),
-            _ => flume::unbounded(),
-        };
-
-        if id != NULL_ID {
-            self.inner.insert(id, (outbox.clone(), inbox.clone()));
+            MailboxGuard {
+                post_office: self,
+                id: id_temp,
+                outbox,
+                inbox,
+            }
         }
-
-        MailboxGuard {
-            post_office: self,
-            id,
-            outbox,
-            inbox,
-        }
-    }
-
-    #[inline]
-    pub fn aof_outbox(&self) -> Option<&Outbox> {
-        self.aof_mailbox.as_ref().map(|mailbox| &mailbox.0)
-    }
-
-    #[inline]
-    pub fn set_master_outbox(&self) -> Option<&Outbox> {
-        self.set_master_mailbox.as_ref().map(|mailbox| &mailbox.0)
     }
 
     #[inline]
     pub fn delay_shutdown_token(&'static self) -> MailboxGuard {
-        self.register_handler_mailbox(fastrand::u64(..)).1
+        let mut id = fastrand::u64(..);
+        self.register_mailbox(&mut id)
     }
 
     // #[inline]
@@ -160,95 +148,121 @@ impl PostOffice {
     // }
 
     #[inline]
-    pub fn get_mailbox(&self, id: Id) -> Option<Ref<'_, Id, (Outbox, Inbox)>> {
-        self.inner.get(&id)
+    pub fn get_mailbox(&self, id: Id) -> Option<(Outbox, Inbox)> {
+        if SPECIAL_ID_RANGE.contains(&id) {
+            self.special_mailboxs.read().unwrap().get(&id).cloned()
+        } else {
+            self.normal_mailboxs
+                .get(&id)
+                .map(|entry| entry.value().clone())
+        }
     }
 
     #[inline]
     pub fn get_outbox(&self, id: Id) -> Option<Outbox> {
-        self.inner.get(&id).map(|entry| entry.0.clone())
+        if SPECIAL_ID_RANGE.contains(&id) {
+            self.special_mailboxs
+                .read()
+                .unwrap()
+                .get(&id)
+                .map(|entry| entry.0.clone())
+        } else {
+            self.normal_mailboxs.get(&id).map(|entry| entry.0.clone())
+        }
     }
 
     #[inline]
     pub fn get_inbox(&self, id: Id) -> Option<Inbox> {
-        self.inner.get(&id).map(|entry| entry.1.clone())
+        if SPECIAL_ID_RANGE.contains(&id) {
+            self.special_mailboxs
+                .read()
+                .unwrap()
+                .get(&id)
+                .map(|entry| entry.1.clone())
+        } else {
+            self.normal_mailboxs.get(&id).map(|entry| entry.1.clone())
+        }
     }
 
     #[inline]
-    pub fn need_send_wcmd(&self) -> bool {
-        self.aof_outbox().is_some() || self.set_master_outbox().is_some()
+    pub fn need_send_wcmd(&self) -> Option<Outbox> {
+        if let Some(outbox) = self.get_outbox(AOF_ID) {
+            Some(outbox)
+        } else {
+            self.get_outbox(SET_MASTER_ID)
+        }
     }
 
     pub async fn wait_task_shutdown(&self, id: Id) {
         let mut interval = tokio::time::interval(Duration::from_millis(300));
 
-        while self.inner.contains_key(&id) {
+        while self.normal_mailboxs.contains_key(&id) {
             interval.tick().await;
         }
     }
 
-    #[inline]
-    pub async fn send_wcmd(&self, wcmd: BytesMut) {
-        // AOF和SET MASTER任务都需要处理写命令，但AOF只需要&wcmd，为了避免clone，
-        // 如果存在AOF任务，则由AOF任务在使用完&wcmd后尝试发送给SetMaster任务
-        if let Some(outbox) = self.aof_outbox().as_ref() {
-            outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
-        } else if let Some(outbox) = self.set_master_outbox().as_ref() {
-            outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
-        }
-    }
+    // #[inline]
+    // pub async fn send_wcmd(&self, wcmd: BytesMut) {
+    //     // AOF和SET MASTER任务都需要处理写命令，但AOF只需要&wcmd，为了避免clone，
+    //     // 如果存在AOF任务，则由AOF任务在使用完&wcmd后尝试发送给SetMaster任务
+    //     if let Some(outbox) = self.aof_outbox().as_ref() {
+    //         outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+    //     } else if let Some(outbox) = self.set_master_outbox().as_ref() {
+    //         outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+    //     }
+    // }
 
     #[instrument(level = "debug", skip(self))]
-    pub async fn send_shutdown(&self, id: Id) {
+    pub fn send_shutdown(&self, id: Id) {
         if let Some(outbox) = self.get_outbox(id) {
-            outbox.send_async(Letter::Shutdown).await.ok();
+            outbox.send(Letter::Shutdown).ok();
         }
     }
 
     #[instrument(level = "debug", skip(self))]
-    pub async fn send_shutdown_server(&self) {
-        for entry in self.inner.iter() {
-            entry.0.send_async(Letter::Shutdown).await.ok();
+    pub fn send_shutdown_server(&self) {
+        for entry in self.normal_mailboxs.iter() {
+            entry.0.send(Letter::Shutdown).ok();
         }
     }
 
-    #[instrument(level = "debug", skip(self, f))]
-    pub async fn send_reset_server(&self, f: Box<dyn FnOnce(&mut SharedInner) + Send>) {
-        self.inner
-            .get(&MAIN_ID)
-            .unwrap()
-            .0
-            .send_async(Letter::ModifyShared(f))
-            .await
-            .ok();
-
-        for entry in self.inner.iter() {
-            if *entry.key() == MAIN_ID {
-                continue;
-            }
-
-            entry.0.send_async(Letter::Shutdown).await.ok();
-        }
-    }
+    // #[instrument(level = "debug", skip(self, f))]
+    // pub async fn send_reset_server(&self, f: Box<dyn FnOnce(&mut SharedInner) + Send>) {
+    //     self.normal_mailboxs
+    //         .get(&MAIN_ID)
+    //         .unwrap()
+    //         .0
+    //         .send_async(Letter::ModifyShared(f))
+    //         .await
+    //         .ok();
+    //
+    //     for entry in self.normal_mailboxs.iter() {
+    //         if *entry.key() == MAIN_ID {
+    //             continue;
+    //         }
+    //
+    //         entry.0.send_async(Letter::Shutdown).await.ok();
+    //     }
+    // }
 
     #[instrument(level = "debug", skip(self))]
     pub async fn send_block(&self, id: Id) -> BlockGuard {
         let event = Arc::new(Event::new());
         {
-            listener!(event => listener);
-
             // 向指定的task发送
             if let Some(outbox) = self.get_outbox(id) {
+                listener!(event => listener);
+
                 outbox
                     .send_async(Letter::Block {
                         unblock_event: event.clone(),
                     })
                     .await
                     .ok();
-            }
 
-            // 等待task返回响应，证明已经阻塞
-            listener.await;
+                // 等待task返回响应，证明已经阻塞
+                listener.await;
+            }
         }
 
         BlockGuard(event)
@@ -275,7 +289,7 @@ impl PostOffice {
 
         let mut count = 0;
         // 向除自己以外的task发送
-        for entry in self.inner.iter() {
+        for entry in self.normal_mailboxs.iter() {
             let key = *entry.key();
             if key == src_id || key == MAIN_ID {
                 continue;
@@ -302,6 +316,12 @@ impl PostOffice {
     }
 }
 
+impl Default for PostOffice {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct BlockGuard(pub Arc<Event>);
 
 // WARN: 必须执行该步骤否则阻塞的服务无法正常关闭，因此不能设置panic="abort"
@@ -314,10 +334,9 @@ impl Drop for BlockGuard {
 pub enum Letter {
     // 关闭服务。
     Shutdown,
-    // 重置服务。关闭除主任务以外的所有任务，并重置Shared(必须保证没有其它任务
-    // 在使用Shared，即保证只有主任务一个任务在运行)
-    ModifyShared(Box<dyn FnOnce(&mut SharedInner) + Send>),
-
+    // // 重置服务。关闭除主任务以外的所有任务，并重置Shared(必须保证没有其它任务
+    // // 在使用Shared，即保证只有主任务一个任务在运行)
+    // ModifyShared(Box<dyn FnOnce(&mut SharedInner) + Send>),
     Block {
         unblock_event: Arc<Event>,
     },
@@ -328,7 +347,7 @@ pub enum Letter {
     Wcmd(BytesMut),
     Psync {
         handle_replica: Handler<TcpStream>,
-        repl_id: Bytes,
+        repl_id: ByteString,
         repl_offset: u64,
     },
     // RemoveReplica,
@@ -344,7 +363,7 @@ impl Debug for Letter {
         match self {
             Letter::Resp3(resp) => write!(f, "Letter::Resp3({:?})", resp),
             Letter::Shutdown => write!(f, "Letter::ShutdownServer"),
-            Letter::ModifyShared(..) => write!(f, "Letter::ModifyShared"),
+            // Letter::ModifyShared(..) => write!(f, "Letter::ModifyShared"),
             Letter::Block {
                 unblock_event: event,
             } => write!(f, "Letter::BlockAll({:?})", event),
@@ -370,7 +389,7 @@ impl Clone for Letter {
                 unblock_event: event.clone(),
             },
             Letter::Wcmd(cmd) => Letter::Wcmd(cmd.clone()),
-            Letter::Psync { .. } | Letter::ModifyShared(..) => unreachable!(),
+            Letter::Psync { .. } /* | Letter::ModifyShared(..) */ => unreachable!(),
             // Letter::RemoveReplica => Letter::RemoveReplica,
         }
     }
@@ -424,6 +443,6 @@ impl MailboxGuard {
 
 impl Drop for MailboxGuard {
     fn drop(&mut self) {
-        self.post_office.inner.remove(&self.id);
+        self.post_office.normal_mailboxs.remove(&self.id);
     }
 }

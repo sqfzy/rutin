@@ -1,4 +1,4 @@
-use crate::shared::db::{Key, Str};
+use crate::shared::db::Str;
 use bytes::{Bytes, BytesMut};
 use std::{
     cmp::PartialEq,
@@ -9,22 +9,22 @@ use std::{
 
 #[inline]
 pub unsafe fn leak_bytes(b: &[u8]) -> StaticBytes {
-    std::mem::transmute::<&[u8], &'static [u8]>(b).into()
+    StaticBytes::Const(std::mem::transmute::<&[u8], &'static [u8]>(b))
 }
 
 #[inline]
 pub unsafe fn leak_bytes_mut(b: &mut [u8]) -> StaticBytes {
-    std::mem::transmute::<&mut [u8], &'static mut [u8]>(b).into()
+    StaticBytes::Mut(std::mem::transmute::<&mut [u8], &'static mut [u8]>(b))
 }
 
 #[inline]
 pub unsafe fn leak_str(s: &str) -> StaticStr {
-    std::mem::transmute::<&str, &'static str>(s).into()
+    StaticStr::Const(std::mem::transmute::<&str, &'static str>(s))
 }
 
 #[inline]
 pub unsafe fn leak_str_mut(s: &mut str) -> StaticStr {
-    std::mem::transmute::<&mut str, &'static mut str>(s).into()
+    StaticStr::Mut(std::mem::transmute::<&mut str, &'static mut str>(s))
 }
 
 #[derive(Debug, Eq)]

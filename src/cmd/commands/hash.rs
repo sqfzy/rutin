@@ -7,7 +7,7 @@ use crate::{
     server::{AsyncStream, Handler},
     shared::db::{self, Str},
 };
-use std::{fmt::Debug, hash::Hash};
+use std::fmt::Debug;
 use tracing::instrument;
 
 /// **Integer reply:** The number of fields that were removed from the hash, excluding any specified but non-existing fields.
@@ -148,20 +148,23 @@ where
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut value = None;
+        let mut res = Bytes::default();
 
         handler
             .shared
             .db()
             .visit_object(self.key.as_ref(), |obj| {
                 let hash = obj.on_hash()?;
-                value.clone_from(&hash.get(self.field.as_ref()));
+                res = hash
+                    .get(self.field.as_ref())
+                    .ok_or_else(|| RutinError::Null)?
+                    .into();
 
                 Ok(())
             })
             .await?;
 
-        Ok(value.map(|b| Resp3::new_blob_string(b.to_bytes())))
+        Ok(Some(Resp3::new_blob_string(res)))
     }
 
     fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
@@ -327,11 +330,9 @@ mod cmd_hash_tests {
         assert_eq!(hget_res.into_blob_string_unchecked(), "value1");
 
         // 测试不存在的字段
-        let hget_res = HGet::test(&["key", "field3"], &mut handler)
+        let _hget_res = HGet::test(&["key", "field3"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert!(hget_res.is_null());
+            .unwrap_err();
     }
 
     #[tokio::test]

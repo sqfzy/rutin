@@ -1,9 +1,8 @@
 use crate::{
-    server::AsyncStream,
     shared::db::Key,
     util::{StaticBytes, StaticStr},
 };
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use bytestring::ByteString;
 pub use rutin_resp3::resp3::Resp3;
 

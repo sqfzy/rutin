@@ -1,6 +1,6 @@
 use crate::{
     cmd::dispatch,
-    conf::AofConf,
+    conf::{AofConf, AppendFSync},
     persist::rdb::{decode_rdb, encode_rdb},
     server::Handler,
     shared::{Letter, Shared, AOF_ID, SET_MASTER_ID},
@@ -10,7 +10,7 @@ use bytes::BytesMut;
 use event_listener::{listener, IntoNotification};
 use rutin_resp3::codec::decode::Resp3Decoder;
 use serde::Deserialize;
-use std::{os::unix::fs::MetadataExt, time::Duration};
+use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
@@ -19,13 +19,7 @@ use tokio::{
 use tokio_util::codec::Decoder;
 use tracing::{info, instrument};
 
-// 保证函数的原子性
-static CRITICAL: Mutex<()> = Mutex::const_new(());
-
-// #[instrument(level = "info", skip(shared), err)]
-// 通过tracing记录elapsed
-#[instrument(level = "info", skip(shared), err)]
-pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> {
+pub fn spawn_save_aof(shared: Shared, aof_conf: Arc<AofConf>) {
     #[instrument(level = "info", skip(shared), err)]
     async fn rewrite_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> {
         let now = Instant::now();
@@ -58,61 +52,95 @@ pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
         Ok(())
     }
 
-    let _guard = CRITICAL.lock().await;
+    #[inline]
+    #[instrument(level = "info", skip(shared), err)]
+    pub async fn _save_aof(shared: Shared, aof_conf: Arc<AofConf>) -> anyhow::Result<()> {
+        let post_office = shared.post_office();
+        let mut aof_file = tokio::fs::OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(&aof_conf.file_path)
+            .await
+            .unwrap();
 
-    let post_office = shared.post_office();
-    let mut aof_file = tokio::fs::OpenOptions::new()
-        .read(true)
-        .append(true)
-        .create(true)
-        .open(&aof_conf.file_path)
-        .await
-        .unwrap();
+        let mailbox = post_office.register_mailbox(AOF_ID);
 
-    let mailbox = post_office.register_special_mailbox(AOF_ID);
+        let mut curr_aof_size = 0_u128; // 单位为byte
+        let auto_aof_rewrite_min_size = aof_conf.auto_aof_rewrite_min_size << 20;
 
-    let mut curr_aof_size = 0_u128; // 单位为byte
-    let auto_aof_rewrite_min_size = aof_conf.auto_aof_rewrite_min_size;
+        let set_master_outbox = post_office.get_outbox(SET_MASTER_ID);
 
-    let set_master_outbox = post_office.get_outbox(SET_MASTER_ID);
-
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
-    match aof_conf.append_fsync {
-        AppendFSync::Always => loop {
-            match mailbox.recv_async().await {
-                Letter::Shutdown => {
-                    break;
-                }
-                Letter::Block { unblock_event } => {
-                    unblock_event.notify(1.additional());
-                    listener!(unblock_event  => listener);
-                    listener.await;
-                }
-                Letter::Wcmd(wcmd) => {
-                    curr_aof_size += wcmd.len() as u128;
-
-                    aof_file.write_all(&wcmd).await?;
-
-                    if let Some(set_master_outbox) = &set_master_outbox {
-                        set_master_outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        match aof_conf.append_fsync {
+            AppendFSync::Always => loop {
+                match mailbox.recv_async().await {
+                    Letter::Shutdown => {
+                        break;
                     }
+                    Letter::Block { unblock_event } => {
+                        unblock_event.notify(1.additional());
+                        listener!(unblock_event  => listener);
+                        listener.await;
+                    }
+                    Letter::Wcmd(wcmd) => {
+                        curr_aof_size += wcmd.len() as u128;
 
-                    aof_file.sync_data().await?;
+                        aof_file.write_all(&wcmd).await?;
 
-                    if curr_aof_size >= auto_aof_rewrite_min_size {
-                        rewrite_aof(shared, aof_conf).await?;
-                        curr_aof_size = 0;
+                        if let Some(set_master_outbox) = &set_master_outbox {
+                            set_master_outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+                        }
+
+                        aof_file.sync_data().await?;
+
+                        if curr_aof_size >= auto_aof_rewrite_min_size {
+                            rewrite_aof(shared, &aof_conf).await?;
+                            curr_aof_size = 0;
+                        }
+                    }
+                    Letter::Resp3(_) | Letter::Psync { .. } => {}
+                }
+            },
+
+            AppendFSync::EverySec => loop {
+                tokio::select! {
+                    biased;
+
+                    letter = mailbox.recv_async() => match letter {
+                        Letter::Shutdown => {
+                            break;
+                        }
+                        Letter::Block { unblock_event } => {
+                            unblock_event.notify(1.additional());
+                            listener!(unblock_event  => listener);
+                            listener.await;
+                        }
+                        Letter::Wcmd(wcmd) => {
+                            curr_aof_size += wcmd.len() as u128;
+
+                            aof_file.write_all(&wcmd).await?;
+
+                            if let Some(set_master_outbox) = &set_master_outbox {
+                                set_master_outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
+                            }
+
+                            if curr_aof_size >= auto_aof_rewrite_min_size {
+                                rewrite_aof(shared, &aof_conf).await?;
+                                curr_aof_size = 0;
+                            }
+                        }
+                        Letter::Resp3(_) | Letter::Psync { .. } => {}
+                    },
+                    // 每隔一秒，同步文件
+                    _ = interval.tick() => {
+                        aof_file.sync_data().await?;
                     }
                 }
-                Letter::Resp3(_) | Letter::Psync { .. } | Letter::ModifyShared(..) => {}
-            }
-        },
+            },
 
-        AppendFSync::EverySec => loop {
-            tokio::select! {
-                biased;
-
-                letter = mailbox.recv_async() => match letter {
+            AppendFSync::No => loop {
+                match mailbox.recv_async().await {
                     Letter::Shutdown => {
                         break;
                     }
@@ -131,61 +159,34 @@ pub async fn save_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
                         }
 
                         if curr_aof_size >= auto_aof_rewrite_min_size {
-                            rewrite_aof(shared, aof_conf).await?;
+                            rewrite_aof(shared, &aof_conf).await?;
                             curr_aof_size = 0;
                         }
                     }
-                    Letter::Resp3(_) | Letter::Psync { .. } | Letter::ModifyShared(..) => {}
-                },
-                // 每隔一秒，同步文件
-                _ = interval.tick() => {
-                    aof_file.sync_data().await?;
+                    Letter::Resp3(_) | Letter::Psync { .. } => {}
                 }
-            }
-        },
+            },
+        }
 
-        AppendFSync::No => loop {
-            match mailbox.recv_async().await {
-                Letter::Shutdown => {
-                    break;
-                }
-                Letter::Block { unblock_event } => {
-                    unblock_event.notify(1.additional());
-                    listener!(unblock_event  => listener);
-                    listener.await;
-                }
-                Letter::Wcmd(wcmd) => {
-                    curr_aof_size += wcmd.len() as u128;
+        while let Ok(Letter::Wcmd(wcmd)) = mailbox.inbox.try_recv() {
+            aof_file.write_all(&wcmd).await?;
+        }
 
-                    aof_file.write_all(&wcmd).await?;
+        aof_file.sync_data().await?;
+        rewrite_aof(shared, &aof_conf).await?; // 最后再重写一次
 
-                    if let Some(set_master_outbox) = &set_master_outbox {
-                        set_master_outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
-                    }
-
-                    if curr_aof_size >= auto_aof_rewrite_min_size {
-                        rewrite_aof(shared, aof_conf).await?;
-                        curr_aof_size = 0;
-                    }
-                }
-                Letter::Resp3(_) | Letter::Psync { .. } | Letter::ModifyShared(..) => {}
-            }
-        },
+        Ok(())
     }
 
-    while let Ok(Letter::Wcmd(wcmd)) = mailbox.inbox.try_recv() {
-        aof_file.write_all(&wcmd).await?;
-    }
-
-    aof_file.sync_data().await?;
-    rewrite_aof(shared, aof_conf).await?; // 最后再重写一次
-
-    Ok(())
+    shared.pool().spawn_pinned(move || async move {
+        _save_aof(shared, aof_conf).await.ok();
+    });
 }
 
 #[instrument(level = "info", skip(shared), err)]
 pub async fn load_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> {
-    let _guard = CRITICAL.lock().await;
+    // 暂停AOF写入
+    let _guard = shared.post_office().send_block(AOF_ID).await;
 
     let now = Instant::now();
 
@@ -210,15 +211,6 @@ pub async fn load_aof(shared: Shared, aof_conf: &AofConf) -> anyhow::Result<()> 
 
     info!("load aof elapsed={:?}", now.elapsed());
     Ok(())
-}
-
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
-#[serde(rename_all = "lowercase", rename = "append_fsync")]
-pub enum AppendFSync {
-    Always,
-    #[default]
-    EverySec,
-    No,
 }
 
 #[tokio::test]
@@ -296,9 +288,7 @@ async fn aof_test() {
         b"VXK"
     );
 
-    shared.pool().spawn_pinned(move || async move {
-        save_aof(shared, &aof_conf).await.unwrap();
-    });
+    spawn_save_aof(shared, Arc::new(aof_conf));
 
     let (mut handler, _) = Handler::new_fake_with(shared, None, None);
 
@@ -334,5 +324,5 @@ async fn aof_test() {
     }
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    shared.post_office().send_shutdown_server().await;
+    shared.post_office().send_shutdown_server();
 }

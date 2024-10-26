@@ -1,7 +1,6 @@
 use crate::util::StaticBytes;
 use bytes::{Bytes, BytesMut};
 use equivalent::Equivalent;
-use mlua::FromLua;
 use serde::Deserialize;
 use std::ops::Deref;
 

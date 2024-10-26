@@ -8,13 +8,13 @@ use crate::{
         encode_hash_value, encode_list_value, encode_set_value, encode_str_value, encode_zset_value,
     },
     server::{AsyncStream, Handler, NEVER_EXPIRE, UNIX_EPOCH},
-    shared::{db::ObjectValueType, Letter},
+    shared::db::ObjectValueType,
     util::atoi,
     Int,
 };
 use bytes::BytesMut;
 use itertools::Itertools;
-use std::{fmt::Debug, hash::Hash, time::Duration};
+use std::{fmt::Debug, time::Duration};
 use tokio::time::Instant;
 use tracing::instrument;
 
@@ -474,27 +474,27 @@ where
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
         let shared = handler.shared;
-        let outbox = handler.context.mailbox.outbox.clone();
+        // let outbox = handler.context.mailbox.outbox.clone();
         let re = regex::bytes::Regex::new(std::str::from_utf8(self.pattern.as_ref())?)?;
 
         // 避免阻塞woker thread
-        tokio::task::spawn_blocking(move || {
-            let matched_keys = shared
-                .db()
-                .entries
-                .iter()
-                .filter_map(|entry| {
-                    re.is_match(entry.key())
-                        .then(|| CheapResp3::new_blob_string(entry.key().clone()))
-                })
-                .collect::<Vec<CheapResp3>>();
+        // tokio::task::spawn_blocking(move || {
+        let matched_keys = shared
+            .db()
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                re.is_match(entry.key())
+                    .then(|| CheapResp3::new_blob_string(entry.key().clone()))
+            })
+            .collect::<Vec<CheapResp3>>();
 
-            outbox
-                .send(Letter::Resp3(Resp3::new_array(matched_keys)))
-                .ok();
-        });
+        // outbox
+        //     .send(Letter::Resp3(Resp3::new_array(matched_keys)))
+        //     .ok();
+        // });
 
-        Ok(None)
+        Ok(Some(Resp3::new_array(matched_keys)))
     }
 
     fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {
@@ -781,11 +781,7 @@ mod cmd_key_tests {
         assert_eq!(exists_res.into_integer_unchecked(), 1);
 
         // case: 键不存在
-        let exists_res = Exists::test(&["key_nil"], &mut handler)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(exists_res.into_integer_unchecked(), 0);
+        let _exists_res = Exists::test(&["key_nil"], &mut handler).await.unwrap_err();
     }
 
     #[tokio::test]
@@ -819,11 +815,9 @@ mod cmd_key_tests {
             .is_never_expired());
 
         // case: 键不存在
-        let expire_res = Expire::test(&["key_nil", "10"], &mut handler)
+        let _expire_res = Expire::test(&["key_nil", "10"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let db = handler.shared.db();
 
@@ -844,11 +838,9 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with EX option
-        let expire_res = Expire::test(&["key_with_ex", "10", "NX"], &mut handler)
+        let _expire_res = Expire::test(&["key_with_ex", "10", "NX"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let expire_res = Expire::test(&["key_without_ex", "10", "NX"], &mut handler)
             .await
@@ -875,11 +867,9 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with NX option
-        let expire_res = Expire::test(&["key_with_ex", "10", "NX"], &mut handler)
+        let _expire_res = Expire::test(&["key_with_ex", "10", "NX"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let expire_res = Expire::test(&["key_without_ex", "10", "NX"], &mut handler)
             .await
@@ -906,11 +896,9 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with GT option
-        let expire_res = Expire::test(&["key_with_ex", "5", "GT"], &mut handler)
+        let _expire_res = Expire::test(&["key_with_ex", "5", "GT"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let expire_res = Expire::test(&["key_with_ex", "20", "GT"], &mut handler)
             .await
@@ -937,11 +925,9 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with LT option
-        let expire_res = Expire::test(&["key_with_ex", "20", "LT"], &mut handler)
+        let _expire_res = Expire::test(&["key_with_ex", "20", "LT"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let expire_res = Expire::test(&["key_with_ex", "5", "LT"], &mut handler)
             .await
@@ -982,11 +968,9 @@ mod cmd_key_tests {
             .is_never_expired());
 
         // case: 键不存在
-        let expire_at_res = ExpireAt::test(&["key_nil", "1893427200"], &mut handler)
+        let _expire_at_res = ExpireAt::test(&["key_nil", "1893427200"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let db = handler.shared.db();
 
@@ -1007,11 +991,9 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with NX option
-        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427200", "NX"], &mut handler)
+        let _expire_at_res = ExpireAt::test(&["key_with_ex", "1893427200", "NX"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let expire_at_res = ExpireAt::test(&["key_without_ex", "1893427200", "NX"], &mut handler)
             .await
@@ -1038,11 +1020,9 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with GT option
-        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427000", "GT"], &mut handler)
+        let _expire_at_res = ExpireAt::test(&["key_with_ex", "1893427000", "GT"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427201", "GT"], &mut handler)
             .await
@@ -1069,11 +1049,9 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: with LT option
-        let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427201", "LT"], &mut handler)
+        let _expire_at_res = ExpireAt::test(&["key_with_ex", "1893427201", "LT"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_at_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         let expire_at_res = ExpireAt::test(&["key_with_ex", "1893427000", "LT"], &mut handler)
             .await
@@ -1107,18 +1085,12 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在，但没有过期时间
-        let expire_time_res = ExpireTime::test(&["key1"], &mut handler)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_time_res.into_integer_unchecked(), -1);
+        let _expire_time_res = ExpireTime::test(&["key1"], &mut handler).await.unwrap_err();
 
         // case: 键不存在
-        let expire_time_res = ExpireTime::test(&["key_nil"], &mut handler)
+        let _expire_time_res = ExpireTime::test(&["key_nil"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(expire_time_res.into_integer_unchecked(), -2);
+            .unwrap_err();
 
         // case: 键存在且有过期时间
         let expire_time_res = ExpireTime::test(&["key_with_ex"], &mut handler)
@@ -1220,18 +1192,12 @@ mod cmd_key_tests {
             .is_never_expired());
 
         // case: 键存在，没有过期时间
-        let persist_res = Persist::test(&["key_without_ex"], &mut handler)
+        let _persist_res = Persist::test(&["key_without_ex"], &mut handler)
             .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(persist_res.into_integer_unchecked(), 0);
+            .unwrap_err();
 
         // case: 键不存在
-        let persist_res = Persist::test(&["key_nil"], &mut handler)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(persist_res.into_integer_unchecked(), 0);
+        let _persist_res = Persist::test(&["key_nil"], &mut handler).await.unwrap_err();
     }
 
     #[tokio::test]
@@ -1259,15 +1225,10 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在，但没有过期时间
-        let pttl_res = Pttl::test(&["key1"], &mut handler).await.unwrap().unwrap();
-        assert_eq!(pttl_res.into_integer_unchecked(), -1);
+        let _pttl_res = Pttl::test(&["key1"], &mut handler).await.unwrap_err();
 
         // case: 键不存在
-        let pttl_res = Pttl::test(&["key_nil"], &mut handler)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(pttl_res.into_integer_unchecked(), -2);
+        let _pttl_res = Pttl::test(&["key_nil"], &mut handler).await.unwrap_err();
 
         // case: 键存在且有过期时间
         let pttl_res = Pttl::test(&["key_with_ex"], &mut handler)
@@ -1303,15 +1264,10 @@ mod cmd_key_tests {
         .unwrap();
 
         // case: 键存在，但没有过期时间
-        let ttl_res = Ttl::test(&["key1"], &mut handler).await.unwrap().unwrap();
-        assert_eq!(ttl_res.into_integer_unchecked(), -1);
+        let _ttl_res = Ttl::test(&["key1"], &mut handler).await.unwrap_err();
 
         // case: 键不存在
-        let ttl_res = Ttl::test(&["key_nil"], &mut handler)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(ttl_res.into_integer_unchecked(), -2);
+        let _ttl_res = Ttl::test(&["key_nil"], &mut handler).await.unwrap_err();
 
         // case: 键存在且有过期时间
         let ttl_res = Ttl::test(&["key_with_ex"], &mut handler)

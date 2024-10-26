@@ -1,5 +1,7 @@
 #[tokio::main]
 async fn main() {
+    use rutin::server::*;
+
     #[cfg(feature = "debug_server")]
     {
         rutin::util::debug_server().await;
@@ -12,7 +14,11 @@ async fn main() {
         return;
     }
 
-    rutin::server::preface();
+    preface();
 
-    rutin::server::run().await;
+    let shared = *SHARED;
+
+    init_server(shared).await;
+
+    waitting_shutdown(shared).await;
 }

@@ -2,8 +2,9 @@ pub mod db;
 pub mod post_office;
 pub mod script;
 
-use std::{cell::UnsafeCell, time::Duration};
+use std::{cell::UnsafeCell, sync::Arc, time::Duration};
 
+use arc_swap::{ArcSwap, Guard};
 pub use post_office::*;
 pub use script::*;
 use tracing::debug;
@@ -13,7 +14,7 @@ use tokio_util::task::LocalPoolHandle;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Shared {
-    pub inner: &'static UnsafeCell<SharedInner>,
+    pub inner: &'static SharedInner,
 }
 
 unsafe impl Send for Shared {}
@@ -30,23 +31,24 @@ impl Shared {
 
     pub fn with_conf(conf: Conf) -> Self {
         Self {
-            inner: Box::leak(Box::new(UnsafeCell::new(SharedInner::with_conf(conf)))),
+            inner: Box::leak(Box::new(SharedInner::with_conf(conf))),
         }
     }
 
+    #[inline]
     pub fn inner(&self) -> &'static SharedInner {
-        unsafe { &*self.inner.get() }
+        self.inner
     }
 
-    /// Returns a mutable reference to the inner of this [`Shared`].
-    ///
-    /// # Safety
-    ///
-    /// 可以通过send_reset_server()终止除主任务以外的所有任务，然后在主任务中调用此方法
-    /// 修改SharedInner
-    pub unsafe fn inner_mut(&self) -> &'static mut SharedInner {
-        unsafe { &mut *self.inner.get() }
-    }
+    // /// Returns a mutable reference to the inner of this [`Shared`].
+    // ///
+    // /// # Safety
+    // ///
+    // /// 可以通过send_reset_server()终止除主任务以外的所有任务，然后在主任务中调用此方法
+    // /// 修改SharedInner
+    // pub unsafe fn inner_mut(&self) -> &'static mut SharedInner {
+    //     unsafe { &mut *self.inner.get() }
+    // }
 
     #[inline]
     pub fn pool(&self) -> &'static LocalPoolHandle {
@@ -81,7 +83,7 @@ impl Shared {
     // 关闭所有任务，仅剩主任务
     pub async fn wait_shutdown_complete(&self) {
         loop {
-            if self.post_office().inner.is_empty()
+            if self.post_office().normal_mailboxs.is_empty()
                 && self
                     .pool()
                     .get_task_loads_for_each_worker()
@@ -92,7 +94,7 @@ impl Shared {
                 break;
             }
 
-            for entry in self.post_office().inner.iter() {
+            for entry in self.post_office().normal_mailboxs.iter() {
                 debug!("waitting task abort, task id={}", entry.key());
             }
 
@@ -116,9 +118,9 @@ pub struct SharedInner {
 
 impl SharedInner {
     pub fn with_conf(conf: Conf) -> Self {
-        let db = Db::new(conf.memory.oom.clone());
+        let db = Db::new(conf.memory_conf().oom.clone());
         let script = Script::new();
-        let post_office = PostOffice::new(&conf);
+        let post_office = PostOffice::new();
 
         SharedInner {
             pool: LocalPoolHandle::new(num_cpus::get()),
