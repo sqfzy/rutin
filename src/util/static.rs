@@ -7,21 +7,29 @@ use std::{
     ops::Deref,
 };
 
+/// # Safety
+/// 将其生命周期视为static，但实际的生命周期在执行finish_read_frames()时结束
 #[inline]
 pub unsafe fn leak_bytes(b: &[u8]) -> StaticBytes {
     StaticBytes::Const(std::mem::transmute::<&[u8], &'static [u8]>(b))
 }
 
+/// # Safety
+/// 将其生命周期视为static，但实际的生命周期在执行finish_read_frames()时结束
 #[inline]
 pub unsafe fn leak_bytes_mut(b: &mut [u8]) -> StaticBytes {
     StaticBytes::Mut(std::mem::transmute::<&mut [u8], &'static mut [u8]>(b))
 }
 
+/// # Safety
+/// 将其生命周期视为static，但实际的生命周期在执行finish_read_frames()时结束
 #[inline]
 pub unsafe fn leak_str(s: &str) -> StaticStr {
     StaticStr::Const(std::mem::transmute::<&str, &'static str>(s))
 }
 
+/// # Safety
+/// 将其生命周期视为static，但实际的生命周期在执行finish_read_frames()时结束
 #[inline]
 pub unsafe fn leak_str_mut(s: &mut str) -> StaticStr {
     StaticStr::Mut(std::mem::transmute::<&mut str, &'static mut str>(s))

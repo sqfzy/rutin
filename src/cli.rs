@@ -1,8 +1,7 @@
-use crate::{conf::*, util::gen_test_shared};
+use crate::conf::*;
 use bytestring::ByteString;
 use clap::Parser;
-use std::sync::Mutex;
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 #[derive(Parser)]
 pub struct Cli {

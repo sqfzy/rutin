@@ -6,7 +6,7 @@ use crate::{
     frame::Resp3,
     persist::rdb::save_rdb,
     server::{AsyncStream, Handler, HandlerContext},
-    shared::{db::Key, Letter, SharedInner, NULL_ID, SET_MASTER_ID},
+    shared::{db::Key, Letter, NULL_ID, SET_MASTER_ID},
     util,
 };
 use bytes::BytesMut;
@@ -660,13 +660,7 @@ where
         let conf = shared.conf();
 
         if self.replica_no_one {
-            conf.update_replica_conf(
-                &mut |mut replica_conf| {
-                    replica_conf = None;
-                    replica_conf
-                },
-                shared,
-            );
+            conf.update_replica_conf(&mut |_| None, shared);
         } else {
             conf.update_replica_conf(
                 &mut |mut replica_conf| {

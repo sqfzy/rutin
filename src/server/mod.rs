@@ -4,7 +4,6 @@ mod listener;
 
 pub use connection::*;
 use event_listener::{listener, IntoNotification};
-use futures::pin_mut;
 pub use handler::*;
 pub use listener::*;
 
@@ -18,11 +17,7 @@ use crate::{
         aof::{load_aof, spawn_save_aof},
         rdb::load_rdb,
     },
-    shared::{
-        db::{Atc, Events},
-        post_office::Letter,
-        Shared, CTRL_C_ID, EXPIRATION_EVICT_ID, MAIN_ID,
-    },
+    shared::{db::Atc, post_office::Letter, Shared, CTRL_C_ID, MAIN_ID},
     util::{spawn_set_server_to_master, spawn_set_server_to_replica, UnsafeLazy},
     Id,
 };
@@ -35,10 +30,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use tokio::{
-    task_local,
-    time::{interval, Instant},
-};
+use tokio::{task_local, time::Instant};
 use tracing::{error, info, level_filters::LevelFilter};
 
 #[cfg(not(feature = "test_util"))]
@@ -162,7 +154,6 @@ pub fn init_log(shared: Shared) {
 }
 
 pub async fn init_server(shared: Shared) -> anyhow::Result<()> {
-    let post_office = shared.post_office();
     let conf = shared.conf();
 
     /*******************/

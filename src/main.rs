@@ -18,7 +18,7 @@ async fn main() {
 
     let shared = *SHARED;
 
-    init_server(shared).await;
+    init_server(shared).await.unwrap();
 
     waitting_shutdown(shared).await;
 }

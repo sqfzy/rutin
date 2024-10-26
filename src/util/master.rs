@@ -77,13 +77,7 @@ pub fn spawn_set_server_to_master(shared: Shared, master_conf: Arc<MasterConf>) 
         let post_office = shared.post_office();
 
         // SET_REPLICA_ID 和 SET_MASTER_ID 任务不能同时存在
-        conf.update_replica_conf(
-            &mut |mut replica_conf| {
-                replica_conf = None;
-                replica_conf
-            },
-            shared,
-        );
+        conf.update_replica_conf(&mut |_| None, shared);
 
         let mailbox = post_office.register_mailbox(SET_MASTER_ID);
 

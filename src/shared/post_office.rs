@@ -5,8 +5,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use crate::{frame::CheapResp3, server::Handler, shared::SharedInner, Id};
-use bytes::{Bytes, BytesMut};
+use crate::{frame::CheapResp3, server::Handler, Id};
+use bytes::BytesMut;
 use bytestring::ByteString;
 use dashmap::{DashMap, Entry};
 use event_listener::{listener, Event};

@@ -9,11 +9,9 @@ use crate::{
 use bytes::BytesMut;
 use event_listener::{listener, IntoNotification};
 use rutin_resp3::codec::decode::Resp3Decoder;
-use serde::Deserialize;
 use std::{os::unix::fs::MetadataExt, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::Mutex,
     time::Instant,
 };
 use tokio_util::codec::Decoder;

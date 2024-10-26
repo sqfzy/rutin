@@ -16,7 +16,7 @@ pub struct ObjectEntry<'a, 'b, Q: ?Sized> {
     pub(super) inner: StaticEntryRef<'a, 'b, Q>,
 }
 
-impl<'a, 'b, Q: ?Sized> ObjectEntry<'a, 'b, Q> {
+impl<'b, Q: ?Sized> ObjectEntry<'_, 'b, Q> {
     #[inline]
     pub fn is_occupied(&self) -> bool {
         matches!(self.inner, StaticEntryRef::Occupied(_))

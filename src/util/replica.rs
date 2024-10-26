@@ -5,7 +5,7 @@ use crate::{
     frame::Resp3,
     persist::rdb::decode_rdb,
     server::{Handler, HandlerContext},
-    shared::{Shared, SET_MASTER_ID, SET_REPLICA_ID},
+    shared::{Shared, SET_REPLICA_ID},
     util,
 };
 use bytes::Buf;
@@ -40,13 +40,7 @@ pub fn spawn_set_server_to_replica(shared: Shared, replica_conf: Arc<ReplicaConf
         let post_office = shared.post_office();
 
         // SET_REPLICA_ID 和 SET_MASTER_ID 任务不能同时存在
-        conf.update_master_conf(
-            &mut |mut master_conf| {
-                master_conf = None;
-                master_conf
-            },
-            shared,
-        );
+        conf.update_master_conf(&mut |_| None, shared);
 
         let mailbox = post_office.register_mailbox(SET_REPLICA_ID);
         let (master_host, master_port) = (&replica_conf.master_host, &replica_conf.master_port);

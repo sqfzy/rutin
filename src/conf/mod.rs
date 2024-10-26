@@ -19,21 +19,18 @@ pub use tls::*;
 use crate::{
     cli::{merge_cli, Cli},
     conf::db::Events,
-    server::{incr_lru_clock, USED_MEMORY},
+    server::USED_MEMORY,
     shared::{post_office::*, *},
 };
-use arc_swap::{ArcSwap, ArcSwapOption, AsRaw, Guard};
-use bytes::Bytes;
+use arc_swap::{ArcSwap, ArcSwapOption, Guard};
 use clap::Parser;
 use figment::providers::{Format, Toml};
 use futures::pin_mut;
-use rand::Rng;
 use serde::Deserialize;
 use std::{
     sync::{atomic::Ordering, Arc},
     time::Duration,
 };
-use sysinfo::ProcessRefreshKind;
 use tokio::time::{interval, Instant};
 
 #[derive(Debug, Default, Deserialize)]

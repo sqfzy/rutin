@@ -21,7 +21,7 @@ use dashmap::{
     DashMap, DashSet, Map,
 };
 use equivalent::Equivalent;
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 use tokio::time::Instant;
 use tracing::instrument;
 

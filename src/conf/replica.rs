@@ -1,7 +1,7 @@
 use super::*;
 use crate::util::spawn_set_server_to_replica;
 use bytestring::ByteString;
-use std::sync::{atomic::AtomicU64, Mutex};
+use std::sync::atomic::AtomicU64;
 
 #[derive(Debug, Deserialize)]
 pub struct ReplicaConf {

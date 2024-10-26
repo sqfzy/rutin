@@ -28,8 +28,6 @@ impl Listener {
         use std::{fs::File, io::BufReader};
         use tokio_rustls::rustls;
 
-        let conf = shared.conf();
-
         // 开始监听
         let listener =
             tokio::net::TcpListener::bind(format!("{}:{}", server_conf.host, server_conf.port))
@@ -37,7 +35,7 @@ impl Listener {
                 .unwrap();
 
         // 如果配置文件中开启了TLS，则创建TlsAcceptor
-        let tls_acceptor = if let Some(tls_conf) = conf.tls_conf().clone() {
+        let tls_acceptor = if let Some(tls_conf) = tls_conf.clone() {
             let cert = rustls_pemfile::certs(&mut BufReader::new(
                 File::open(&tls_conf.cert_file).unwrap(),
             ))

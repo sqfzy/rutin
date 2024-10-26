@@ -50,7 +50,6 @@ impl Default for ServerConf {
 pub fn gen_run_id() -> ByteString {
     ByteString::from(
         (0..40)
-            .into_iter()
             .map(|_| fastrand::alphanumeric())
             .collect::<String>(),
     )

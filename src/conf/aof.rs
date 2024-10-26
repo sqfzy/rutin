@@ -2,7 +2,7 @@ use crate::{
     conf::{Shared, AOF_ID},
     persist::aof::spawn_save_aof,
 };
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone, Deserialize)]

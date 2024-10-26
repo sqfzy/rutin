@@ -7,7 +7,7 @@ use crate::{
     shared::{db::Key, NULL_ID},
 };
 use ahash::RandomState;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use dashmap::{DashMap, Entry};
 use futures_intrusive::sync::LocalMutex;
 use mlua::{prelude::*, StdLib};

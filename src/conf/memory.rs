@@ -31,6 +31,7 @@ impl MemoryConf {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for MemoryConf {
     fn default() -> Self {
         MemoryConf {
