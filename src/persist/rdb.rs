@@ -306,10 +306,10 @@ pub async fn decode_rdb(
         let checksum = crc.checksum(&rdb_data[..rdb_data.len() - 8]);
 
         if expected_checksum != checksum {
-            RutinError::from(format!(
+            return Err(RutinError::from(format!(
                 "checksum failed, expected: {:?}, got: {:?}",
                 expected_checksum, checksum
-            ));
+            )));
         }
     }
 
@@ -452,7 +452,7 @@ pub fn decode_set_value(bytes: &mut BytesMut) -> RutinResult<Set> {
 
         Ok(Set::HashSet(Box::new(set)))
     } else {
-        return Err(RutinError::from("invalid set length"));
+        Err(RutinError::from("invalid set length"))
     }
 }
 
@@ -467,7 +467,7 @@ pub fn decode_hash_value(bytes: &mut BytesMut) -> RutinResult<Hash> {
 
         Ok(Hash::HashMap(Box::new(hash)))
     } else {
-        return Err(RutinError::from("invalid hash length"));
+        Err(RutinError::from("invalid hash length"))
     }
 }
 
@@ -510,7 +510,7 @@ pub fn decode_key(bytes: &mut BytesMut) -> RutinResult<Key> {
     if let Length::Len(len) = decode_length(bytes)? {
         Ok(bytes.split_to(len).freeze().into())
     } else {
-        return Err(RutinError::from("invalid key length"));
+        Err(RutinError::from("invalid key length"))
     }
 }
 

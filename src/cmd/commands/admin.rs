@@ -6,7 +6,7 @@ use crate::{
     frame::Resp3,
     persist::rdb::save_rdb,
     server::{AsyncStream, Handler, HandlerContext},
-    shared::{db::Key, Letter, NULL_ID, SET_MASTER_ID},
+    shared::{Letter, NULL_ID, SET_MASTER_ID},
     util,
 };
 use bytes::BytesMut;

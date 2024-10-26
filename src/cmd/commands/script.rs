@@ -5,7 +5,6 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, Handler},
-    shared::db::Key,
     util::atoi,
 };
 use std::fmt::Debug;

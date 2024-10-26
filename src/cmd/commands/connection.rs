@@ -5,7 +5,6 @@ use crate::{
     error::{RutinError, RutinResult},
     frame::{CheapResp3, Resp3},
     server::{AsyncStream, ClientTrack, Handler},
-    shared::db::Key,
     util::{self},
     Id,
 };

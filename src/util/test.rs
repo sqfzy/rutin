@@ -32,9 +32,6 @@ pub fn test_init() {
 }
 
 pub fn gen_test_config() -> Conf {
-    #[cfg(not(feature = "test_util"))]
-    panic!("need to enable test_util feature");
-
     let acl = Acl::new();
     acl.insert(
         TEST_AC_USERNAME,
@@ -97,15 +94,9 @@ pub fn gen_test_config() -> Conf {
 }
 
 pub fn gen_test_handler() -> FakeHandler {
-    #[cfg(not(feature = "test_util"))]
-    panic!("need to enable test_util feature");
-
     FakeHandler::new_fake_with(Shared::with_conf(gen_test_config()), None, None).0
 }
 
 pub fn gen_test_shared() -> Shared {
-    #[cfg(not(feature = "test_util"))]
-    panic!("need to enable test_util feature");
-
     Shared::with_conf(gen_test_config())
 }

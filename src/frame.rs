@@ -1,14 +1,13 @@
 use std::hash::Hash;
 
 use crate::{
-    cmd::CmdArg,
     shared::db::{Key, Str},
     util::{IntoUppercase, StaticBytes, StaticStr, Uppercase},
 };
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use bytestring::ByteString;
 use equivalent::Equivalent;
-use mlua::{BorrowedBytes, BorrowedStr};
+use mlua::BorrowedBytes;
 pub use rutin_resp3::resp3::Resp3;
 
 pub type CheapResp3 = Resp3<Key, ByteString>;
@@ -49,15 +48,15 @@ impl AsRef<[u8]> for BorrowedBytesWrapper<'_> {
     }
 }
 
-impl Into<Str> for BorrowedBytesWrapper<'_> {
-    fn into(self) -> Str {
-        Str::from(self.0.as_ref())
+impl From<BorrowedBytesWrapper<'_>> for Str {
+    fn from(val: BorrowedBytesWrapper<'_>) -> Self {
+        Str::from(val.0.as_ref())
     }
 }
 
-impl Into<Key> for BorrowedBytesWrapper<'_> {
-    fn into(self) -> Key {
-        Key::from(self.0.as_ref())
+impl From<BorrowedBytesWrapper<'_>> for Key {
+    fn from(val: BorrowedBytesWrapper<'_>) -> Self {
+        Key::from(val.0.as_ref())
     }
 }
 
@@ -67,14 +66,8 @@ impl Hash for BorrowedBytesWrapper<'_> {
     }
 }
 
-// impl<'a, 'b> From<&'a BorrowedBytesWrapper<'b>> for Key {
-//     fn from(value: &'a BorrowedBytesWrapper<'b>) -> Self {
-//         Key::from(value.0.as_ref())
-//     }
+// fn test_cmd_arg_trait(bar: BorrowedBytesWrapper<'_>) {
+//     fn foo(cmd_arg: impl crate::cmd::CmdArg) {}
+//
+//     foo(bar);
 // }
-
-fn test_cmd_arg_trait(bar: BorrowedBytesWrapper<'_>) {
-    fn foo(cmd_arg: impl crate::cmd::CmdArg) {}
-
-    foo(bar);
-}
