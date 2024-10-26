@@ -1,5 +1,8 @@
 use super::*;
-use crate::error::{RutinError, RutinResult};
+use crate::{
+    error::{RutinError, RutinResult},
+    Id,
+};
 use dashmap::mapref::entry_ref;
 use std::convert::From;
 
@@ -271,10 +274,10 @@ impl<'b, Q: ?Sized> ObjectEntry<'_, 'b, Q> {
     /// # Desc:
     ///
     /// 如果对象存在且不为空，则添加监听事件
-    pub fn add_lock_event(mut self) -> Self {
+    pub fn add_lock_event(mut self, id: Id) -> Self {
         match &mut self.inner {
             StaticEntryRef::Occupied(e) => {
-                e.get_mut().events.add_lock_event();
+                e.get_mut().events.add_lock_event(id);
 
                 self
             }

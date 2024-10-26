@@ -1,16 +1,14 @@
-use core::panic;
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    sync::{Arc, RwLock},
-};
-
 use crate::{frame::CheapResp3, server::Handler, Id};
 use bytes::BytesMut;
 use bytestring::ByteString;
 use dashmap::{DashMap, Entry};
 use event_listener::{listener, Event};
 use flume::{Receiver, Sender};
+use std::collections::HashMap;
+use std::{
+    fmt::Debug,
+    sync::{Arc, RwLock},
+};
 use tokio::{net::TcpStream, time::Duration};
 use tracing::instrument;
 
@@ -84,6 +82,10 @@ impl PostOffice {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.normal_mailboxs.is_empty() && self.special_mailboxs.read().unwrap().is_empty()
+    }
+
     pub fn contains(&self, id: Id) -> bool {
         if SPECIAL_ID_RANGE.contains(&id) {
             self.special_mailboxs.read().unwrap().contains_key(&id)
@@ -92,7 +94,17 @@ impl PostOffice {
         }
     }
 
-    // 从提供的id开始寻找一个未使用的ID，然后注册一个mailbox
+    pub fn remove(&self, id: Id) {
+        if SPECIAL_ID_RANGE.contains(&id) {
+            self.special_mailboxs.write().unwrap().remove(&id);
+        } else {
+            self.normal_mailboxs.remove(&id);
+        }
+    }
+
+    // 如果提供的id已经存在mailbox：
+    // 对于SPECIAL_ID_RANGE以外的id会寻找一个未使用的ID，然后注册一个mailbox
+    // 对于SPECIAL_ID_RANGE内的id则会直接覆盖
     pub fn register_mailbox(&'static self, mut id: impl MailboxId) -> MailboxGuard {
         let mut id_temp = id.get_id();
 
@@ -138,7 +150,7 @@ impl PostOffice {
 
     #[inline]
     pub fn delay_shutdown_token(&'static self) -> MailboxGuard {
-        let mut id = fastrand::u64(..);
+        let mut id = fastrand::u64(SPECIAL_ID_RANGE.end..);
         self.register_mailbox(&mut id)
     }
 
@@ -196,21 +208,10 @@ impl PostOffice {
     pub async fn wait_task_shutdown(&self, id: Id) {
         let mut interval = tokio::time::interval(Duration::from_millis(300));
 
-        while self.normal_mailboxs.contains_key(&id) {
+        while self.contains(id) {
             interval.tick().await;
         }
     }
-
-    // #[inline]
-    // pub async fn send_wcmd(&self, wcmd: BytesMut) {
-    //     // AOF和SET MASTER任务都需要处理写命令，但AOF只需要&wcmd，为了避免clone，
-    //     // 如果存在AOF任务，则由AOF任务在使用完&wcmd后尝试发送给SetMaster任务
-    //     if let Some(outbox) = self.aof_outbox().as_ref() {
-    //         outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
-    //     } else if let Some(outbox) = self.set_master_outbox().as_ref() {
-    //         outbox.send_async(Letter::Wcmd(wcmd)).await.ok();
-    //     }
-    // }
 
     #[instrument(level = "debug", skip(self))]
     pub fn send_shutdown(&self, id: Id) {
@@ -224,26 +225,11 @@ impl PostOffice {
         for entry in self.normal_mailboxs.iter() {
             entry.0.send(Letter::Shutdown).ok();
         }
-    }
 
-    // #[instrument(level = "debug", skip(self, f))]
-    // pub async fn send_reset_server(&self, f: Box<dyn FnOnce(&mut SharedInner) + Send>) {
-    //     self.normal_mailboxs
-    //         .get(&MAIN_ID)
-    //         .unwrap()
-    //         .0
-    //         .send_async(Letter::ModifyShared(f))
-    //         .await
-    //         .ok();
-    //
-    //     for entry in self.normal_mailboxs.iter() {
-    //         if *entry.key() == MAIN_ID {
-    //             continue;
-    //         }
-    //
-    //         entry.0.send_async(Letter::Shutdown).await.ok();
-    //     }
-    // }
+        for entry in self.special_mailboxs.read().unwrap().iter() {
+            entry.1 .0.send(Letter::Shutdown).ok();
+        }
+    }
 
     #[instrument(level = "debug", skip(self))]
     pub async fn send_block(&self, id: Id) -> BlockGuard {
@@ -443,6 +429,6 @@ impl MailboxGuard {
 
 impl Drop for MailboxGuard {
     fn drop(&mut self) {
-        self.post_office.normal_mailboxs.remove(&self.id);
+        self.post_office.remove(self.id);
     }
 }

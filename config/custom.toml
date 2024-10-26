@@ -16,10 +16,10 @@ max_connections = 256          # 最大连接数
 # ping_replica_period = 10 # 主服务器ping从服务器的时间间隔，单位为秒
 # timeout = 10 # 从服务器连接超时时间，单位为秒
 
-[replica]
-# master_auth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
-# replicaof = "127.0.0.1:6380" # 主服务器地址
-read_only = true
+# [replica]
+# # master_auth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
+# # replicaof = "127.0.0.1:6380" # 主服务器地址
+# read_only = true
 
 # [rdb]
 # file_path = "dump.rdb" # RDB文件路径

@@ -255,7 +255,9 @@ impl LuaScript {
 
                 // 给需要操作的键加上锁
                 for key in &keys {
-                    db.object_entry(key).await?.add_lock_event();
+                    db.object_entry(key)
+                        .await?
+                        .add_lock_event(fake_handler.context.id);
                 }
                 // 释放fake_handler的锁，以便在执行脚本时可以获取fake_handler的锁，
                 // 由于Lua的锁还在，因此不会有其他task尝试获取fake_handler的锁

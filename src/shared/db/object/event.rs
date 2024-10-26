@@ -59,7 +59,7 @@ impl Events {
         *flags |= WRITE_EVENT_FLAG;
     }
 
-    pub fn add_lock_event(&mut self) {
+    pub fn add_lock_event(&mut self, id: Id) {
         let Events { inner, flags } = self;
         let flags = flags.get_mut();
 
@@ -68,7 +68,7 @@ impl Events {
             inner.insert(
                 0,
                 Event::IntentionLock {
-                    target_id: ID.get(),
+                    target_id: id,
                     notify: Arc::new(Notify::new()),
                     count: AtomicUsize::new(0),
                 },
@@ -80,7 +80,7 @@ impl Events {
 
         // 存在锁事件则覆盖target_id
         if let Some(Event::IntentionLock { target_id, .. }) = inner.first_mut() {
-            *target_id = ID.get();
+            *target_id = id;
             *flags |= LOCK_EVENT_FLAG;
         } else {
             unreachable!()

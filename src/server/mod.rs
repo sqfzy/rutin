@@ -234,6 +234,8 @@ pub async fn waitting_shutdown(shared: Shared) {
         }
     }
 
+    drop(mailbox);
+
     info!("shutting down server...");
     post_office.send_shutdown_server();
 

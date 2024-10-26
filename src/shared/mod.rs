@@ -79,22 +79,19 @@ impl Shared {
         self.script().clear();
     }
 
-    // 关闭所有任务，仅剩主任务
+    // 关闭所有任务
     pub async fn wait_shutdown_complete(&self) {
         loop {
-            if self.post_office().normal_mailboxs.is_empty()
-                && self
-                    .pool()
-                    .get_task_loads_for_each_worker()
-                    .iter()
-                    .sum::<usize>()
-                    == 0
-            {
+            if self.post_office().is_empty() {
                 break;
             }
 
             for entry in self.post_office().normal_mailboxs.iter() {
                 debug!("waitting task abort, task id={}", entry.key());
+            }
+
+            for entry in self.post_office().special_mailboxs.read().unwrap().iter() {
+                debug!("waitting task abort, task id={}", entry.0);
             }
 
             tokio::time::sleep(Duration::from_millis(300)).await;

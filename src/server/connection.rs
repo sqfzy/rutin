@@ -593,11 +593,6 @@ mod fake_cs_tests {
                 .await;
         });
 
-        let mut res = vec![];
-        while let Some(frames) = handler.conn.read_frame().await.unwrap() {
-            res.push(frames);
-        }
-
         let right_res = vec![
             StaticResp3::new_simple_string("OK".to_string()),
             StaticResp3::new_simple_error("Error message".to_string()),
@@ -619,8 +614,10 @@ mod fake_cs_tests {
             Resp3::new_array(vec![]),
         ];
 
-        for (a, b) in res.into_iter().zip(right_res) {
-            assert_eq!(a, b);
+        let mut i = 0;
+        while let Some(res) = handler.conn.read_frame().await.unwrap() {
+            assert_eq!(res, right_res[i]);
+            i += 1;
         }
     }
 }

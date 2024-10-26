@@ -35,10 +35,10 @@ test = { enable = true, password = "test", allow_commands = [
 ] }
 
 
-[replica]
-# replicaof = "127.0.0.1:6380" # 主服务器地址
-max_replica = 10 # 最多允许多少个从服务器连接到当前服务器
-read_only = true
+# [replica]
+# # replicaof = "127.0.0.1:6380" # 主服务器地址
+# max_replica = 10 # 最多允许多少个从服务器连接到当前服务器
+# read_only = true
 
 # [rdb]
 # file_path = "dump.rdb" # RDB文件路径
