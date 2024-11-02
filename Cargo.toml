@@ -16,7 +16,7 @@ categories = ["database"]
 members = ["rutin_proc", "rutin_dashmap"]
 
 [dependencies]
-rutin_resp3 = { path = "../rutin_resp3", features = ["mlua", "ahash"] }
+rutin_resp3 = { version = "0.1", features = ["mlua", "ahash"] }
 rutin_proc = { path = "rutin_proc" }
 anyhow = "1.0.59"
 bytes = { version = "1", features = ["serde"] }

@@ -8,9 +8,11 @@ use flume::{
     r#async::{RecvFut, SendFut},
     Receiver, Sender,
 };
-use futures::{io, Future, FutureExt};
+use futures::{io, Future};
 use pin_project::{pin_project, pinned_drop};
-use rutin_resp3::codec::decode::{decode_async, decode_line_async, Resp3Decoder};
+use rutin_resp3::codec::decode::{
+    decode_async, decode_async_multi2, decode_line_async, Resp3Decoder,
+};
 use std::{
     any::Any,
     collections::VecDeque,
@@ -161,118 +163,22 @@ impl<S: AsyncStream> Connection<S> {
         frame
     }
 
-    // #[instrument(level = "trace", skip(self), ret, err)]
-    // pub async fn read_frames(&mut self) -> RutinResult<Option<Vec<StaticResp3>>> {
-    //     let mut frames = vec![];
-    //
-    //     loop {
-    //         let frame = match self.read_frame().await? {
-    //             Some(frame) => frame,
-    //             None => {
-    //                 if frames.is_empty() {
-    //                     return Ok(None);
-    //                 } else {
-    //                     break;
-    //                 }
-    //             }
-    //         };
-    //
-    //         frames.push(frame);
-    //         self.batch += 1;
-    //
-    //         if self.batch > self.max_batch {
-    //             break;
-    //         }
-    //
-    //         // 如果buffer为空则尝试继续从stream读取数据到buffer。如果阻塞或连接
-    //         // 断开(内核中暂无数据)则返回目前解析到frame；如果读取到数据则继续
-    //         // 解析(服务端总是假定客户端会发送完整的RESP3 frame，如果出现半包情
-    //         // 况，则需要等待该frame的完整数据，其它frame请求的处理也会被阻塞)。
-    //         if !self.reader_buf.has_remaining() {
-    //             match self
-    //                 .stream
-    //                 .read_buf(self.reader_buf.get_mut())
-    //                 .now_or_never()
-    //             {
-    //                 Some(Ok(n)) if n != 0 => {}
-    //                 _ => break,
-    //             }
-    //         }
-    //     }
-    //
-    //     while self.reader_buf.has_remaining() {
-    //         let frame = match self.read_frame().await? {
-    //             Some(frame) => frame,
-    //             None => {
-    //                 if frames.is_empty() {
-    //                     return Ok(None);
-    //                 } else {
-    //                     return Ok(Some(frames));
-    //                 }
-    //             }
-    //         };
-    //
-    //         frames.push(frame);
-    //         self.batch += 1;
-    //     }
-    //
-    //     Ok(Some(frames))
-    // }
-
     #[instrument(level = "trace", skip(self), ret, err)]
     pub async fn get_requests(&mut self) -> RutinResult<Option<usize>> {
         self.flush_reader_buf();
 
-        loop {
-            let frame = match self.read_frame().await? {
-                Some(frame) => frame,
-                None => {
-                    if self.requests.is_empty() {
-                        return Ok(None);
-                    } else {
-                        break;
-                    }
-                }
-            };
-
-            self.requests.push_back(frame);
-
-            if self.batch > self.max_batch {
-                break;
-            }
-
-            // 如果buffer为空则尝试继续从stream读取数据到buffer。如果阻塞或连接
-            // 断开(内核中暂无数据)则返回目前解析到frame；如果读取到数据则继续
-            // 解析(服务端总是假定客户端会发送完整的RESP3 frame，如果出现半包情
-            // 况，则需要等待该frame的完整数据，其它frame请求的处理也会被阻塞)。
-            if !self.reader_buf.has_remaining() {
-                match self
-                    .stream
-                    .read_buf(self.reader_buf.get_mut())
-                    .now_or_never()
-                {
-                    Some(Ok(n)) if n != 0 => {}
-                    _ => break,
-                }
-            }
-        }
-
-        while self.reader_buf.has_remaining() {
-            let frame = match self.read_frame().await? {
-                Some(frame) => frame,
-                None => {
-                    if self.requests.is_empty() {
-                        return Ok(None);
-                    } else {
-                        return Ok(Some(self.requests.len()));
-                    }
-                }
-            };
-
-            self.requests.push_back(frame);
-        }
-
-        Ok(Some(self.requests.len()))
+        Ok(decode_async_multi2(
+            &mut self.stream,
+            &mut self.reader_buf,
+            &mut self.requests,
+            self.max_batch,
+        )
+        .await?
+        .map(|_| {
+            let n = self.requests.len();
+            self.batch = n;
+            n
+        }))
     }
 
     #[instrument(level = "trace", skip(self), err)]

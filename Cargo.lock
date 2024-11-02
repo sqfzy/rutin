@@ -1773,6 +1773,8 @@ dependencies = [
 [[package]]
 name = "rutin_resp3"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91b1f9c5ea1fcee6e8a268a6e1706cbf61af55861212ee02bc06b30ca3d78387"
 dependencies = [
  "ahash",
  "atoi",
