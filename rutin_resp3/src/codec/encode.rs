@@ -1,6 +1,6 @@
 use crate::resp3::*;
 use bytes::{BufMut, BytesMut};
-use tokio_util::codec::{Encoder, FramedWrite};
+use tokio_util::codec::Encoder;
 
 #[derive(Debug, Clone, Copy)]
 pub struct InfallibleError;
