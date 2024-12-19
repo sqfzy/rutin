@@ -1,0 +1,134 @@
+[package]
+name = "rutin_server"
+version = "0.2.0"
+edition = "2024"
+author = "sqfzy"
+license = "MIT"
+description = "redis implemented using rust"
+readme = "README.md"
+homepage = "https://github.com/sqfzy/rutin"
+repository = "https://github.com/sqfzy/rutin"
+keywords = ["redis", "database", "kv"]
+categories = ["database"]
+
+[dependencies]
+rutin_resp3 = { path = "../rutin_resp3", features = ["mlua", "ahash"] }
+rutin_proc = { path = "../rutin_proc" }
+dashmap = { path = "../rutin_dashmap", features = [
+  "raw-api",
+  "inline",
+  "rayon",
+  "serde",
+] }
+anyhow = "1.0.59"
+bytes = { version = "1", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+# config = "0.14.0"
+crc = "3.0.1"
+# once_cell = "1.19.0"
+rand = "0.8"
+fastrand = "2"
+skiplist = "0.5.1"
+tokio = { version = "1", features = ["full", "tracing"] }
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+serde = { version = "1.0", features = ["derive"] }
+# crossbeam = { version = "0.8.4", features = ["crossbeam-queue", "nightly"] }
+itoa = "1.0.11"
+ryu = "1.0.17"
+tokio-util = { version = "0.7.12", features = ["full"] }
+atoi = "2.0.0"
+# async-shutdown = "0.2.2"
+flume = { version = "0.11.0", features = ["async", "spin"] }
+parking_lot = "0.12.1"
+ahash = "0.8.11"
+strum = { version = "0.26", features = ["derive"] }
+num_cpus = "1.16.0"
+regex = { version = "1.10.4", features = ["perf"] }
+# monoio = "0.2.3"
+# lockfree-object-pool = "0.1.5"
+# async-recursion = "1.1.1"
+snafu = "0.8.2"
+backon = { version = "1.0", features = ["tokio-sleep"] }
+rayon = "1.10.0"
+# tokio-async-drop = "0.1.0"
+# console-subscriber = "0.4.0"
+# try-lock = "0.2.5"
+# kanal = "0.1.0-pre8"
+tokio-rustls = "0.26.0"
+# tokio-rustls-acme = "0.3.0"
+rustls-pemfile = "2.1.2"
+rustls = "0.23.7"
+mlua = { version = "0.10", features = ["async", "lua54", "vendored"] }
+either = "1.12.0"
+pin-project = "1.1.5"
+# yoke = { version = "0.7.4", features = ["derive"] }
+# owning_ref = "0.4.1"
+# polonius-the-crab = "0.4.1"
+num-bigint = "0.4.6"
+memchr = "2.7.2"
+smallvec = { version = "1.13.2", features = ["const_new", "union"] }
+mimalloc = { version = "0.1" }
+arc-swap = { version = "1.7.1", features = ["serde"] }
+# bus = "2.4.1"
+# tokio-uring = "0.5.0"
+event-listener = "5.3.1"
+# bstr = "1.9.1"
+bytestring = { version = "1.3.1", features = ["serde"] }
+# serde_with = "3.8.1"
+# enum_dispatch = "0.3.13"
+itertools = "0.13.0"
+# thin-vec = "0.2.13"
+sysinfo = "0.33"
+# async-ringbuf = "0.2.1"
+futures-intrusive = "0.5.0"
+nohash = "0.2.0"
+figment = { version = "0.10.19", features = ["toml", "env"] }
+paste = "1.0.15"
+derive_builder = "0.20.0"
+futures = "0.3.30"
+zeroize = { version = "1", optional = true }
+# redis-protocol = "5.0.1"
+equivalent = "1.0.1"
+tracing-appender = "0.2.3"
+derive_more = { version = "1.0.0", features = ["debug"] }
+ouroboros = "0.18.4"
+ring = "0.17.8"
+# futures-util = "0.3.30"
+# lru = "0.12.3"
+# neat-date-time = "0.2.0"
+
+# [target.'cfg(not(target_env = "msvc"))'.dependencies]
+# tikv-jemallocator = "0.6"
+
+
+[dev-dependencies]
+assert_cmd = { version = "2.0.14", features = ["color-auto"] }
+# redis = "0.25"
+criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+
+# [[bench]]
+# name = "rutin_benchmark"
+# harness = false
+
+
+# [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.release]
+# rustflags = [
+#   "-C",
+#   "target-cpu=native",
+#   "-C",
+#   "link-args=-Wl,-O2",
+#   # 使用#[thread_local]代替thread_local!宏
+#   # "-Z",
+#   # "tls-model=local-exec",
+# ]
+
+# [target.'cfg(all(target_arch = "x86_64", target_os = "windows"))'.release]
+# rustflags = ["-C", "target-cpu=native", "-C", "link-args=-O2"]
+
+[features]
+debug = []
+debug_client = []
+debug_server = []
+redis = []
+secure = ["mimalloc/secure", "zeroize"]

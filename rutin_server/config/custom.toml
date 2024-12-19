@@ -1,0 +1,36 @@
+[server]
+host = "127.0.0.1"
+port = 6379                    # 服务器端口
+expire_check_interval_secs = 3 # 检查过期键的频率，每次随机检查一个键，单位为秒
+log_level = "info"             # 日志级别
+max_connections = 256          # 最大连接数
+# max_batch = 1024               # 最大批量操作数
+
+[security]
+# requirepass = "passwd" # 主服务器密码。当设置该值之后，客户端连接到服务器时需要发送AUTH命令进行认证
+
+
+# [master]
+# max_replica = 10         # 最多允许多少个从服务器连接到当前服务器
+# backlog_size = 1024      # 复制积压缓冲区大小，单位为KB
+# ping_replica_period = 10 # 主服务器ping从服务器的时间间隔，单位为秒
+# timeout = 10 # 从服务器连接超时时间，单位为秒
+
+# [replica]
+# # master_auth = "passwd" # 主服务器密码。设置该值之后，当从服务器连接到主服务器时会发送该值 
+# # replicaof = "127.0.0.1:6380" # 主服务器地址
+# read_only = true
+
+# [rdb]
+# file_path = "dump.rdb" # RDB文件路径
+#
+# # RDB持久化间隔。seconds表示间隔时间，changes表示键的变化次数。
+# # 每seconds时间内有changes个键发生变化，则触发RDB快照
+# # interval = { seconds = 1, changes = 0 }
+# enable_checksum = false # 是否开启RDB校验和
+#
+# [aof]
+# use_rdb_preamble = true        # 是否在AOF文件开头加入RDB版本信息
+# file_path = "appendonly.aof"   # AOF文件路径
+# append_fsync = "everysec"      # AOF同步频率。可能为：always | everysec | no
+# auto_aof_rewrite_min_size = 64 # 单位为MB
