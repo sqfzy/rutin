@@ -13,21 +13,21 @@ use bytes::BytesMut;
 use event_listener::{listener, Event, EventListener, IntoNotification};
 use futures::pin_mut;
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display},
     sync::{atomic::Ordering, Arc},
     time::Duration,
 };
 use tracing::{debug, instrument};
 
-pub struct Handler<S: AsyncStream> {
+pub struct Handler<St: AsyncStream> {
     pub shared: Shared,
-    pub conn: Connection<S>,
+    pub conn: Connection<St>,
     pub context: HandlerContext,
 }
 
-impl<S: AsyncStream> Handler<S> {
+impl<St: AsyncStream> Handler<St> {
     #[inline]
-    pub fn new(shared: Shared, stream: S, context: HandlerContext) -> Self {
+    pub fn new(shared: Shared, stream: St, context: HandlerContext) -> Self {
         Self {
             context,
             conn: Connection::new(stream, shared.conf().server_conf().max_batch),
@@ -175,14 +175,14 @@ impl<S: AsyncStream> Handler<S> {
     }
 
     #[inline]
-    pub async fn dispatch<B, St>(
+    pub async fn dispatch<B, S>(
         &mut self,
-        cmd_frame: Resp3<B, St>,
+        cmd_frame: Resp3<B, S>,
     ) -> RutinResult<Option<CheapResp3>>
     where
-        B: Debug + CmdArg,
+        B: CmdArg,
         Key: for<'a> From<&'a B>,
-        St: Debug,
+        Resp3<B,S>: Display
     {
         ID.scope(self.context.id, dispatch(cmd_frame, self)).await
     }

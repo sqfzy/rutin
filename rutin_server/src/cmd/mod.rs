@@ -14,7 +14,7 @@ use equivalent::Equivalent;
 use itertools::Itertools;
 use std::{
     collections::VecDeque,
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::Hash,
     intrinsics::{likely, unlikely},
     iter::Iterator,
@@ -68,7 +68,7 @@ impl<A: CmdArg> From<&A> for Key {
 
 // TODO: Into<Resp3>
 #[allow(async_fn_in_trait)]
-pub trait CmdExecutor<A>: CommandFlag +  Sized + std::fmt::Debug
+pub trait CmdExecutor<A>: CommandFlag + Sized + std::fmt::Debug
 where
     A: CmdArg,
 {
@@ -153,6 +153,7 @@ where
 #[instrument(
     level = "debug",
     skip(handler),
+    fields(cmd_frame = %cmd_frame),
     ret(level = "debug"),
     err(level = "debug")
 )]
@@ -161,9 +162,9 @@ pub async fn dispatch<B, S>(
     handler: &mut Handler<impl AsyncStream>,
 ) -> RutinResult<Option<CheapResp3>>
 where
-    B: Debug + CmdArg,
+    B: CmdArg,
     Key: for<'a> From<&'a B>,
-    S: Debug,
+    Resp3<B, S>: Display,
 {
     let dispatch = async {
         let mut cmd = CmdUnparsed::try_from(cmd_frame)?;
@@ -370,7 +371,10 @@ impl<B: IntoUppercase, S> TryFrom<Resp3<B, S>> for CmdUnparsed<B> {
                     msg: "ERR the command frame is empty".into(),
                 })?;
 
-                Ok(CmdUnparsed { cmd_name, args: inner })
+                Ok(CmdUnparsed {
+                    cmd_name,
+                    args: inner,
+                })
             }
             _ => Err(RutinError::Other {
                 msg: "ERR the command frame is not an array type".into(),

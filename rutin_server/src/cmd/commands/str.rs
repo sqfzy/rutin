@@ -380,19 +380,19 @@ where
         self,
         handler: &mut Handler<impl AsyncStream>,
     ) -> RutinResult<Option<CheapResp3>> {
-        let mut old = "";
-
-        handler
+        let old = handler
             .shared
             .db()
-            .update_object(&self.key, |obj| {
-                let str = obj.on_str_mut()?;
-                old = str.set(self.new_value).into();
-                Ok(())
-            })
+            .insert_object(&self.key, self.new_value.into())
             .await?;
 
-        Ok(Some(Resp3::new_blob_string(old)))
+        if let Some(old) = old
+            && let Ok(old) = old.value.on_str()
+        {
+            Ok(Some(Resp3::new_blob_string(old.to_bytes())))
+        } else {
+            Ok(Some(Resp3::new_null()))
+        }
     }
 
     fn parse(mut args: CmdUnparsed<A>, ac: &AccessControl) -> RutinResult<Self> {

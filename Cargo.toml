@@ -2,6 +2,9 @@
 members = ["rutin_resp3", "rutin_server", "rutin_proc", "rutin_dashmap", "rutin_oram"]
 default-members = ["rutin_server"]
 
+[workspace.package]
+edition = "2024"
+
 [build]
 target-dir = "target"
 

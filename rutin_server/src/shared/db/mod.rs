@@ -282,6 +282,7 @@ impl Db {
         Ok(())
     }
 
+    // TODO: 添加一个新的方法，要求新旧object的类型匹配
     #[inline]
     #[instrument(level = "trace", skip(self), err(level = "trace"))]
     pub async fn insert_object<'b, Q>(

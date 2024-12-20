@@ -1,25 +1,17 @@
 use bytes::{Bytes, BytesMut};
 use indexmap::IndexMap;
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use ring::aead::{self, Aad, BoundKey, LessSafeKey, Nonce, UnboundKey};
+use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
-use rutin_resp3::{
-    codec::{decode::decode_async_multi, encode::Resp3Encoder},
-    resp3::Resp3,
-};
+use rutin_resp3::resp3::Resp3;
 use rutin_server::{
     cmd::CmdUnparsed,
-    conf::AccessControl,
     error::{RutinError, RutinResult},
-    frame::{CheapResp3, ExpensiveResp3, StaticResp3},
+    frame::{CheapResp3, StaticResp3},
     server::Connection,
     shared::db::Key,
-    util::StaticBytes,
 };
-use tokio::{
-    io::AsyncWriteExt,
-    net::{TcpListener, TcpStream},
-};
+use tokio::net::{TcpListener, TcpStream};
 
 const MAX_THRESHOLD: i32 = 1;
 
@@ -51,7 +43,7 @@ pub struct Proxy {
 
 impl Proxy {
     fn new(src: Connection<TcpStream>, dest: Connection<TcpStream>, threshold: i32) -> Self {
-        let mut rand = SystemRandom::new();
+        let rand = SystemRandom::new();
 
         let mut key_bytes = [0; 16];
         rand.fill(&mut key_bytes).unwrap();
@@ -104,6 +96,8 @@ impl Proxy {
         use rutin_server::cmd::CommandFlag;
         use rutin_server::cmd::commands::*;
 
+        println!("cmd_frame: {}", cmd_frame);
+
         let mut cmd = CmdUnparsed::try_from(cmd_frame)?;
         let cmd_name = cmd.cmd_name_uppercase();
         let cmd_name = if let Ok(s) = std::str::from_utf8(cmd_name.as_ref()) {
@@ -137,26 +131,31 @@ impl Proxy {
                     Resp3::new_blob_string(mappingkey.to_string().as_bytes()),
                     Resp3::new_blob_string(self.gen_fake_ciphertext()),
                 ]);
-                self.dest.write_frame(&getset_frame).await?;
+                self.dest.write_frame_froce(&getset_frame).await?;
 
                 let resp = self.dest.read_frame_force().await.unwrap();
-                self.src.write_frame(&resp).await.unwrap(); // get请求的响应刚好与getset请求的响应一致
 
-                // 如果键值对存在，则需要将之前的fake ciphertext再替换为真实的ciphertext
                 if let Some(ciphertext) = resp.into_blob_string() {
+                    // 如果键值对存在，则需要将之前的fake ciphertext再替换为真实的ciphertext
+
                     let mut ciphertext = ciphertext.to_vec();
                     let len = ciphertext.len();
                     // 解密
-                    let (nonce, rest) = ciphertext.split_at_mut(12);
-                    let (ciphervalue, _) = rest.split_at_mut(rest.len() - 16);
+                    let (nonce, ciphervalue_with_tag) = ciphertext.split_at_mut(12);
 
                     let plainvalue = self
                         .skey
                         .open_in_place(
                             Nonce::assume_unique_for_key(nonce[0..12].try_into().unwrap()),
                             Aad::empty(),
-                            ciphervalue,
+                            ciphervalue_with_tag,
                         )
+                        .unwrap();
+
+                    // 向用户返回明文
+                    self.src
+                        .write_frame_froce(&CheapResp3::new_blob_string(plainvalue.to_vec()))
+                        .await
                         .unwrap();
 
                     // 重新加密
@@ -174,7 +173,7 @@ impl Proxy {
                     // 访问次数，我们先对另一个key执行getset，省去一次对当前key的getset操作
                     // 交换: 随机选择另外一个key，交换它们映射的MappingKey，并且将另一个key的value改为当前key的value
                     if self.threshold <= 0
-                        && map_len < 2
+                        && map_len > 2
                         && let (Some(i), j) = (
                             self.map.get_index_of(key),
                             self.rng.gen_range(0..map_len) as usize,
@@ -184,12 +183,12 @@ impl Proxy {
                         let mappingkey_j = self.map[j];
 
                         // 将另一个key的value设为当前key的value
-                        let getset_frame = Resp3::<Vec<u8>, String>::new_array([
-                            Resp3::new_blob_string(b"GETSET"),
+                        let getset_frame = StaticResp3::new_array([
+                            Resp3::new_blob_string("GETSET".as_bytes()),
                             Resp3::new_blob_string(mappingkey_j.to_string().as_bytes()),
                             Resp3::new_blob_string(ciphertext),
                         ]);
-                        self.dest.write_frame(&getset_frame).await?;
+                        self.dest.write_frame_froce(&getset_frame).await?;
                         self.threshold -= 1;
                         let resp = self.dest.read_frame_force().await.unwrap();
 
@@ -205,13 +204,29 @@ impl Proxy {
                     }
 
                     // 第二次getset
-                    let get_set_frame = Resp3::<Vec<u8>, String>::new_array([
-                        Resp3::new_blob_string(b"GETSET"),
+                    let get_set_frame = StaticResp3::new_array([
+                        Resp3::new_blob_string("GETSET".as_bytes()),
                         Resp3::new_blob_string(mappingkey.to_string().as_bytes()),
                         Resp3::new_blob_string(ciphertext),
                     ]);
 
-                    self.dest.write_frame(&get_set_frame).await?;
+                    self.dest.write_frame_froce(&get_set_frame).await?;
+                    let _ = self.dest.read_frame_force().await?; // 读取并忽略响应
+                } else {
+                    // 如果键值对存在，则需要将之前的fake ciphertext移除
+
+                    self.src
+                        .write_frame_froce(&StaticResp3::new_null())
+                        .await
+                        .unwrap();
+
+                    self.dest
+                        .write_frame(&CheapResp3::new_array([
+                            Resp3::new_blob_string("DEL"),
+                            Resp3::new_blob_string(mappingkey.to_string().as_bytes()),
+                        ]))
+                        .await
+                        .unwrap();
                     let _ = self.dest.read_frame_force().await?; // 读取并忽略响应
                 }
             }
@@ -250,7 +265,7 @@ impl Proxy {
                 // 先查看是否需要交换。
                 // 交换: 随机选择另外一个key，交换它们映射的MappingKey，并且将另一个key的value改为当前key的value
                 if self.threshold <= 0
-                    && map_len < 2
+                    && map_len > 2
                     && let (Some(i), j) = (
                         self.map.get_index_of(key),
                         self.rng.gen_range(0..map_len) as usize,
@@ -259,13 +274,15 @@ impl Proxy {
                 {
                     let mappingkey_j = self.map[j];
 
+                    println!("debug1");
+
                     // 将另一个key的value设为当前key的value
                     let getset_frame = Resp3::<Vec<u8>, String>::new_array([
                         Resp3::new_blob_string(b"GETSET"),
                         Resp3::new_blob_string(mappingkey_j.to_string().as_bytes()),
                         Resp3::new_blob_string(ciphertext),
                     ]);
-                    self.dest.write_frame(&getset_frame).await?;
+                    self.dest.write_frame_froce(&getset_frame).await?;
                     self.threshold -= 1;
                     let resp = self.dest.read_frame_force().await.unwrap();
 
@@ -286,54 +303,26 @@ impl Proxy {
                     Resp3::new_blob_string(ciphertext),
                 ]);
 
-                self.dest.write_frame(&get_set_frame).await?;
+                self.dest.write_frame_froce(&get_set_frame).await?;
+                println!("debug2");
                 let resp = self.dest.read_frame_force().await?; // 读取并忽略响应
+                println!("debug3");
 
                 if resp.is_blob_string() {
                     self.src
-                        .write_frame(&CheapResp3::new_simple_string("OK"))
+                        .write_frame_froce(&CheapResp3::new_simple_string("OK"))
                         .await
                         .unwrap();
                 } else {
-                    self.src.write_frame(&resp).await.unwrap();
+                    self.src.write_frame_froce(&resp).await.unwrap();
                 }
             }
             // 命令中包含子命令
-            _ => {
-                let sub_cmd_name = cmd.next_uppercase::<16>().ok_or(RutinError::Syntax)?;
-
-                let sub_cmd_name = if let Ok(s) = std::str::from_utf8(sub_cmd_name.as_ref()) {
-                    s
-                } else {
-                    return Err(RutinError::UnknownCmd);
-                };
-
-                match sub_cmd_name {
-                    // ClientTracking::NAME => ClientTracking::parse(cmd, &ac)?.keys(),
-                    // ScriptExists::<Bytes>::NAME => ScriptExists::parse(cmd, &ac)?.keys(),
-                    // ScriptFlush::NAME => ScriptFlush::parse(cmd, &ac)?.keys(),
-                    // ScriptRegister::<Bytes>::NAME => ScriptRegister::parse(cmd, &ac)?.keys(),
-                    _ => return Err(RutinError::UnknownCmd),
-                }
-            }
+            _ => return Err(RutinError::UnknownCmd),
         }
 
         Ok(())
     }
-
-    // async fn transfer_request(&mut self) {
-    //     // 读取Frame
-    //     // 查看是否是Get或Set请求，如果是则将其加密后转为插入和删除请求
-    //
-    //     let frames = decode_async_multi(&mut self.stream, src, max_batch).await;
-    //         if res?.is_none() {
-    //             return Ok(());
-    //         }
-    //
-    //         while let Some(f) = self.conn.requests.pop_front() && let Some(res) = dispatch(f, &mut self).await? {
-    //             self.conn.write_frame(&res).await?;
-    //         }
-    // }
 }
 
 pub async fn run() {
@@ -348,6 +337,7 @@ pub async fn run() {
 
         let mut proxy = Proxy::new(src, dest, 1);
         tokio::spawn(async move {
+            println!("debug0");
             if let Err(e) = handle(&mut proxy).await {
                 eprintln!("Error: {:?}", e);
             }
@@ -362,8 +352,21 @@ async fn handle(proxy: &mut Proxy) -> RutinResult<()> {
             return Ok(());
         }
 
+        let mut start = 0;
+        let mut end = 0;
         while let Some(cmd_frame) = proxy.src.requests.pop_front() {
-            proxy.forward_request(cmd_frame).await?;
+            end += cmd_frame.size();
+            if proxy.forward_request(cmd_frame).await.is_err() {
+                // 转发失败，直接发送
+                proxy
+                    .dest
+                    .write_all(&proxy.src.reader_buf.get_ref()[start..end])
+                    .await
+                    .unwrap();
+                let resp = proxy.dest.read_frame_force().await.unwrap();
+                proxy.src.write_frame_froce(&resp).await.unwrap();
+            }
+            start = end;
         }
     }
 }

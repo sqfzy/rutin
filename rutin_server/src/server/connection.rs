@@ -203,6 +203,24 @@ where
 
         Ok(())
     }
+
+    #[instrument(level = "trace", skip(self), err)]
+    pub async fn write_frame_froce<B2, S2>(&mut self, frame: &Resp3<B2, S2>) -> io::Result<()>
+    where
+        B2: AsRef<[u8]> + Debug,
+        S2: AsRef<str> + Debug,
+    {
+        frame.to_bytes_buf(&mut self.writer_buf);
+
+        if self.batch > 0 {
+            self.batch -= 1;
+        }
+
+        self.stream.write_buf(&mut self.writer_buf).await?;
+        self.flush().await?;
+
+        Ok(())
+    }
 }
 
 impl Connection<FakeStream> {

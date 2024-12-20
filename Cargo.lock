@@ -1331,27 +1331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kv-oram"
-version = "0.1.0"
-dependencies = [
- "bimap",
- "bytes",
- "chrono",
- "csv",
- "fastrand",
- "indexmap",
- "nalgebra",
- "plotters",
- "rand",
- "ring",
- "rutin_resp3",
- "rutin_server",
- "statrs",
- "tokio",
- "zipf",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2196,6 +2175,27 @@ name = "rustversion"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e819f2bc632f285be6d7cd36e25940d45b2391dd6d9b939e79de557f7014248"
+
+[[package]]
+name = "rutin_oram"
+version = "0.1.0"
+dependencies = [
+ "bimap",
+ "bytes",
+ "chrono",
+ "csv",
+ "fastrand",
+ "indexmap",
+ "nalgebra",
+ "plotters",
+ "rand",
+ "ring",
+ "rutin_resp3",
+ "rutin_server",
+ "statrs",
+ "tokio",
+ "zipf",
+]
 
 [[package]]
 name = "rutin_proc"
