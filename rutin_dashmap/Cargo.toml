@@ -1,5 +1,5 @@
 [package]
-name = "dashmap"
+name = "rutin_dashmap"
 author = "sqfzy"
 license = "MIT"
 version = "0.1.0"
@@ -9,7 +9,7 @@ edition = "2024"
 # rust-version = "1.65"
 # repository = "https://github.com/xacrimon/dashmap"
 # homepage = "https://github.com/xacrimon/dashmap"
-# description = "Blazing fast concurrent HashMap for Rust."
+description = "Blazing fast concurrent HashMap for Rust."
 # readme = "README.md"
 # documentation = "https://docs.rs/dashmap"
 # keywords = ["atomic", "concurrent", "hashmap"]

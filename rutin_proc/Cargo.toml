@@ -4,6 +4,7 @@ author = "sqfzy"
 license = "MIT"
 version = "0.1.0"
 edition = "2024"
+description = "proc-macro for rutin"
 
 [dependencies]
 syn = { version = "2.0", features = ["full"] }

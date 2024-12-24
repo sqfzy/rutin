@@ -2,24 +2,25 @@
 name = "rutin_oram"
 version = "0.1.0"
 edition = "2024"
+description = "Oblivious RAM implementation for Rust. This library is designed to be used in 'rutin', a Redis server implementation in Rust."
+license = "MIT"
 
 [dependencies]
-rutin_server = { path = "../rutin_server" }
-rutin_resp3 = { path = "../rutin_resp3" } 
-bimap = "0.6.3"
-bytes = "1.8.0"
-chrono = "0.4.38"
-csv = "1.3.0"
-fastrand = "2.2.0"
-indexmap = "2.6.0"
-nalgebra = "0.33.2"
-plotters = "0.3.7"
+rutin_server = { version = "0.2" }
+rutin_resp3 = { version = "0.1" }
+# bimap = "0.6.3"
+bytes = "1.9.0"
+# chrono = "0.4.38"
+# csv = "1.3.0"
+# fastrand = "2.2.0"
+indexmap = "2.7.0"
+# nalgebra = "0.33.2"
+# plotters = "0.3.7"
 rand = "0.8.5"
 ring = "0.17.8"
-statrs = "0.18"
+# statrs = "0.18"
 tokio = { version = "1.42.0", features = ["full"] }
-zipf = "7.0.1"
+# zipf = "7.0.1"
 
 [features]
 test = []
-

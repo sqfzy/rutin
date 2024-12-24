@@ -1,8 +1,9 @@
 [package]
 name = "rutin_resp3"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "RESP3 protocol implementation for Rust. This library is designed to be used in 'rutin', a Redis server implementation in Rust."
+license = "MIT"
 
 [dependencies]
 ahash = { version = "0.8", optional = true }
