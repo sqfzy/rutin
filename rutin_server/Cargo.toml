@@ -10,7 +10,6 @@ homepage = "https://github.com/sqfzy/rutin"
 repository = "https://github.com/sqfzy/rutin"
 keywords = ["redis", "database", "kv"]
 categories = ["database"]
-exclude = ["benches"]
 
 [dependencies]
 rutin_resp3 = { version = "0.1.1", features = ["mlua", "ahash"] }
