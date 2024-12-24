@@ -3,7 +3,7 @@ use crate::{
     error::{RutinError, RutinResult},
     Id,
 };
-use dashmap::mapref::entry_ref;
+use rutin_dashmap::mapref::entry_ref;
 use std::convert::From;
 
 pub type StaticEntryRef<'a, 'b, Q> = entry_ref::EntryRef<'a, 'b, Key, Q, Object>;

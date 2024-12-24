@@ -1,7 +1,7 @@
 use crate::{frame::CheapResp3, server::Handler, Id};
 use bytes::BytesMut;
 use bytestring::ByteString;
-use dashmap::{DashMap, Entry};
+use rutin_dashmap::{DashMap, Entry};
 use event_listener::{listener, Event};
 use flume::{Receiver, Sender};
 use std::collections::HashMap;

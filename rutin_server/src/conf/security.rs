@@ -5,11 +5,11 @@ use crate::{
     error::{RutinError, RutinResult},
 };
 use bytes::{Bytes, BytesMut};
-use dashmap::{
+use rutin_dashmap::{
     iter::Iter,
     mapref::one::{Ref, RefMut},
 };
-use dashmap::{iter::IterMut, DashMap};
+use rutin_dashmap::{iter::IterMut, DashMap};
 use derive_builder::Builder;
 use regex::bytes::RegexSet;
 use serde::Deserialize;

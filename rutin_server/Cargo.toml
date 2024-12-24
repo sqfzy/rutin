@@ -5,16 +5,17 @@ edition = "2024"
 author = "sqfzy"
 license = "MIT"
 description = "redis implemented using rust"
-readme = "README.md"
+# readme = "../README.md"
 homepage = "https://github.com/sqfzy/rutin"
 repository = "https://github.com/sqfzy/rutin"
 keywords = ["redis", "database", "kv"]
 categories = ["database"]
+exclude = ["benches"]
 
 [dependencies]
-rutin_resp3 = { path = "../rutin_resp3", features = ["mlua", "ahash"] }
-rutin_proc = { path = "../rutin_proc" }
-dashmap = { path = "../rutin_dashmap", features = [
+rutin_resp3 = { version = "0.1.1", features = ["mlua", "ahash"] }
+rutin_proc = { version = "0.1" }
+rutin_dashmap = { version = "0.1", features = [
   "raw-api",
   "inline",
   "rayon",

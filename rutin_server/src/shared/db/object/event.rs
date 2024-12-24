@@ -8,7 +8,7 @@ use crate::{
     },
 };
 use ahash::RandomState;
-use dashmap::{
+use rutin_dashmap::{
     DashMap,
     mapref::{
         entry_ref::EntryRef,

@@ -8,7 +8,7 @@ use crate::{
 };
 use ahash::RandomState;
 use bytes::Bytes;
-use dashmap::{DashMap, Entry};
+use rutin_dashmap::{DashMap, Entry};
 use futures_intrusive::sync::LocalMutex;
 use itertools::Itertools;
 use mlua::{prelude::*, StdLib};

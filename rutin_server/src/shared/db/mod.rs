@@ -13,14 +13,14 @@ use crate::{
     shared::Outbox,
 };
 use ahash::RandomState;
-use dashmap::{
+use equivalent::Equivalent;
+use rutin_dashmap::{
+    DashMap, DashSet, Map,
     mapref::{
         entry_ref::EntryRef,
         one::{Ref, RefMut},
     },
-    DashMap, DashSet, Map,
 };
-use equivalent::Equivalent;
 use std::fmt::Debug;
 use tokio::time::Instant;
 use tracing::instrument;
