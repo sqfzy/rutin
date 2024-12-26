@@ -20,7 +20,13 @@
 ===============================================================================
 ```
 
-Ruin是使用rust重构的redis-like数据库，实现了Redis的大部分功能(一些基本类型的命令还未完善，暂不支持集群)
+Ruin是使用rust重构的redis-like数据库，已经实现的功能有：
+1. 关于Key, String, Hash, List, PubSub的部分命令。
+2. TLS和ACL(访问控制列表)
+3. OOM(内存溢出)的淘汰策略
+4. RDB和AOF持久化
+5. Lua脚本(事务)
+6. 主从复制功能
 
 # Install
 ## Cargo 
@@ -62,8 +68,7 @@ GPU: 982f:00:00.0 Microsoft Corporation Basic Render Driver
 # TODO
 
 - [ ] 完善五个基本类型的命令
-- [ ] 支持WASM脚本
-- [ ] 支持JSON，protobuf协议
+- [ ] 支持JSON导入、导出数据
 - [ ] 实现集群
 
 # ORAM
