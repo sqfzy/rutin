@@ -2,7 +2,6 @@
 name = "rutin_server"
 version = "0.2.0"
 edition = "2024"
-author = "sqfzy"
 license = "MIT"
 description = "redis implemented using rust"
 # readme = "../README.md"
@@ -125,6 +124,16 @@ criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
 
 # [target.'cfg(all(target_arch = "x86_64", target_os = "windows"))'.release]
 # rustflags = ["-C", "target-cpu=native", "-C", "link-args=-O2"]
+
+[profile.release]
+opt-level = 3 # 最大优化
+lto = true
+debug = true      # 调试信息
+codegen-units = 1 # 减少代码生成单元以提高优化效果
+# panic = "abort" # panic后不会调用drop，而是直接退出程序
+# overflow-checks = false # 禁用整数溢出检查
+# incremental = false     # 禁用增量编译
+# strip = "symbols"       # 删除调试符号
 
 [features]
 debug = []

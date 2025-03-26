@@ -1,5 +1,6 @@
+use block_padding::{generic_array::{typenum::U4096, ArrayLength}, Block, Iso7816, Padding, Pkcs7};
 use bytes::{Bytes, BytesMut};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, map::Entry};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
@@ -13,8 +14,11 @@ use rutin_server::{
 };
 use tokio::net::{TcpListener, TcpStream};
 
-const MAX_THRESHOLD: i32 = 1;
+const BLOCK_SIZE: usize = 4096;
+type BlockValue = Block<U4096>;
+const K: usize = 10;
 
+// 我们不关心MappingKey是什么数据结构，只关心它与Key，Data的映射关系
 type MappingKey = u64;
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -31,18 +35,14 @@ impl From<&mut [u8]> for BytesMutWrap {
 pub struct Proxy {
     pub src: Connection<TcpStream>,
     pub dest: Connection<TcpStream>,
-    // pub encoder: Resp3Encoder,
-    // pub read_buffer: BytesMut,
-    // pub write_buffer: BytesMut,
     pub map: IndexMap<Key, MappingKey>,
     pub rng: StdRng,
-    pub threshold: i32,
     pub rand: SystemRandom,
     pub skey: LessSafeKey,
 }
 
 impl Proxy {
-    fn new(src: Connection<TcpStream>, dest: Connection<TcpStream>, threshold: i32) -> Self {
+    fn new(src: Connection<TcpStream>, dest: Connection<TcpStream>) -> Self {
         let rand = SystemRandom::new();
 
         let mut key_bytes = [0; 16];
@@ -56,14 +56,9 @@ impl Proxy {
             dest,
             map: IndexMap::new(),
             rng: StdRng::from_entropy(),
-            threshold,
             rand,
             skey,
         }
-    }
-
-    fn reset_threshold(&mut self) {
-        self.threshold += MAX_THRESHOLD;
     }
 
     fn gen_nonce(&self) -> Nonce {
@@ -72,31 +67,11 @@ impl Proxy {
         Nonce::assume_unique_for_key(nonce_bytes)
     }
 
-    fn gen_fake_ciphertext(&mut self) -> Vec<u8> {
-        let mut ciphertext = Vec::new();
-
-        let nonce = self.gen_nonce();
-        ciphertext.extend_from_slice(nonce.as_ref());
-
-        let random_plaintext = (0..self.rng.gen_range(1..=1024))
-            .map(|_| self.rng.r#gen())
-            .collect::<Vec<u8>>();
-        ciphertext.extend_from_slice(random_plaintext.as_ref());
-
-        let tag = self
-            .skey
-            .seal_in_place_separate_tag(nonce, Aad::empty(), &mut ciphertext)
-            .unwrap();
-        ciphertext.extend_from_slice(tag.as_ref());
-
-        ciphertext
-    }
-
     pub async fn forward_request(self: &mut Proxy, cmd_frame: StaticResp3) -> RutinResult<()> {
         use rutin_server::cmd::CommandFlag;
         use rutin_server::cmd::commands::*;
 
-        println!("cmd_frame: {}", cmd_frame);
+        println!("forward_request: {}", cmd_frame);
 
         let mut cmd = CmdUnparsed::try_from(cmd_frame)?;
         let cmd_name = cmd.cmd_name_uppercase();
@@ -109,40 +84,53 @@ impl Proxy {
         #[allow(clippy::let_unit_value)]
         match cmd_name {
             Get::<Bytes>::NAME => {
-                let mut map_len = self.map.len() as u64;
-                self.threshold -= 2; // 需要进行两次访问（不包含交换操作）
-
-                // 改变key为mappingkey
-                // 转为执行两个getset命令
                 let key = cmd.args.front().ok_or(RutinError::Whatever)?;
-                let mappingkey = if let Some(mappingkey) = self.map.get(key) {
-                    *mappingkey
-                } else {
-                    self.map.insert(key.as_ref().into(), self.map.len() as u64);
-                    // 是新键
-                    map_len
+                let Some(&index) = self.map.get(key) else {
+                    // 向client返回nil
+                    self.src.write_frame_froce(&StaticResp3::new_null()).await?;
+                    return Ok(());
                 };
 
-                map_len = mappingkey;
+                let mut positions = (0..(K - 1))
+                    .map(|_| self.rng.gen_range(0..self.map.len()))
+                    .collect::<Vec<_>>();
 
-                // 第一次getset
-                let getset_frame = Resp3::<Vec<u8>, String>::new_array([
-                    Resp3::new_blob_string(b"GETSET"),
-                    Resp3::new_blob_string(mappingkey.to_string().as_bytes()),
-                    Resp3::new_blob_string(self.gen_fake_ciphertext()),
-                ]);
-                self.dest.write_frame_froce(&getset_frame).await?;
+                let position_len = positions.len();
+                positions.push(index as usize);
+                let i = self.rng.gen_range(0..position_len);
+                positions.swap(i, position_len);
 
-                let resp = self.dest.read_frame_force().await.unwrap();
+                let mapping_positions = positions
+                    .iter()
+                    .map(|&i| self.map[i as usize])
+                    .collect::<Vec<_>>();
 
-                if let Some(ciphertext) = resp.into_blob_string() {
-                    // 如果键值对存在，则需要将之前的fake ciphertext再替换为真实的ciphertext
+                // read: MGET(mapping_positions)
+                let mut mget = vec![b"MGET".to_vec()];
+                mget.extend(mapping_positions.iter().map(|p| p.to_string().into_bytes()));
+                let mget = Resp3::<Vec<u8>, String>::new_array(
+                    mget.into_iter()
+                        .map(Resp3::new_blob_string)
+                        .collect::<Vec<_>>(),
+                );
+                self.dest.write_frame_froce(&mget).await?;
+                let result = self.dest.read_frame_force().await?;
 
-                    let mut ciphertext = ciphertext.to_vec();
-                    let len = ciphertext.len();
-                    // 解密
+                let arr = if result.is_array() {
+                    result.into_array_unchecked()
+                } else {
+                    self.src.write_frame_froce(&result).await?;
+                    return Ok(());
+                };
+
+                let mut path = vec![];
+                for (j, blob) in arr.into_iter().enumerate() {
+                    let mut ciphertext = blob
+                        .into_blob_string()
+                        .expect("mappingkey table out-sync with database")
+                        .to_vec();
+
                     let (nonce, ciphervalue_with_tag) = ciphertext.split_at_mut(12);
-
                     let plainvalue = self
                         .skey
                         .open_in_place(
@@ -150,171 +138,196 @@ impl Proxy {
                             Aad::empty(),
                             ciphervalue_with_tag,
                         )
-                        .unwrap();
+                        .expect("decryption failure");
 
-                    // 向用户返回明文
-                    self.src
-                        .write_frame_froce(&CheapResp3::new_blob_string(plainvalue.to_vec()))
-                        .await
-                        .unwrap();
+                    if j == i {
+                        // 向用户返回明文
+                        let plainvalue = Iso7816::unpad(BlockValue::from_mut_slice(plainvalue)).unwrap();
+                        self.src
+                            .write_frame_froce(&CheapResp3::new_blob_string(plainvalue.to_vec()))
+                            .await?;
+                    }
 
-                    // 重新加密
+                    assert!(plainvalue.len() == BLOCK_SIZE);
                     let nonce = self.gen_nonce();
                     let nonce_ = *nonce.as_ref();
-
                     let tag = self
                         .skey
                         .seal_in_place_separate_tag(nonce, Aad::empty(), plainvalue)
                         .unwrap();
+                    let len = ciphertext.len();
                     ciphertext[..12].copy_from_slice(nonce_.as_ref());
                     ciphertext[len - 16..].copy_from_slice(tag.as_ref());
 
-                    // 先查看是否需要交换。因为我们已经拿到了当前key的value，因此为了尽可能减少
-                    // 访问次数，我们先对另一个key执行getset，省去一次对当前key的getset操作
-                    // 交换: 随机选择另外一个key，交换它们映射的MappingKey，并且将另一个key的value改为当前key的value
-                    if self.threshold <= 0
-                        && map_len > 2
-                        && let (Some(i), j) = (
-                            self.map.get_index_of(key),
-                            self.rng.gen_range(0..map_len) as usize,
-                        )
-                        && i != j
-                    {
-                        let mappingkey_j = self.map[j];
+                    path.push(ciphertext);
+                }
 
-                        // 将另一个key的value设为当前key的value
-                        let getset_frame = StaticResp3::new_array([
-                            Resp3::new_blob_string("GETSET".as_bytes()),
-                            Resp3::new_blob_string(mappingkey_j.to_string().as_bytes()),
-                            Resp3::new_blob_string(ciphertext),
-                        ]);
-                        self.dest.write_frame_froce(&getset_frame).await?;
-                        self.threshold -= 1;
-                        let resp = self.dest.read_frame_force().await.unwrap();
+                // shuffle
+                shuffle_vec(&mut positions, &mut path, &mut self.rng);
 
-                        // 映射表同步交换
-                        self.map[i] = mappingkey_j;
-                        self.map[j] = mappingkey;
+                // write: MSET(mapping_positions, stash)
+                let mut mset = vec![b"MSET".to_vec()];
+                for (p, ciphertext) in mapping_positions.iter().zip(path) {
+                    let mapping_key = p.to_string().into_bytes();
+                    mset.push(mapping_key);
+                    mset.push(ciphertext);
+                }
+                let mget = Resp3::<Vec<u8>, String>::new_array(
+                    mset.into_iter()
+                        .map(Resp3::new_blob_string)
+                        .collect::<Vec<_>>(),
+                );
+                self.dest.write_frame_froce(&mget).await?;
+                self.dest.read_frame_force().await?;
 
-                        // 将ciphertext设为key_j的value
-                        // 映射表与键值对一一对应，因此key_j的值一定存在
-                        ciphertext = resp.into_blob_string().unwrap().to_vec();
-
-                        self.reset_threshold();
-                    }
-
-                    // 第二次getset
-                    let get_set_frame = StaticResp3::new_array([
-                        Resp3::new_blob_string("GETSET".as_bytes()),
-                        Resp3::new_blob_string(mappingkey.to_string().as_bytes()),
-                        Resp3::new_blob_string(ciphertext),
-                    ]);
-
-                    self.dest.write_frame_froce(&get_set_frame).await?;
-                    let _ = self.dest.read_frame_force().await?; // 读取并忽略响应
-                } else {
-                    // 如果键值对存在，则需要将之前的fake ciphertext移除
-
-                    self.src
-                        .write_frame_froce(&StaticResp3::new_null())
-                        .await
-                        .unwrap();
-
-                    self.dest
-                        .write_frame(&CheapResp3::new_array([
-                            Resp3::new_blob_string("DEL"),
-                            Resp3::new_blob_string(mappingkey.to_string().as_bytes()),
-                        ]))
-                        .await
-                        .unwrap();
-                    let _ = self.dest.read_frame_force().await?; // 读取并忽略响应
+                // sync position_map
+                for (i, &pos) in positions.iter().enumerate() {
+                    self.map[pos as usize] = mapping_positions[i];
                 }
             }
             Set::<Bytes>::NAME => {
-                let mut map_len = self.map.len() as u64;
-                self.threshold -= 1; // 需要进行一次访问（不包含交换操作）
-
-                // 改变key为mappingkey
-                // 转为执行一个getset命令
-                let key = cmd.args.front().ok_or(RutinError::Whatever)?;
-                let mappingkey = if let Some(mappingkey) = self.map.get(key) {
-                    *mappingkey
-                } else {
-                    self.map.insert(key.as_ref().into(), self.map.len() as u64);
-                    // 是新键
-                    map_len
-                };
-
-                map_len = mappingkey;
-
+                let key = cmd
+                    .args
+                    .front()
+                    .ok_or(RutinError::Whatever)?
+                    .to_vec()
+                    .into();
                 let value = cmd.args.get(1).ok_or(RutinError::Whatever)?;
 
-                let mut ciphertext = Vec::with_capacity(12 + value.len() + 16);
+                let position_len = self.map.len();
+                let index = match self.map.entry(key) {
+                    Entry::Occupied(e) => *e.get(),
+                    Entry::Vacant(e) => {
+                        let mapping_key = position_len as MappingKey;
+                        e.insert(mapping_key);
 
-                let nonce = self.gen_nonce();
-                ciphertext.extend_from_slice(nonce.as_ref());
-                ciphertext.extend_from_slice(value);
-                let tag = self
-                    .skey
-                    .seal_in_place_separate_tag(nonce, Aad::empty(), &mut ciphertext[12..])
-                    .unwrap();
-                ciphertext.extend_from_slice(tag.as_ref());
+                        let pos = value.len();
+                        assert!(pos < BLOCK_SIZE);
 
-                // 如果键值对存在
+                        let mut ciphertext = vec![0; 12 + BLOCK_SIZE + 16];
+                        ciphertext[12..12 + pos].copy_from_slice(&value);
 
-                // 先查看是否需要交换。
-                // 交换: 随机选择另外一个key，交换它们映射的MappingKey，并且将另一个key的value改为当前key的value
-                if self.threshold <= 0
-                    && map_len > 2
-                    && let (Some(i), j) = (
-                        self.map.get_index_of(key),
-                        self.rng.gen_range(0..map_len) as usize,
-                    )
-                    && i != j
-                {
-                    let mappingkey_j = self.map[j];
+                        let plaintext =  &mut ciphertext[12..12 + BLOCK_SIZE];
+                        let mut plainvalue = BlockValue::from_mut_slice(plaintext);
+                        Iso7816::pad(&mut plainvalue, pos);
 
-                    println!("debug1");
+                        let nonce = self.gen_nonce();
+                        let nonce_ = *nonce.as_ref();
+                        let tag = self
+                            .skey
+                            .seal_in_place_separate_tag(nonce, Aad::empty(), &mut plainvalue)
+                            .unwrap();
+                        let len = ciphertext.len();
+                        ciphertext[..12].copy_from_slice(nonce_.as_ref());
+                        ciphertext[len - 16..].copy_from_slice(tag.as_ref());
 
-                    // 将另一个key的value设为当前key的value
-                    let getset_frame = Resp3::<Vec<u8>, String>::new_array([
-                        Resp3::new_blob_string(b"GETSET"),
-                        Resp3::new_blob_string(mappingkey_j.to_string().as_bytes()),
-                        Resp3::new_blob_string(ciphertext),
-                    ]);
-                    self.dest.write_frame_froce(&getset_frame).await?;
-                    self.threshold -= 1;
-                    let resp = self.dest.read_frame_force().await.unwrap();
+                        let set = Resp3::<Vec<u8>, String>::new_array([
+                            Resp3::new_blob_string("SET".to_string()),
+                            Resp3::new_blob_string(mapping_key.to_string()),
+                            Resp3::new_blob_string(ciphertext.to_vec()),
+                        ]);
+                        self.dest.write_frame_froce(&set).await?;
+                        let result = self.dest.read_frame_force().await?;
+                        self.src.write_frame_froce(&result).await?;
 
-                    // 映射表同步交换
-                    self.map[i] = mappingkey_j;
-                    self.map[j] = mappingkey;
+                        return Ok(());
+                    }
+                };
 
-                    // 将ciphertext设为key_j的value
-                    // 映射表与键值对一一对应，因此key_j的值一定存在
-                    ciphertext = resp.into_blob_string().unwrap().to_vec();
+                let mut positions = (0..(K - 1))
+                    .map(|_| self.rng.gen_range(0..self.map.len()))
+                    .collect::<Vec<_>>();
 
-                    self.reset_threshold();
+                let position_len = positions.len();
+                positions.push(index as usize);
+                let i = self.rng.gen_range(0..position_len);
+                positions.swap(i, position_len);
+
+                let mapping_positions = positions
+                    .iter()
+                    .map(|&i| self.map[i as usize])
+                    .collect::<Vec<_>>();
+
+                // read: MGET(mapping_positions)
+                let mut mget = vec![b"MGET".to_vec()];
+                mget.extend(mapping_positions.iter().map(|p| p.to_string().into_bytes()));
+                let mget = Resp3::<Vec<u8>, String>::new_array(
+                    mget.into_iter()
+                        .map(Resp3::new_blob_string)
+                        .collect::<Vec<_>>(),
+                );
+                self.dest.write_frame_froce(&mget).await?;
+                let result = self.dest.read_frame_force().await?;
+
+                let arr = if result.is_array() {
+                    result.into_array_unchecked()
+                } else {
+                    self.src.write_frame_froce(&result).await?;
+                    return Ok(());
+                };
+
+                let mut path = vec![];
+                for (j, blob) in arr.into_iter().enumerate() {
+                    let mut ciphertext = blob
+                        .into_blob_string()
+                        .expect("mappingkey table out-sync with database")
+                        .to_vec();
+
+                    let (nonce, ciphervalue_with_tag) = ciphertext.split_at_mut(12);
+                    let plainvalue = self
+                        .skey
+                        .open_in_place(
+                            Nonce::assume_unique_for_key(nonce[0..12].try_into().unwrap()),
+                            Aad::empty(),
+                            ciphervalue_with_tag,
+                        )
+                        .expect("decryption failure");
+
+                    let plainvalue = if j == i {
+                        // 向用户返回明文
+                        self.src
+                            .write_frame_froce(&CheapResp3::new_blob_string(plainvalue.to_vec()))
+                            .await?;
+                        &mut value.to_vec()
+                    } else {
+                        plainvalue
+                    };
+
+                    assert!(plainvalue.len() == BLOCK_SIZE);
+                    let nonce = self.gen_nonce();
+                    let nonce_ = *nonce.as_ref();
+                    let tag = self
+                        .skey
+                        .seal_in_place_separate_tag(nonce, Aad::empty(), plainvalue)
+                        .unwrap();
+                    let len = ciphertext.len();
+                    ciphertext[..12].copy_from_slice(nonce_.as_ref());
+                    ciphertext[len - 16..].copy_from_slice(tag.as_ref());
+
+                    path.push(ciphertext);
                 }
 
-                let get_set_frame = Resp3::<Vec<u8>, String>::new_array([
-                    Resp3::new_blob_string(b"GETSET"),
-                    Resp3::new_blob_string(mappingkey.to_string().as_bytes()),
-                    Resp3::new_blob_string(ciphertext),
-                ]);
+                // shuffle
+                shuffle_vec(&mut positions, &mut path, &mut self.rng);
 
-                self.dest.write_frame_froce(&get_set_frame).await?;
-                println!("debug2");
-                let resp = self.dest.read_frame_force().await?; // 读取并忽略响应
-                println!("debug3");
+                // write: MSET(mapping_positions, stash)
+                let mut mset = vec![b"MSET".to_vec()];
+                for (p, ciphertext) in mapping_positions.iter().zip(path) {
+                    let mapping_key = p.to_string().into_bytes();
+                    mset.push(mapping_key);
+                    mset.push(ciphertext);
+                }
+                let mget = Resp3::<Vec<u8>, String>::new_array(
+                    mset.into_iter()
+                        .map(Resp3::new_blob_string)
+                        .collect::<Vec<_>>(),
+                );
+                self.dest.write_frame_froce(&mget).await?;
+                self.dest.read_frame_force().await?;
 
-                if resp.is_blob_string() {
-                    self.src
-                        .write_frame_froce(&CheapResp3::new_simple_string("OK"))
-                        .await
-                        .unwrap();
-                } else {
-                    self.src.write_frame_froce(&resp).await.unwrap();
+                // sync position_map
+                for (i, &pos) in positions.iter().enumerate() {
+                    self.map[pos as usize] = mapping_positions[i];
                 }
             }
             // 命令中包含子命令
@@ -335,11 +348,10 @@ pub async fn run() {
         let stream = TcpStream::connect("127.0.0.1:6379").await.unwrap();
         let dest = Connection::new(stream, usize::MAX);
 
-        let mut proxy = Proxy::new(src, dest, 1);
+        let mut proxy = Proxy::new(src, dest);
         tokio::spawn(async move {
-            println!("debug0");
             if let Err(e) = handle(&mut proxy).await {
-                eprintln!("Error: {:?}", e);
+                eprintln!("Proxy error: {}", e);
             }
         });
     }
@@ -368,5 +380,24 @@ async fn handle(proxy: &mut Proxy) -> RutinResult<()> {
             }
             start = end;
         }
+    }
+}
+
+fn shuffle_vec<T, U>(vec1: &mut [T], vec2: &mut [U], rng: &mut StdRng) {
+    assert!(vec1.len() == vec2.len());
+
+    let n = vec1.len();
+    if n <= 1 {
+        return; // 长度为 0 或 1 的 Vec 不需要打乱
+    }
+
+    // 从 n-1 遍历到 1
+    for i in (1..n).rev() {
+        // 生成一个在 [0, i] 范围内的随机索引 j
+        let j = rng.gen_range(0..=i);
+
+        // 交换 vec[i] 和 vec[j]
+        vec1.swap(i, j);
+        vec2.swap(i, j);
     }
 }

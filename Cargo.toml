@@ -11,11 +11,9 @@ workspace.resolver = "3"
 target-dir = "target"
 
 [profile.release]
-# opt-level = "z" # 或者 "s"，表示进行更小的尺寸优化
 opt-level = 3 # 最大优化
-# lto = "fat"   # 启用链接时优化（Link Time Optimization）
 lto = true
-debug = false      # 调试信息
+debug = true      # 调试信息
 codegen-units = 1 # 减少代码生成单元以提高优化效果
 # panic = "abort" # panic后不会调用drop，而是直接退出程序
 # overflow-checks = false # 禁用整数溢出检查

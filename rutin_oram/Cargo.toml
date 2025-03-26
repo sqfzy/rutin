@@ -20,6 +20,8 @@ rand = "0.8.5"
 ring = "0.17.8"
 # statrs = "0.18"
 tokio = { version = "1.42.0", features = ["full"] }
+anyhow = "1.0.95"
+block-padding = "0.3.3"
 # zipf = "7.0.1"
 
 [features]
