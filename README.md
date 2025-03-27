@@ -82,6 +82,7 @@ GPU: 982f:00:00.0 Microsoft Corporation Basic Render Driver
  - `src/server`: 为连接分配资源，并接收请求
  - `src/shared`: 不同连接的资源共享以及通信的实现，例如数据库的核心存储
  - `src/util`: 一些辅助函数，涉及优化并发，主从复制等
+
 总的来说，代码的架构如下；
 ![code_architecture](https://github.com/sqfzy/rutin/blob/main/assert/rutin_code.svg)
 
