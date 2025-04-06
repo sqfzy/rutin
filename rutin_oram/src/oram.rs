@@ -71,7 +71,7 @@ impl Proxy {
         use rutin_server::cmd::CommandFlag;
         use rutin_server::cmd::commands::*;
 
-        println!("forward_request: {}", cmd_frame);
+        // println!("forward_request: {}", cmd_frame);
 
         let mut cmd = CmdUnparsed::try_from(cmd_frame)?;
         let cmd_name = cmd.cmd_name_uppercase();

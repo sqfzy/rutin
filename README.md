@@ -33,12 +33,19 @@ Ruin是使用rust重构的redis-like数据库，已经实现的功能有：
 6. 主从复制功能
 7. ORAM
 
-# Install
-## Cargo 
+# Usage
+## Cargo Install
 ```shell
 git clone https://github.com/sqfzy/rutin.git
 cd rutin
 cargo install --path . --bin rutin_server
+rutin_server
+```
+## Cargo Run
+```shell
+git clone https://github.com/sqfzy/rutin.git
+cd rutin/rutin_server
+cargo run
 ```
 ## Docker
 ```shell
@@ -46,6 +53,20 @@ git clone https://github.com/sqfzy/rutin.git
 cd rutin
 docker build -t rutin_server .
 ```
+## ORAM (Optional)
+```shell
+cd rutin/rutin_oram
+cargo run
+```
+ORAM will run on 6380 port. Execute `redis-cli -p 6380` to connect to ORAM proxy. e.g.
+```shell
+redis-cli -p 6380 
+> set foo 1
+OK
+> get foo
+"1"
+```
+
 
 # [Benchmark](https://github.com/sqfzy/rutin/blob/main/rutin_server/benches/compare_redis/result.txt)
 
