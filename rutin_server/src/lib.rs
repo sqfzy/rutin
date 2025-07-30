@@ -23,6 +23,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+pub mod af_xdp;
 pub mod cli;
 pub mod cmd;
 pub mod conf;
