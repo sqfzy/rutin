@@ -237,7 +237,7 @@ pub fn spawn_set_server_to_master(shared: Shared, master_conf: Arc<MasterConf>) 
                             }
                         }
                         Ok(Ok(Some(frame))) => {
-                            let handler = unsafe { &mut (*replica_handlers_ptr)[i] };
+                            let handler = unsafe { &mut (&mut (*replica_handlers_ptr))[i] };
 
                             handler.context.back_log = Some(back_log); // set back_log
 
