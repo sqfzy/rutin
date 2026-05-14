@@ -119,3 +119,12 @@ rutin提供了一个Swap ORAM(本人尚未发表的论文中提出的一种ORAM�
 - [ ] 完善五个基本类型的命令
 - [ ] 支持JSON导入、导出数据
 - [ ] 实现集群
+
+# 项目声明 Project Statement
+本项目的作者及单位：
+The author and affiliation of this project:
+```
+项目名称（Project Name）: rutin
+项目作者（Author): JiangTao
+作者单位（Affiliation）：暨南大学网络空间安全学院（college of Cyber Security，Jinan University）
+```
